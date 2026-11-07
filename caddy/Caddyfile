@@ -1,0 +1,31 @@
+# 后台的公网 HTTPS 入口(.env 的 DOMAIN)。证书由 Caddy 自动申请和续期。
+# 订阅域名走 Cloudflare Tunnel 直接回源到应用,不经过这里。
+# 只用 443:不做 http→https 跳转,证书只走 TLS-ALPN 验证(80 留给面板机上的 acme.sh)。
+
+{
+	auto_https disable_redirects
+}
+
+(common) {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		-Server
+	}
+	# 内部接口(subconverter 回源取节点)只在 compose 内网访问
+	@internal path /internal/*
+	respond @internal 404
+	reverse_proxy app:8788
+}
+
+{$DOMAIN} {
+	import common
+}

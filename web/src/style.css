@@ -1,0 +1,386 @@
+/*
+ * 浅色数据看板(参考 Plausible / Stripe):浅灰底、白卡片、细边框,靛蓝作强调色(图表、按钮、链接)。
+ * 深色模式参考 Vercel / Marzban:深底、细线、高对比。
+ * 状态色只给异常:黄 = 快到期 / 快用完,红 = 已到期 / 超额 / 失败;绿只用于利润等正向数字。
+ */
+:root {
+  --ground: #f5f6f8;
+  --sheet: #ffffff;
+  /* 图表分类色(固定顺序,色盲可区分,已用校验脚本验过):前 7 名各一色,其余并入「其他」 */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --series-other: #898781;
+  --ink: #15181e;
+  --ink-soft: #667085;
+  --rule: #e4e7ec;
+  --rule-soft: #eef0f3;
+  --hover: #f8f9fb;
+  --accent: #5157e0;
+  --accent-soft: #eef0ff;
+  --accent-strong: #3b40c4;
+  --patch: #4b51d8;
+  --caution: #b54708;
+  --caution-mark: #f79009;
+  --caution-bg: #fffaeb;
+  --fault: #d92d20;
+  --fault-bg: #fef3f2;
+  --ok: #067647;
+  --ok-bg: #ecfdf3;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --font: 'Inter', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0a0b0d;
+    --sheet: #111318;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --ink: #ededf0;
+    --ink-soft: #8b8f98;
+    --rule: #23262d;
+    --rule-soft: #1a1d23;
+    --hover: #16191f;
+    --accent: #8187f5;
+    --accent-soft: #1d1f3d;
+    --accent-strong: #a3a8fa;
+    --patch: #9ba0fb;
+    --caution: #fdb022;
+    --caution-mark: #fdb022;
+    --caution-bg: #2a1f05;
+    --fault: #f97066;
+    --fault-bg: #2d1210;
+    --ok: #47cd89;
+    --ok-bg: #0b2a1b;
+    --shadow: none;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 14px/1.55 var(--font);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 卡片:白底、细边框、圆角、极淡的阴影 */
+.sheet {
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.muted {
+  color: var(--ink-soft);
+}
+
+.small {
+  font-size: 12px;
+}
+
+.figure {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+button {
+  font: inherit;
+  font-weight: 500;
+  border: 1px solid var(--rule);
+  background: var(--sheet);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button.primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+button.danger {
+  color: var(--fault);
+}
+
+button.link {
+  border: none;
+  background: none;
+  box-shadow: none;
+  padding: 0;
+  font-weight: 500;
+  color: var(--patch);
+}
+
+button.link:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+}
+
+button.link.danger {
+  color: var(--fault);
+}
+
+/* 跳转到外部页面的链接,样式同 button.link */
+a.link {
+  font-weight: 500;
+  color: var(--patch);
+  text-decoration: none;
+}
+
+a.link:hover {
+  text-decoration: underline;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--ink);
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 6px 10px;
+  min-width: 0;
+  box-shadow: var(--shadow);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  box-shadow: none;
+}
+
+label.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+label.field > input,
+label.field > select,
+label.field > textarea {
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: middle;
+}
+
+th {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  background: var(--hover);
+  border-bottom-color: var(--rule);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr.clickable {
+  cursor: pointer;
+}
+
+tbody tr.clickable:hover {
+  background: var(--hover);
+}
+
+.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* 状态胶囊只给异常 */
+.badge {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+  background: var(--rule-soft);
+  color: var(--ink-soft);
+}
+
+.badge.warn,
+.badge.over_quota {
+  background: var(--caution-bg);
+  color: var(--caution);
+}
+
+.badge.err,
+.badge.expired {
+  background: var(--fault-bg);
+  color: var(--fault);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  line-height: 22px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  background: var(--sheet);
+}
+
+/* 停用的线路划掉;面板上找不到的用虚线框 */
+.chip.off {
+  color: var(--fault);
+  text-decoration: line-through;
+  border-color: var(--fault-bg);
+  background: var(--fault-bg);
+}
+
+.chip.missing {
+  border-style: dashed;
+  color: var(--ink-soft);
+}
+
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--rule-soft);
+  overflow: hidden;
+  min-width: 80px;
+}
+
+.bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.bar.warn > span {
+  background: var(--caution-mark);
+}
+
+.bar.full > span {
+  background: var(--fault);
+}
+
+.text-warn {
+  color: var(--caution);
+}
+
+.text-err {
+  color: var(--fault);
+}
+
+.text-ok {
+  color: var(--ok);
+}
+
+.empty {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--ink-soft);
+}
+
+.notice {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--caution-bg);
+  color: var(--caution);
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
