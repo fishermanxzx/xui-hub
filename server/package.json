@@ -6,17 +6,14 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "backup": "tsx src/backup.ts",
-    "check-nodes": "tsx src/checkNodes.ts",
-    "build": "esbuild src/index.ts src/backup.ts src/checkNodes.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outdir=dist",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outdir=dist",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "better-sqlite3": "^12.4.1",
     "express": "^4.21.2",
-    "undici": "^6.21.0",
-    "yaml": "^2.6.1"
+    "undici": "^6.21.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

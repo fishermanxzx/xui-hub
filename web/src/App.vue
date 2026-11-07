@@ -2,28 +2,12 @@
 import { onMounted, ref } from 'vue';
 import { api, setUnauthorizedHandler } from './api';
 import { toasts } from './toast';
-import Customers from './views/Customers.vue';
 import Login from './views/Login.vue';
 import Panels from './views/Panels.vue';
-import SocksView from './views/Socks.vue';
-
-type Tab = 'customers' | 'panels' | 'socks';
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'customers', label: '客户' },
-  { id: 'panels', label: '面板' },
-  { id: 'socks', label: 'SOCKS' },
-];
 
 const ready = ref(false);
 const loggedIn = ref(false);
 const authRequired = ref(false);
-
-function tabFromHash(): Tab {
-  const id = location.hash.slice(1);
-  return TABS.some((t) => t.id === id) ? (id as Tab) : 'customers';
-}
-const tab = ref<Tab>(tabFromHash());
-window.addEventListener('hashchange', () => (tab.value = tabFromHash()));
 
 async function checkSession() {
   try {
@@ -50,18 +34,13 @@ onMounted(checkSession);
     <template v-else>
       <header class="topbar">
         <div class="topbar-inner">
-          <span class="mark"><span class="logo" aria-hidden="true" />XUI 客户中心</span>
-          <nav aria-label="页面">
-            <a v-for="t in TABS" :key="t.id" :href="'#' + t.id" :class="{ on: tab === t.id }" :aria-current="tab === t.id ? 'page' : undefined">{{ t.label }}</a>
-          </nav>
+          <span class="mark"><span class="logo" aria-hidden="true" />xui-hub</span>
           <span class="spacer" />
           <button v-if="authRequired" class="link quiet" @click="logout">退出登录</button>
         </div>
       </header>
       <main class="shell">
-        <Customers v-if="tab === 'customers'" />
-        <Panels v-else-if="tab === 'panels'" />
-        <SocksView v-else />
+        <Panels />
       </main>
     </template>
   </template>
@@ -83,7 +62,7 @@ onMounted(checkSession);
   margin: 0 auto;
   padding: 0 24px;
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: 32px;
   height: 56px;
 }
@@ -106,31 +85,10 @@ onMounted(checkSession);
     linear-gradient(var(--sheet), var(--sheet)) 5px 14px / 7px 2px no-repeat,
     var(--accent);
 }
-nav {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-nav a {
-  padding: 6px 12px;
-  border-radius: 8px;
-  color: var(--ink-soft);
-  text-decoration: none;
-  font-weight: 500;
-}
-nav a:hover {
-  color: var(--ink);
-  background: var(--hover);
-}
-nav a.on {
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-}
 .spacer {
   flex: 1;
 }
 .quiet {
-  align-self: center;
   color: var(--ink-soft);
 }
 .shell {
@@ -161,10 +119,6 @@ nav a.on {
   .topbar-inner {
     padding: 0 12px;
     gap: 12px;
-  }
-  .mark {
-    font-size: 0;
-    gap: 0;
   }
   .shell {
     padding: 16px 12px 32px;

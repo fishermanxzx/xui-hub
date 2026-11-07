@@ -23,7 +23,7 @@ async function submit() {
 
 <template>
   <form class="login sheet" @submit.prevent="submit">
-    <h1>XUI 客户中心</h1>
+    <h1>xui-hub</h1>
     <label class="field">
       管理密码
       <input v-model="password" type="password" autocomplete="current-password" autofocus required />

@@ -1,31 +1,27 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { memoryDb } from '../testUtil';
-import { createPanel, deletePanel, InputError, updatePanel } from './repo';
+import { createPanel, deletePanel, getPanel, listPanels, recordCheck, toPanelView, updatePanel } from './repo';
 
-test('面板类型必须明确给出,不按名称推断;删除后类型记在 deleted_panels', () => {
+test('面板增删改:地址规范化、名称唯一、token 留空不改、视图不含 token', () => {
   const db = memoryDb();
-  const base = { base_url: 'https://198.51.100.1:2053/p', token: 't' };
-  assert.throws(() => createPanel(db, { name: '美国中转', ...base }, 0), /类型/);
-  const named = createPanel(db, { name: '名字带中转的落地', ...base, role: 'exit' }, 0);
-  assert.equal(named.role, 'exit');
-  const relay = createPanel(db, { name: '三网-2', ...base, role: 'relay' }, 0);
-  deletePanel(db, relay.id, 5);
-  assert.deepEqual(db.prepare('SELECT name, role, deleted_at FROM deleted_panels').all(), [{ name: '三网-2', role: 'relay', deleted_at: 5 }]);
-});
+  const p = createPanel(db, { name: 'a', base_url: 'https://1.2.3.4:2053/path/', token: 't' }, 0);
+  assert.equal(p.base_url, 'https://1.2.3.4:2053/path');
+  assert.throws(() => createPanel(db, { name: 'a', base_url: 'https://x', token: 't' }), /已存在/);
+  assert.throws(() => createPanel(db, { name: 'b', base_url: 'ftp://x', token: 't' }), /http/);
+  assert.throws(() => createPanel(db, { name: 'b', base_url: 'https://x' }), /token/);
 
-test('面板到期时间:默认未填(null),可设日期、不限期(0)或清空;其他字段更新时不动它', () => {
-  const db = memoryDb();
-  const p = createPanel(db, { name: '美国-1', base_url: 'https://198.51.100.1:2053/p', token: 't', role: 'exit' }, 0);
-  assert.equal(p.expire_at, null);
+  assert.equal(updatePanel(db, p.id, { name: 'aa', token: '' }).token, 't');
+  assert.equal(updatePanel(db, p.id, { token: 'new' }).token, 'new');
+  assert.ok(!('token' in toPanelView(getPanel(db, p.id)!)));
 
-  const at = Date.UTC(2026, 10, 27, 15, 59, 59, 999);
-  assert.equal(updatePanel(db, p.id, { expire_at: at }).expire_at, at);
-  assert.equal(updatePanel(db, p.id, { monthly_cost: 44 }).expire_at, at, '只改月成本时到期时间不变');
-  assert.equal(updatePanel(db, p.id, { expire_at: 0 }).expire_at, 0);
-  assert.equal(updatePanel(db, p.id, { expire_at: null }).expire_at, null);
+  recordCheck(db, p.id, { ok: true, inbounds: 2, clients: 5 }, 100);
+  assert.deepEqual([getPanel(db, p.id)!.check_ok_at, getPanel(db, p.id)!.inbound_count, getPanel(db, p.id)!.client_count], [100, 2, 5]);
+  recordCheck(db, p.id, { ok: false, error: '连接失败' }, 200);
+  const after = getPanel(db, p.id)!;
+  assert.deepEqual([after.checked_at, after.check_ok_at, after.check_error, after.client_count], [200, 100, '连接失败', 5]);
 
-  assert.equal(createPanel(db, { name: '美国-2', base_url: 'https://198.51.100.2:2053/p', token: 't', expire_at: at, role: 'exit' }, 0).expire_at, at);
-  assert.throws(() => updatePanel(db, p.id, { expire_at: -1 }), InputError);
-  assert.throws(() => updatePanel(db, p.id, { expire_at: 1.5 }), InputError);
+  deletePanel(db, p.id);
+  assert.equal(listPanels(db).length, 0);
+  assert.throws(() => deletePanel(db, p.id), /不存在/);
 });
