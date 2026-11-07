@@ -41,7 +41,8 @@ run_installer() {
   need_root
   local tmp
   tmp="$(mktemp)"
-  curl -fsSL "https://raw.githubusercontent.com/$REPO/main/install.sh" -o "$tmp" || { err "下载安装脚本失败,检查能否访问 GitHub"; rm -f "$tmp"; return 1; }
+  # 带时间戳绕过 raw.githubusercontent.com 的 CDN 缓存(最长 5 分钟),刚修的安装脚本马上能用上
+  curl -fsSL "https://raw.githubusercontent.com/$REPO/main/install.sh?t=$(date +%s)" -o "$tmp" || { err "下载安装脚本失败,检查能否访问 GitHub"; rm -f "$tmp"; return 1; }
   XUIHUB_NONINTERACTIVE="${XUIHUB_NONINTERACTIVE:-0}" bash "$tmp" "$@"
   local rc=$?
   rm -f "$tmp"
