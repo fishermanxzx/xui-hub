@@ -47,16 +47,18 @@ bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/in
 
 ### 方式二:Docker
 
+镜像预构建好推在 `ghcr.io/fishermanxzx/xui-hub`(amd64 / arm64),不用克隆仓库:
+
 ```bash
-git clone https://github.com/fishermanxzx/xui-hub.git /opt/xui-hub
-cd /opt/xui-hub
-cp .env.example .env && vi .env          # 设置 ADMIN_PASSWORD
+mkdir -p /opt/xui-hub && cd /opt/xui-hub
+curl -fsSLO https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/docker-compose.yml
+echo "ADMIN_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)" > .env && cat .env   # 或自己写一个密码
 mkdir -p data && chown 1000:1000 data    # 容器以 uid 1000(node)运行
-docker compose up -d --build
+docker compose up -d
 docker compose ps                        # STATUS 显示 healthy
 ```
 
-更新:`/opt/xui-hub/deploy.sh`(`git pull --ff-only` → 重建并等健康检查)。
+更新:`docker compose pull && docker compose up -d`。`.env` 里还可以设 `LISTEN_ADDR` / `HOST_PORT`(见下)。想自己从源码构建就克隆仓库,把 compose 里的 `image:` 换成 `build: .`。
 
 ### 之后
 
@@ -80,7 +82,7 @@ cd web && npm install && npm run dev       # http://127.0.0.1:5174,/api 代理�
 cd server && npm test                      # 测试
 ```
 
-发版:打 tag(`git tag v0.1.0 && git push origin v0.1.0`),GitHub Actions 会构建 amd64 / arm64 两个包并创建 Release;本地打包用 `scripts/build-release.sh amd64 v0.1.0`。
+发版:打 tag(`git tag v0.1.0 && git push origin v0.1.0`),GitHub Actions 会构建 amd64 / arm64 两个发布包创建 Release,并把多架构镜像推到 `ghcr.io/fishermanxzx/xui-hub`(`:0.1.0`、`:0.1`、`:latest`);本地打包用 `scripts/build-release.sh amd64 v0.1.0`。
 
 ## License
 

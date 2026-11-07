@@ -11,6 +11,9 @@ RUN cd web && npm run build \
  && cd ../server && npm run build && npm prune --omit=dev
 
 FROM node:22-bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/fishermanxzx/xui-hub" \
+      org.opencontainers.image.description="多面板 3x-ui 客户端管理:接入面板,创建 vless / hy2 客户端" \
+      org.opencontainers.image.licenses="MIT"
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8788 DATA_DIR=/data
 WORKDIR /app
 COPY --from=build /app/server/package.json server/

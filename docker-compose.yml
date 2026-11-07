@@ -1,7 +1,10 @@
+# 单独把这个文件下载到服务器任意目录,旁边放一个 .env(至少 ADMIN_PASSWORD),docker compose up -d 即可。
+# 更新:docker compose pull && docker compose up -d
 services:
   app:
-    build: .
-    image: xui-hub:latest
+    image: ghcr.io/fishermanxzx/xui-hub:latest
+    # 想自己从源码构建就把上一行换成下面这行(需要克隆仓库,在仓库目录里执行)
+    # build: .
     container_name: xui-hub
     restart: unless-stopped
     init: true
