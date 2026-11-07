@@ -1,19 +1,40 @@
 <script setup lang="ts">
+// 面板页:每块面板一张卡片,展开看入站和客户端;添加 / 编辑面板用弹窗。
 import { onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
 import Modal from '../components/Modal.vue';
-import { fmtAgo, hostOf } from '../format';
+import PanelCard from '../components/PanelCard.vue';
 import { toast, toastError } from '../toast';
 import type { Panel, PanelInput } from '../types';
-import PanelDetail from './PanelDetail.vue';
 
 const panels = ref<Panel[]>([]);
-const openPanel = ref<Panel | null>(null);
 const checking = ref(false);
+
+/** 展开的卡片,记在浏览器里,刷新后保持 */
+const OPEN_KEY = 'xui-hub.openPanels';
+const open = ref<Set<number>>(new Set());
+try {
+  open.value = new Set(JSON.parse(localStorage.getItem(OPEN_KEY) ?? '[]'));
+} catch {
+  /* 忽略坏数据 */
+}
+function toggle(id: number) {
+  const next = new Set(open.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  open.value = next;
+  try {
+    localStorage.setItem(OPEN_KEY, JSON.stringify([...next]));
+  } catch {
+    /* 存不了就算了 */
+  }
+}
 
 async function load() {
   try {
     panels.value = await api.panels();
+    // 只有一块面板时默认展开
+    if (panels.value.length === 1 && !open.value.size) toggle(panels.value[0].id);
   } catch (e) {
     toastError(e);
   }
@@ -24,7 +45,7 @@ async function checkAll() {
   try {
     panels.value = await api.checkPanels();
     const failed = panels.value.filter((p) => p.check_error).length;
-    toast(failed ? `${failed} 台面板连不上` : '全部面板正常', failed ? 'err' : 'ok');
+    toast(failed ? `${failed} 块面板连不上` : '全部面板正常', failed ? 'err' : 'ok');
   } catch (e) {
     toastError(e);
   } finally {
@@ -51,8 +72,9 @@ async function submit() {
   try {
     const saved = editing.value ? await api.updatePanel(editing.value.id, body) : await api.createPanel(body);
     showForm.value = false;
-    toast(saved.check_error ? `已保存，但连不上面板：${saved.check_error}` : '已保存，面板连接正常', saved.check_error ? 'err' : 'ok');
+    toast(saved.check_error ? `已保存,但连不上面板:${saved.check_error}` : '已保存,面板连接正常', saved.check_error ? 'err' : 'ok');
     await load();
+    if (!editing.value && !saved.check_error) toggle(saved.id);
   } catch (e) {
     toastError(e);
   } finally {
@@ -61,7 +83,7 @@ async function submit() {
 }
 
 async function remove(panel: Panel) {
-  if (!confirm(`删除面板「${panel.name}」？只是从这里移除，面板上的入站和 client 不受影响。`)) return;
+  if (!confirm(`删除面板「${panel.name}」?只是从这里移除,面板上的入站和 client 不受影响。`)) return;
   try {
     await api.deletePanel(panel.id);
     toast('已删除');
@@ -80,59 +102,21 @@ onUnmounted(() => clearInterval(timer));
 </script>
 
 <template>
-  <section class="sheet">
-    <div class="toolbar">
-      <div class="title">
-        <h2>面板</h2>
-        <p class="muted small">接入的 3x-ui 面板。点名称查看入站和 client，在里面创建客户端。</p>
-      </div>
-      <div class="row">
-        <button :disabled="checking || !panels.length" @click="checkAll">{{ checking ? '检查中…' : '检查连接' }}</button>
-        <button class="primary" @click="openForm(null)">添加面板</button>
-      </div>
+  <div class="toolbar">
+    <div>
+      <h2>面板</h2>
+      <p class="muted small">接入的 3x-ui 面板。展开卡片看入站和客户端,在卡片里创建客户端。</p>
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>名称</th>
-            <th>地址</th>
-            <th class="num">入站</th>
-            <th class="num">client</th>
-            <th>状态</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="p in panels" :key="p.id">
-            <td class="name"><button class="link name-link" title="查看入站和 client" @click="openPanel = p">{{ p.name }}</button></td>
-            <td>{{ hostOf(p.base_url) }}</td>
-            <td class="num">{{ p.inbound_count ?? '—' }}</td>
-            <td class="num">{{ p.client_count ?? '—' }}</td>
-            <td class="small status">
-              <template v-if="p.check_error">
-                <div class="text-err" :title="p.check_error">连不上：{{ p.check_error.slice(0, 40) }}</div>
-                <div v-if="p.check_ok_at" class="muted">上次正常在 {{ fmtAgo(p.check_ok_at) }}</div>
-              </template>
-              <span v-else-if="p.check_ok_at" class="text-ok">正常，{{ fmtAgo(p.check_ok_at) }}检查</span>
-              <span v-else class="muted">还没检查</span>
-            </td>
-            <td class="num">
-              <div class="ops">
-                <!-- 面板网页只认账号密码登录(API token 只管 /panel/api),这里只负责在新标签页打开 -->
-                <a class="link" :href="p.base_url" target="_blank" rel="noopener noreferrer">打开面板</a>
-                <button class="link" @click="openForm(p)">编辑</button>
-                <button class="link danger" @click="remove(p)">删除</button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-if="!panels.length" class="empty">还没有面板。点「添加面板」，填上 3x-ui 的地址和 API token。</div>
+    <div class="row">
+      <button :disabled="checking || !panels.length" @click="checkAll">{{ checking ? '检查中…' : '检查全部' }}</button>
+      <button class="primary" @click="openForm(null)">添加面板</button>
     </div>
-  </section>
+  </div>
 
-  <PanelDetail v-if="openPanel" :id="openPanel.id" :name="openPanel.name" :url="openPanel.base_url" @close="openPanel = null" />
+  <div class="cards">
+    <PanelCard v-for="p in panels" :key="p.id" :panel="p" :open="open.has(p.id)" @toggle="toggle(p.id)" @edit="openForm(p)" @remove="remove(p)" @changed="load" />
+  </div>
+  <div v-if="!panels.length" class="empty sheet">还没有面板。点「添加面板」,填上 3x-ui 的地址和 API token。</div>
 
   <Modal v-if="showForm" :title="editing ? `编辑面板「${editing.name}」` : '添加面板'" @close="showForm = false">
     <form id="panel-form" class="form" @submit.prevent="submit">
@@ -159,30 +143,18 @@ onUnmounted(() => clearInterval(timer));
   align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 16px 12px;
-  border-bottom: 1px solid var(--rule);
+  margin-bottom: 16px;
 }
 h2 {
-  font-size: 16px;
+  font-size: 18px;
 }
-.title p {
+.toolbar p {
   margin: 4px 0 0;
 }
-.name {
-  font-weight: 500;
-  white-space: nowrap;
-}
-.name-link {
-  color: var(--ink);
-  font-weight: 500;
-}
-.status {
-  max-width: 280px;
-}
-.ops {
+.cards {
   display: flex;
-  justify-content: flex-end;
-  gap: 14px;
+  flex-direction: column;
+  gap: 12px;
 }
 .form {
   display: flex;
