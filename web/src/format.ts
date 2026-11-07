@@ -50,6 +50,15 @@ export function dueLevel(ms: number, now = Date.now()): '' | 'warn' | 'err' {
   return d < 0 ? 'err' : d <= 7 ? 'warn' : '';
 }
 
+/** 出口地区:常见的给中文名,其余原样显示代码 */
+const REGION: Record<string, string> = {
+  US: '美国', TW: '台湾', HK: '香港', JP: '日本', SG: '新加坡', KR: '韩国', DE: '德国', GB: '英国',
+  NL: '荷兰', FR: '法国', CA: '加拿大', AU: '澳大利亚', MY: '马来西亚', TH: '泰国', VN: '越南', PH: '菲律宾', IN: '印度', RU: '俄罗斯', CN: '中国',
+};
+export function region(loc: string | null | undefined): string {
+  return loc ? (REGION[loc] ?? loc) : '';
+}
+
 /** 面板地址只显示主机名和端口 */
 export function hostOf(url: string): string {
   try {

@@ -4,6 +4,19 @@ import { api, setUnauthorizedHandler } from './api';
 import { toasts } from './toast';
 import Login from './views/Login.vue';
 import Panels from './views/Panels.vue';
+import SocksView from './views/Socks.vue';
+
+type Tab = 'panels' | 'socks';
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'panels', label: '面板' },
+  { id: 'socks', label: 'SOCKS' },
+];
+function tabFromHash(): Tab {
+  const id = location.hash.slice(1);
+  return TABS.some((t) => t.id === id) ? (id as Tab) : 'panels';
+}
+const tab = ref<Tab>(tabFromHash());
+window.addEventListener('hashchange', () => (tab.value = tabFromHash()));
 
 const ready = ref(false);
 const loggedIn = ref(false);
@@ -35,12 +48,16 @@ onMounted(checkSession);
       <header class="topbar">
         <div class="topbar-inner">
           <span class="mark"><span class="logo" aria-hidden="true" />xui-hub</span>
+          <nav aria-label="页面">
+            <a v-for="t in TABS" :key="t.id" :href="'#' + t.id" :class="{ on: tab === t.id }" :aria-current="tab === t.id ? 'page' : undefined">{{ t.label }}</a>
+          </nav>
           <span class="spacer" />
           <button v-if="authRequired" class="link quiet" @click="logout">退出登录</button>
         </div>
       </header>
       <main class="shell">
-        <Panels />
+        <Panels v-if="tab === 'panels'" />
+        <SocksView v-else />
       </main>
     </template>
   </template>
@@ -85,6 +102,26 @@ onMounted(checkSession);
     linear-gradient(var(--sheet), var(--sheet)) 5px 14px / 7px 2px no-repeat,
     var(--accent);
 }
+nav {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+nav a {
+  padding: 6px 12px;
+  border-radius: 8px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  font-weight: 500;
+}
+nav a:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+nav a.on {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
 .spacer {
   flex: 1;
 }
@@ -119,6 +156,10 @@ onMounted(checkSession);
   .topbar-inner {
     padding: 0 12px;
     gap: 12px;
+  }
+  .mark {
+    font-size: 0;
+    gap: 0;
   }
   .shell {
     padding: 16px 12px 32px;

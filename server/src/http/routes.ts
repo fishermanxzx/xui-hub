@@ -6,6 +6,8 @@ import { createClient, type ClientAdmin } from '../clients/create';
 import { checkAllPanels, checkPanel, type PanelProbe } from '../panels/check';
 import { readPanelDetail, type PanelReader } from '../panels/inbounds';
 import { createPanel, deletePanel, getPanel, InputError, listPanels, toPanelView, updatePanel, type Panel } from '../panels/repo';
+import { checkSocks } from '../socks/check';
+import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, saveCheck, updateSocks } from '../socks/repo';
 import { XUIError } from '../xui/client';
 import {
   LoginLimiter,
@@ -220,6 +222,47 @@ export function apiRouter(deps: RouteDeps): Router {
       } finally {
         await client.close?.().catch(() => {});
       }
+    }),
+  );
+
+  // ---------- SOCKS ----------
+  const socksOne = (id: number) => {
+    const view = getSocksView(db, id);
+    if (!view) throw new InputError('SOCKS 不存在');
+    return view;
+  };
+  r.get('/socks', wrap(() => listSocks(db)));
+  r.post('/socks', wrap((req) => socksOne(createSocks(db, req.body ?? {}))));
+  r.patch(
+    '/socks/:id',
+    wrap((req) => {
+      updateSocks(db, idParam(req), req.body ?? {});
+      return socksOne(idParam(req));
+    }),
+  );
+  r.delete('/socks/:id', wrap((req) => void deleteSocks(db, idParam(req))));
+  // 连通性测试:从本服务所在机器经代理访问 Cloudflare,拿到出口 IP 和地区
+  r.post(
+    '/socks/:id/check',
+    wrap(async (req) => {
+      const s = getSocks(db, idParam(req));
+      if (!s) throw new InputError('SOCKS 不存在');
+      saveCheck(db, s.id, await checkSocks(s));
+      return socksOne(s.id);
+    }),
+  );
+  r.post(
+    '/socks-check-all',
+    wrap(async () => {
+      const all = allSocks(db);
+      let i = 0;
+      await Promise.all(Array.from({ length: Math.min(4, all.length) }, async () => {
+        while (i < all.length) {
+          const s = all[i++];
+          saveCheck(db, s.id, await checkSocks(s));
+        }
+      }));
+      return listSocks(db);
     }),
   );
 

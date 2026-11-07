@@ -1,4 +1,4 @@
-import type { ClientProtocol, CreatedClient, Panel, PanelDetail, PanelInput, PanelVersions, UpdateStatus } from './types';
+import type { ClientProtocol, CreatedClient, Panel, PanelDetail, PanelInput, PanelVersions, Socks, SocksInput, UpdateStatus } from './types';
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -47,4 +47,11 @@ export const api = {
     call<CreatedClient>('POST', `/api/panels/${panelId}/clients`, { name, protocol }),
   clientLinks: (panelId: number, email: string) => call<{ links: string[] }>('GET', `/api/panels/${panelId}/clients/${encodeURIComponent(email)}/links`),
   deleteClient: (panelId: number, email: string) => call('DELETE', `/api/panels/${panelId}/clients/${encodeURIComponent(email)}`),
+
+  socks: () => call<Socks[]>('GET', '/api/socks'),
+  createSocks: (body: SocksInput) => call<Socks>('POST', '/api/socks', body),
+  updateSocks: (id: number, body: SocksInput) => call<Socks>('PATCH', `/api/socks/${id}`, body),
+  deleteSocks: (id: number) => call('DELETE', `/api/socks/${id}`),
+  checkSocks: (id: number) => call<Socks>('POST', `/api/socks/${id}/check`),
+  checkAllSocks: () => call<Socks[]>('POST', '/api/socks-check-all'),
 };

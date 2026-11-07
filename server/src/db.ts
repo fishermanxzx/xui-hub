@@ -33,6 +33,26 @@ const MIGRATIONS: string[] = [
   ALTER TABLE panels ADD COLUMN xray_version TEXT;
   ALTER TABLE panels ADD COLUMN xray_state TEXT;
   `,
+  `
+  -- SOCKS 代理(中转的出口);账号密码只在服务端,接口不返回密码。check_* 是最近一次连通性测试
+  CREATE TABLE socks_proxies (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    host        TEXT NOT NULL,
+    port        INTEGER NOT NULL,
+    username    TEXT NOT NULL DEFAULT '',
+    password    TEXT NOT NULL DEFAULT '',
+    remark      TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    check_at    INTEGER,
+    check_ok    INTEGER,
+    check_ms    INTEGER,
+    check_ip    TEXT,
+    check_loc   TEXT,
+    check_error TEXT
+  );
+  `,
 ];
 
 export function openDb(file: string): DB {

@@ -62,6 +62,35 @@ export interface PanelDetail {
   unattached: PanelClient[];
 }
 
+export interface SocksCheck {
+  at: number;
+  ok: boolean;
+  ms: number;
+  ip: string | null;
+  loc: string | null;
+  error: string | null;
+}
+
+export interface Socks {
+  id: number;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  has_password: boolean;
+  remark: string;
+  created_at: number;
+  updated_at: number;
+  check: SocksCheck | null;
+}
+
+export interface SocksInput {
+  name?: string;
+  /** 新建必填;修改时留空 = 不改 */
+  address?: string;
+  remark?: string;
+}
+
 export type ClientProtocol = 'vless' | 'hy2';
 
 export interface CreatedClient {
