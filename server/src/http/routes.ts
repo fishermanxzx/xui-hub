@@ -160,8 +160,19 @@ export function apiRouter(deps: RouteDeps): Router {
       const panel = panelOf(req);
       const version = String(req.params.version);
       if (!/^v?\d+\.\d+\.\d+$/.test(version)) throw new InputError('版本号不合法');
-      await withClient(panel, (client) => client.installXray(version));
-      return toPanelView(await checkPanel(db, panel, deps.clientFor(panel)));
+      await withClient(panel, async (client) => {
+        await client.installXray(version);
+        // 面板下载并重启 Xray 要几秒到几十秒,等它回到 running(最多 90 秒)再记录版本
+        for (let i = 0; i < 45; i++) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const st = await client.serverStatus().catch(() => null);
+          if (st?.xrayState === 'running' && st.xrayVersion === version.replace(/^v/, '')) return;
+        }
+      });
+      const after = await checkPanel(db, panel, deps.clientFor(panel));
+      if (after.xray_state !== 'running') throw new InputError(`Xray 没有回到运行状态(${after.xray_state ?? '未知'}),去面板上看日志`);
+      if (after.xray_version !== version.replace(/^v/, '')) throw new InputError(`Xray 仍是 ${after.xray_version},切换没有生效`);
+      return toPanelView(after);
     }),
   );
   // 升级面板:面板自己在后台跑升级脚本,这里拿到 runId;前端轮询 update-status
