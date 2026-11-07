@@ -3,11 +3,13 @@ import { onMounted, ref } from 'vue';
 import { api, setUnauthorizedHandler } from './api';
 import { toasts } from './toast';
 import Login from './views/Login.vue';
+import Customers from './views/Customers.vue';
 import Panels from './views/Panels.vue';
 import SocksView from './views/Socks.vue';
 
-type Tab = 'panels' | 'socks';
+type Tab = 'customers' | 'panels' | 'socks';
 const TABS: { id: Tab; label: string }[] = [
+  { id: 'customers', label: '客户' },
   { id: 'panels', label: '面板' },
   { id: 'socks', label: 'SOCKS' },
 ];
@@ -56,7 +58,8 @@ onMounted(checkSession);
         </div>
       </header>
       <main class="shell">
-        <Panels v-if="tab === 'panels'" />
+        <Customers v-if="tab === 'customers'" />
+        <Panels v-else-if="tab === 'panels'" />
         <SocksView v-else />
       </main>
     </template>

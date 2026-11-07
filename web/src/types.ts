@@ -93,6 +93,56 @@ export interface SocksInput {
 
 export type ClientProtocol = 'vless' | 'hy2';
 
+export type LineKind = 'direct' | 'relay';
+
+export interface Line {
+  id: number;
+  customer_id: number;
+  kind: LineKind;
+  panel_id: number;
+  panel_name: string;
+  inbound_id: number;
+  inbound_remark: string;
+  protocol: string;
+  email: string;
+  exit_kind: 'panel' | 'socks' | null;
+  exit_panel_id: number | null;
+  exit_panel_name: string | null;
+  exit_port: number | null;
+  exit_socks_id: number | null;
+  exit_socks_name: string | null;
+  exit_label: string;
+  created_at: number;
+}
+
+export interface Customer {
+  id: number;
+  name: string;
+  remark: string;
+  created_at: number;
+  updated_at: number;
+  lines: Line[];
+}
+
+export interface CustomerInput {
+  name?: string;
+  remark?: string;
+}
+
+/** 开线路的请求:直连选面板 + 入站;中转再选出口 */
+export interface OpenLineInput {
+  kind: LineKind;
+  panel_id: number;
+  inbound: { id?: number; protocol?: ClientProtocol };
+  exit?: { kind: 'panel'; panel_id: number; inbound_id?: number | null } | { kind: 'socks'; socks_id: number };
+}
+
+export interface OpenedLine {
+  line: Line;
+  links: string[];
+  created: { inbound: string | null; exit_inbound: string | null };
+}
+
 export interface CreatedClient {
   email: string;
   protocol: 'vless' | 'hysteria';

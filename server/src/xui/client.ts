@@ -25,8 +25,10 @@ export class XUIClient {
     return this.dispatcher.close();
   }
 
+  /** body 是 URLSearchParams 时按表单提交(/xray/update 只认表单),其余按 JSON */
   private async req<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
     const url = `${this.conn.base_url}/panel/api${path}`;
+    const form = body instanceof URLSearchParams;
     let res: Awaited<ReturnType<typeof fetch>>;
     try {
       res = await fetch(url, {
@@ -34,9 +36,9 @@ export class XUIClient {
         headers: {
           Authorization: `Bearer ${this.conn.token}`,
           Accept: 'application/json',
-          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          ...(body === undefined ? {} : { 'Content-Type': form ? 'application/x-www-form-urlencoded' : 'application/json' }),
         },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: body === undefined ? undefined : form ? body.toString() : JSON.stringify(body),
         dispatcher: this.dispatcher,
         signal: AbortSignal.timeout(this.opts.timeoutMs ?? 15000),
       });
@@ -134,6 +136,31 @@ export class XUIClient {
   async updateStatus(): Promise<{ runId: string; state: string; exitCode: number }> {
     const o = await this.req<any>('GET', '/server/getUpdateStatus');
     return { runId: String(o?.runId ?? ''), state: String(o?.state ?? 'pending'), exitCode: Number(o?.exitCode ?? 0) };
+  }
+
+  /** 读取 Xray 模板(接口是 POST,但只读);返回 { xraySetting: <JSON 字符串>, outboundTestUrl, ... } */
+  xraySettings(): Promise<unknown> {
+    return this.req('POST', '/xray/');
+  }
+
+  /** 覆盖 Xray 模板(出站、路由);需重启 Xray 才生效 */
+  async updateXray(xray: unknown, testUrl: string): Promise<void> {
+    await this.req('POST', '/xray/update', new URLSearchParams({ xraySetting: JSON.stringify(xray), outboundTestUrl: testUrl }));
+  }
+
+  /** 重启 Xray 并等它恢复运行(最多约 30 秒);没恢复就抛错 */
+  async restartXray(): Promise<void> {
+    try {
+      await this.req('POST', '/server/restartXrayService');
+    } catch {
+      // 有的版本重启时接口本身会断开,以下面查到的状态为准
+    }
+    let state = '';
+    for (let i = 0; i < 20 && state !== 'running'; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      state = (await this.req<any>('GET', '/server/status').catch(() => null))?.xray?.state ?? '';
+    }
+    if (state !== 'running') throw new XUIError(`Xray 没有恢复运行(${state || '读不到状态'}),看面板日志`);
   }
 
   /** 面板设置里面板自己用的证书路径(新建 hy2 入站用这份证书) */

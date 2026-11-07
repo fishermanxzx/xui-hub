@@ -53,6 +53,37 @@ const MIGRATIONS: string[] = [
     check_error TEXT
   );
   `,
+  `
+  -- 客户:名字 + 备注,线路挂在下面
+  CREATE TABLE customers (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    remark     TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  -- 线路 = 客户在某块面板上的一个 client。kind:direct 客户端直连这块面板;relay 这块面板是中转,流量转到出口。
+  -- 出口(只有 relay 有):exit_kind panel = 落地面板(exit_panel_id,经它上面的 socks 入站 exit_port),socks = SOCKS 页登记的(exit_socks_id)
+  CREATE TABLE lines (
+    id             INTEGER PRIMARY KEY,
+    customer_id    INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    kind           TEXT NOT NULL CHECK (kind IN ('direct', 'relay')),
+    panel_id       INTEGER NOT NULL REFERENCES panels(id) ON DELETE CASCADE,
+    inbound_id     INTEGER NOT NULL,
+    inbound_remark TEXT NOT NULL DEFAULT '',
+    protocol       TEXT NOT NULL DEFAULT '',
+    email          TEXT NOT NULL,
+    exit_kind      TEXT CHECK (exit_kind IN ('panel', 'socks')),
+    exit_panel_id  INTEGER REFERENCES panels(id) ON DELETE SET NULL,
+    exit_port      INTEGER,
+    exit_socks_id  INTEGER REFERENCES socks_proxies(id) ON DELETE SET NULL,
+    exit_label     TEXT NOT NULL DEFAULT '',
+    created_at     INTEGER NOT NULL,
+    UNIQUE (panel_id, email)
+  );
+  CREATE INDEX lines_customer ON lines(customer_id);
+  `,
 ];
 
 export function openDb(file: string): DB {

@@ -23,9 +23,14 @@ export interface ClientAdmin {
 
 export interface CreateClientInput {
   protocol?: unknown;
+  /** 指定挂到哪个已有入站(不传则按协议自动选 / 新建) */
+  inbound_id?: unknown;
   /** 客户端名称,作为面板上 client 的 email(同一面板内唯一,重名自动加后缀) */
   name?: unknown;
 }
+
+/** 能给客户端用的入站协议(shadowsocks 等密钥格式各异,不自动开) */
+export const CLIENT_PROTOCOLS = new Set(['vless', 'hysteria', 'trojan', 'vmess']);
 
 export interface CreatedClient {
   email: string;
@@ -162,27 +167,43 @@ async function createInbound(protocol: ClientProtocol, panel: Panel, admin: Clie
   return created;
 }
 
+/** 选定或新建一个能挂客户端的入站:给了 inbound_id 就用它,否则按协议复用 / 新建(forceNew 时不复用,一定新建)。不关闭 admin */
+export async function ensureInbound(
+  panel: Panel,
+  admin: ClientAdmin,
+  choice: { inbound_id?: unknown; protocol?: unknown; forceNew?: boolean },
+  opts: CreateOptions = {},
+): Promise<{ inbound: any; created: boolean; protocol: string }> {
+  const [inbounds, clients] = await Promise.all([admin.listInbounds(), admin.listClients()]);
+  if (choice.inbound_id != null && choice.inbound_id !== '') {
+    const id = Number(choice.inbound_id);
+    const inbound = inbounds.find((ib) => Number(ib.id) === id);
+    if (!inbound) throw new InputError('面板上没有这个入站');
+    if (!CLIENT_PROTOCOLS.has(String(inbound.protocol))) throw new InputError(`${inbound.protocol} 入站不能挂客户端,选 vless / hy2 / trojan / vmess 的`);
+    if (inbound.enable === false) throw new InputError('这个入站已停用');
+    return { inbound, created: false, protocol: String(inbound.protocol) };
+  }
+  const protocol = protocolOf(choice.protocol);
+  const existing = choice.forceNew ? undefined : reusable(protocol, inbounds, clients);
+  if (existing) return { inbound: existing, created: false, protocol };
+  return { inbound: await createInbound(protocol, panel, admin, inbounds, opts), created: true, protocol };
+}
+
+/** 在入站上新建一个客户端(email 由名称生成、面板内唯一),读回核对,返回分享链接。不关闭 admin */
+export async function addClientTo(admin: ClientAdmin, inbound: any, name: unknown): Promise<{ email: string; links: string[] }> {
+  const email = emailFor(name, new Set((await admin.listClients()).map((c) => String(c.email))));
+  const inboundId = Number(inbound.id);
+  await admin.addClient(newClient(email, inbound), [inboundId]);
+  const back = (await admin.listClients()).find((c) => c.email === email);
+  if (!back || !(back.inboundIds ?? []).map(Number).includes(inboundId)) throw new Error('client 建好后读回没找到,或没挂到入站上');
+  return { email, links: await admin.clientLinks(email) };
+}
+
 export async function createClient(panel: Panel, admin: ClientAdmin, input: CreateClientInput, opts: CreateOptions = {}): Promise<CreatedClient> {
-  const protocol = protocolOf(input.protocol);
   try {
-    const [inbounds, clients] = await Promise.all([admin.listInbounds(), admin.listClients()]);
-    const email = emailFor(input.name, new Set(clients.map((c) => String(c.email))));
-    let inbound = reusable(protocol, inbounds, clients);
-    let created = false;
-    if (!inbound) {
-      inbound = await createInbound(protocol, panel, admin, inbounds, opts);
-      created = true;
-    }
-    const inboundId = Number(inbound.id);
-    await admin.addClient(newClient(email, inbound), [inboundId]);
-    const back = (await admin.listClients()).find((c) => c.email === email);
-    if (!back || !(back.inboundIds ?? []).map(Number).includes(inboundId)) throw new Error('client 建好后读回没找到,或没挂到入站上');
-    return {
-      email,
-      protocol,
-      inbound: { id: inboundId, remark: String(inbound.remark ?? ''), port: Number(inbound.port), created },
-      links: await admin.clientLinks(email),
-    };
+    const { inbound, created, protocol } = await ensureInbound(panel, admin, input, opts);
+    const { email, links } = await addClientTo(admin, inbound, input.name);
+    return { email, protocol: protocol as ClientProtocol, inbound: { id: Number(inbound.id), remark: String(inbound.remark ?? ''), port: Number(inbound.port), created }, links };
   } finally {
     await admin.close?.().catch(() => {});
   }

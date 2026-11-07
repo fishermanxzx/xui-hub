@@ -6,6 +6,8 @@ import { createClient, type ClientAdmin } from '../clients/create';
 import { checkAllPanels, checkPanel, type PanelProbe } from '../panels/check';
 import { readPanelDetail, type PanelReader } from '../panels/inbounds';
 import { createPanel, deletePanel, getPanel, InputError, listPanels, toPanelView, updatePanel, type Panel } from '../panels/repo';
+import { createCustomer, deleteCustomer, getCustomer, getLine, listCustomers, updateCustomer, deleteLine } from '../customers/repo';
+import { openLine, removeLine, type LineAdmin } from '../lines/open';
 import { checkSocks } from '../socks/check';
 import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, saveCheck, updateSocks } from '../socks/repo';
 import { XUIError } from '../xui/client';
@@ -21,7 +23,7 @@ import {
   verifySession,
 } from './auth';
 
-export interface PanelClient extends ClientAdmin, PanelReader, PanelProbe {
+export interface PanelClient extends ClientAdmin, PanelReader, PanelProbe, LineAdmin {
   deleteClient(email: string): Promise<void>;
   serverStatus(): Promise<{ panelVersion: string; xrayVersion: string; xrayState: string; xrayError: string }>;
   xrayVersions(): Promise<string[]>;
@@ -222,6 +224,63 @@ export function apiRouter(deps: RouteDeps): Router {
       } finally {
         await client.close?.().catch(() => {});
       }
+    }),
+  );
+
+  // ---------- 客户与线路 ----------
+  const customerOf = (id: number) => {
+    const c = getCustomer(db, id);
+    if (!c) throw new InputError('客户不存在');
+    return c;
+  };
+  r.get('/customers', wrap(() => listCustomers(db)));
+  r.post('/customers', wrap((req) => customerOf(createCustomer(db, req.body ?? {}))));
+  r.patch(
+    '/customers/:id',
+    wrap((req) => {
+      updateCustomer(db, idParam(req), req.body ?? {});
+      return customerOf(idParam(req));
+    }),
+  );
+  // 删除客户:先删掉他在各面板上的 client,有删不掉的照样删记录,结果里列出来
+  r.delete(
+    '/customers/:id',
+    wrap(async (req) => {
+      const c = customerOf(idParam(req));
+      const failed: { line: string; error: string }[] = [];
+      for (const line of c.lines) {
+        try {
+          await removeLine(db, line, deps.clientFor);
+        } catch (e) {
+          failed.push({ line: `${line.panel_name} 上的 ${line.email}`, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      deleteCustomer(db, c.id);
+      return { failed };
+    }),
+  );
+  // 开线路:直连 / 中转(见 lines/open.ts)
+  r.post('/customers/:id/lines', wrap((req) => openLine(db, idParam(req), req.body ?? {}, deps.clientFor, deps.probe)));
+  const lineOf = (req: Request) => {
+    const line = getLine(db, Number(req.params.lid));
+    if (!line || line.customer_id !== idParam(req)) throw new InputError('线路不存在');
+    return line;
+  };
+  r.get(
+    '/customers/:id/lines/:lid/links',
+    wrap(async (req) => {
+      const line = lineOf(req);
+      const panel = getPanel(db, line.panel_id);
+      if (!panel) throw new InputError('线路所在的面板已删除');
+      return withClient(panel, async (client) => ({ links: await client.clientLinks(line.email) }));
+    }),
+  );
+  r.delete(
+    '/customers/:id/lines/:lid',
+    wrap(async (req) => {
+      const line = lineOf(req);
+      await removeLine(db, line, deps.clientFor);
+      deleteLine(db, line.id);
     }),
   );
 

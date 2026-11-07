@@ -1,4 +1,4 @@
-import type { ClientProtocol, CreatedClient, Panel, PanelDetail, PanelInput, PanelVersions, Socks, SocksInput, UpdateStatus } from './types';
+import type { ClientProtocol, CreatedClient, Customer, CustomerInput, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Socks, SocksInput, UpdateStatus } from './types';
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -47,6 +47,15 @@ export const api = {
     call<CreatedClient>('POST', `/api/panels/${panelId}/clients`, { name, protocol }),
   clientLinks: (panelId: number, email: string) => call<{ links: string[] }>('GET', `/api/panels/${panelId}/clients/${encodeURIComponent(email)}/links`),
   deleteClient: (panelId: number, email: string) => call('DELETE', `/api/panels/${panelId}/clients/${encodeURIComponent(email)}`),
+
+  customers: () => call<Customer[]>('GET', '/api/customers'),
+  createCustomer: (body: CustomerInput) => call<Customer>('POST', '/api/customers', body),
+  updateCustomer: (id: number, body: CustomerInput) => call<Customer>('PATCH', `/api/customers/${id}`, body),
+  /** 先删掉客户在各面板上的 client(删不掉的列在 failed 里),再删客户 */
+  deleteCustomer: (id: number) => call<{ failed: { line: string; error: string }[] }>('DELETE', `/api/customers/${id}`),
+  openLine: (id: number, body: OpenLineInput) => call<OpenedLine>('POST', `/api/customers/${id}/lines`, body),
+  lineLinks: (id: number, lineId: number) => call<{ links: string[] }>('GET', `/api/customers/${id}/lines/${lineId}/links`),
+  deleteLine: (id: number, lineId: number) => call('DELETE', `/api/customers/${id}/lines/${lineId}`),
 
   socks: () => call<Socks[]>('GET', '/api/socks'),
   createSocks: (body: SocksInput) => call<Socks>('POST', '/api/socks', body),
