@@ -22,42 +22,54 @@ Node 22 + Express + SQLite + Vue 3,单容器 Docker 部署。
 
 ## 部署
 
-### 服务器
+两种方式二选一,效果一样:默认直接开 `http://<服务器 IP>:8788`,不需要域名。服务器 1 核 / 1 GB 内存足够,Debian 12 或 Ubuntu 22.04 / 24.04;出站要能访问各面板的 API 端口,入站开 SSH 和 8788(云服务器还要在安全组里放行)。
 
-- 1 核 / 1 GB 内存足够。Debian 12 或 Ubuntu 22.04 / 24.04,装 Docker Engine 和 compose 插件(`curl -fsSL https://get.docker.com | sh`)。
-- 出站要能访问各面板的 API 端口;入站开 SSH 和 8788。
+### 方式一:一键脚本(systemd)
 
-### 安装
+root 执行:
 
 ```bash
-# 1. 拉代码
-git clone https://github.com/fishermanxzx/xui-hub.git /opt/xui-hub
+bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/install.sh)
+```
 
-# 2. 配置
+脚本会装 Node 22、把代码拉到 `/opt/xui-hub`、构建、生成随机后台密码写进 `/opt/xui-hub/.env`,用 systemd 托管(服务名 `xui-hub`,专用用户 `xuihub`),最后打印后台地址和密码。ufw 开着的话顺手放行端口。
+
+之后用 `xui-hub` 命令管理:
+
+| 命令 | 作用 |
+|---|---|
+| `xui-hub status` / `xui-hub logs` | 运行状态 / 实时日志 |
+| `xui-hub update` | 拉最新代码、重新构建、重启(再跑一遍安装脚本也一样) |
+| `xui-hub password` | 重设后台密码 |
+| `xui-hub restart` / `start` / `stop` | 启停 |
+| `xui-hub uninstall` | 停掉服务并删除,会问要不要保留数据目录 |
+
+### 方式二:Docker
+
+```bash
+git clone https://github.com/fishermanxzx/xui-hub.git /opt/xui-hub
 cd /opt/xui-hub
 cp .env.example .env && vi .env          # 设置 ADMIN_PASSWORD
 mkdir -p data && chown 1000:1000 data    # 容器以 uid 1000(node)运行
-
-# 3. 启动
 docker compose up -d --build
-docker compose ps          # STATUS 显示 healthy
+docker compose ps                        # STATUS 显示 healthy
 ```
 
-浏览器打开 `http://<服务器 IP>:8788`,用 `ADMIN_PASSWORD` 登录,「添加面板」填上 3x-ui 的地址和 API token(面板设置 → API 里生成),点面板名称进去「创建客户端」。
+更新:`/opt/xui-hub/deploy.sh`(`git pull --ff-only` → 重建并等健康检查)。
 
-后台密码走明文 HTTP,登录失败按 IP 限流。要 HTTPS 的话在前面放 Caddy 或 Nginx 反代到 8788,并在 `.env` 里设 `LISTEN_ADDR=127.0.0.1` 只绑本机。
+### 之后
 
-### 环境变量
+浏览器打开 `http://<服务器 IP>:8788`,用后台密码登录,「添加面板」填上 3x-ui 的地址和 API token(面板设置 → API 里生成),点面板名称进去「创建客户端」。
+
+数据只有 `data/hub.db` 一个文件(面板的地址和 token),备份它就够。后台密码走明文 HTTP,登录失败按 IP 限流;要 HTTPS 的话在前面放 Caddy 或 Nginx 反代到 8788,并在 `.env` 里设 `LISTEN_ADDR=127.0.0.1` 只绑本机。
+
+### 环境变量(`.env`,两种方式通用)
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `ADMIN_PASSWORD` | 空 | 后台密码,必须设置 |
-| `LISTEN_ADDR` / `HOST_PORT` | `0.0.0.0` / `8788` | 宿主机上监听的地址和端口 |
+| `ADMIN_PASSWORD` | 空 | 后台密码,必须设置(一键脚本会自动生成) |
+| `LISTEN_ADDR` / `HOST_PORT` | `0.0.0.0` / `8788` | 监听的地址和端口 |
 | `CHECK_INTERVAL_SEC` | `300` | 多久自动检查一次面板连通性(秒) |
-
-### 更新
-
-服务器上执行 `/opt/xui-hub/deploy.sh`(`git pull --ff-only` → 重建并等健康检查)。数据在 `data/hub.db`,只有面板的地址和 token。
 
 ## 开发
 
