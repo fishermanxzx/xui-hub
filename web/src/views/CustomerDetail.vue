@@ -21,6 +21,7 @@ import {
   nextMonthlyReset,
   shortUa,
   STATE_LABEL,
+  subUrl,
 } from '../format';
 import { toast, toastError } from '../toast';
 import type { ClientRow, Customer, CustomerInput, CustomerStatus, DailyUsage, Line, LineAction, LineOpResult, OpenLineResult, SubPreviewLine } from '../types';
@@ -329,17 +330,16 @@ onMounted(load);
           <button @click="showFetches = !showFetches">{{ showFetches ? '收起拉取记录' : '拉取记录' }}</button>
           <button :disabled="previewing" @click="loadPreview">{{ previewing ? '读取中…' : '预览节点' }}</button>
         </div>
-        <div v-if="customer.sub_url" class="sub-row">
-          <input class="grow" readonly :value="customer.sub_url" aria-label="订阅链接" @focus="($event.target as HTMLInputElement).select()" />
-          <button class="primary" @click="copyText(customer.sub_url!, '订阅链接已复制')">复制链接</button>
+        <div class="sub-row">
+          <input class="grow" readonly :value="subUrl(customer)" aria-label="订阅链接" @focus="($event.target as HTMLInputElement).select()" />
+          <button class="primary" @click="copyText(subUrl(customer), '订阅链接已复制')">复制链接</button>
           <button :aria-expanded="showQr" @click="showQr = !showQr">{{ showQr ? '收起二维码' : '二维码' }}</button>
           <button class="danger" @click="resetLink">重置链接</button>
         </div>
-        <p v-else class="notice small">还没有配置订阅域名（SUB_BASE_URL），生成不了订阅链接。</p>
         <p class="muted small hint">
           包含全部 {{ customer.lines.length }} 条线路，带全局的已用、额度和到期。格式按客户端自动给：Clash、Mihomo、Stash、Shadowrocket 拿 Clash 配置，sing-box、Hiddify 拿 sing-box 配置，v2rayN 等拿节点链接。
         </p>
-        <SubQr v-if="showQr && customer.sub_url" class="qr-block" :url="customer.sub_url" :name="customer.name" />
+        <SubQr v-if="showQr" class="qr-block" :url="subUrl(customer)" :name="customer.name" />
         <div v-if="preview" class="preview">
           <div class="small"><span class="figure">{{ previewCount }}</span> 个节点</div>
           <div v-for="l in preview" :key="l.panel_id + l.email" class="preview-line small">

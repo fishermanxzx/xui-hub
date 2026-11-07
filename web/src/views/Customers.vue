@@ -6,7 +6,7 @@ import Modal from '../components/Modal.vue';
 import DailyTraffic from '../components/DailyTraffic.vue';
 import DirectLines from '../components/DirectLines.vue';
 import UsageBar from '../components/UsageBar.vue';
-import { dateInputToMs, daysUntil, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDue, fmtPrice, gbToBytes, shortUa, STATE_LABEL } from '../format';
+import { dateInputToMs, daysUntil, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDue, fmtPrice, gbToBytes, shortUa, STATE_LABEL, subUrl } from '../format';
 import { toast, toastError } from '../toast';
 import type { Customer, CustomerState, OverallDaily, Panel } from '../types';
 import CustomerDetail from './CustomerDetail.vue';
@@ -474,8 +474,8 @@ onUnmounted(() => clearInterval(timer));
               <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ STATE_LABEL[c.state] }}</span>
             </td>
             <td class="c-act num">
-              <div v-if="c.sub_url" class="acts">
-                <button class="link small" @click.stop="copyText(c.sub_url, `已复制「${c.name}」的订阅链接`)">复制订阅</button>
+              <div class="acts">
+                <button class="link small" @click.stop="copyText(subUrl(c), `已复制「${c.name}」的订阅链接`)">复制订阅</button>
                 <button class="link small" @click.stop="qrFor = c">二维码</button>
               </div>
             </td>
@@ -509,8 +509,8 @@ onUnmounted(() => clearInterval(timer));
     </template>
   </Modal>
 
-  <Modal v-if="qrFor?.sub_url" :title="`「${qrFor.name}」的订阅二维码`" @close="qrFor = null">
-    <SubQr :url="qrFor.sub_url" :name="qrFor.name" />
+  <Modal v-if="qrFor" :title="`「${qrFor.name}」的订阅二维码`" @close="qrFor = null">
+    <SubQr :url="subUrl(qrFor)" :name="qrFor.name" />
   </Modal>
 
   <CustomerDetail v-if="openId != null" :id="openId" @close="openId = null" @changed="load" />

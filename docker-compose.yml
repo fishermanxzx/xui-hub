@@ -13,8 +13,9 @@ services:
     depends_on:
       - subconverter
     ports:
-      # 只绑宿主机本地:公网访问经下面的 caddy(HTTPS),或用 SSH 隧道
-      - "127.0.0.1:8788:8788"
+      # 默认直接对公网开 8788(http://<服务器 IP>:8788 同时是后台和订阅地址)。
+      # 要走下面的 caddy(HTTPS)或 Cloudflare Tunnel 时,在 .env 里设 LISTEN_ADDR=127.0.0.1 只绑本机
+      - "${LISTEN_ADDR:-0.0.0.0}:${HOST_PORT:-8788}:8788"
     volumes:
       # 数据库(含面板 token)。宿主机目录需属于 uid 1000:mkdir -p data && sudo chown 1000:1000 data
       - ./data:/data
@@ -31,7 +32,7 @@ services:
     restart: unless-stopped
     logging: *logging
 
-  # 公网 HTTPS 入口(可选):.env 里设置 DOMAIN 后用 `docker compose --profile https up -d` 启动
+  # 公网 HTTPS 入口(可选,需要域名):.env 里设置 DOMAIN、COMPOSE_PROFILES 加上 https
   caddy:
     image: caddy:2.10
     container_name: xui-hub-caddy

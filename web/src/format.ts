@@ -1,5 +1,10 @@
 // 展示格式化与单位换算。
 
+/** 客户的订阅链接:服务端配了 SUB_BASE_URL 用它,否则用当前打开后台的地址 */
+export function subUrl(c: { sub_url: string | null; sub_token: string }): string {
+  return c.sub_url ?? `${location.origin}/sub/${c.sub_token}`;
+}
+
 const GB = 1024 ** 3;
 
 export function fmtBytes(n: number): string {

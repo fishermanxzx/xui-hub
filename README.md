@@ -18,7 +18,7 @@ Node 22 + Express + SQLite + Vue 3,单容器 Docker 部署,订阅转换用 compo
 
 **订阅**
 
-- 每个客户一条链接 `https://sub.example.com/sub/<token>`,token 随机生成,可随时「重置链接」让旧链接失效;可生成二维码。
+- 每个客户一条链接 `http://<服务器>:8788/sub/<token>`,token 随机生成,可随时「重置链接」让旧链接失效;可生成二维码。
 - 节点每次拉取时从各面板现取,不缓存:线路换了入站马上生效;全部线路都取不到时返回 502,客户端保留原配置。响应头 `subscription-userinfo` 带全局已用 / 额度 / 到期,导入后显示客户名。
 - 按客户端 UA 返回格式,`?target=` 可强制指定:
 
@@ -31,7 +31,7 @@ Node 22 + Express + SQLite + Vue 3,单容器 Docker 部署,订阅转换用 compo
   | v2rayN / v2rayNG / 浏览器等 | base64 节点链接 |
 
 - 记录每次拉取的客户端 UA、来源 IP、格式和结果,客户列表显示近几天用了几个客户端、来自几个 IP,便于发现链接被分享。
-- 订阅域名可与后台域名分开:订阅域名只放行 `/sub/<token>`,后台域名不提供订阅。
+- 可选:订阅用单独的域名(经 Cloudflare Tunnel 回源),订阅域名只放行 `/sub/<token>`,后台域名不提供订阅。
 
 **面板**
 
@@ -58,12 +58,9 @@ Node 22 + Express + SQLite + Vue 3,单容器 Docker 部署,订阅转换用 compo
 
 ### 服务器
 
-- **配置**:1 核 / 1 GB 内存 / 10–20 GB 磁盘足够。进程内存约 100 MB。
-- **系统**:Debian 12 或 Ubuntu 24.04 LTS,装 Docker Engine 和 compose 插件(`curl -fsSL https://get.docker.com | sh`)。
+- **配置**:1 核 / 1 GB 内存 / 10–20 GB 磁盘足够,进程内存约 100 MB。Debian 12 或 Ubuntu 22.04 / 24.04,装 Docker Engine 和 compose 插件(`curl -fsSL https://get.docker.com | sh`)。
 - **位置**:最好和面板同区域。不要放国内(直连面板不稳定),也不要放在落地机上(落地机常换,且承载客户流量)。
-- **网络**:出站要能访问各面板的 API 端口;入站只开 SSH(启用 Caddy 时加 443)。不启用 Caddy 时后台不对公网开放,用 SSH 隧道访问:`ssh -L 8788:127.0.0.1:8788 root@<服务器>`,浏览器打开 http://127.0.0.1:8788。
-- **公网 HTTPS(可选)**:域名 A 记录指向服务器,`.env` 里设置 `DOMAIN=<域名>`,执行 `docker compose --profile https up -d`。Caddy 只占 443(不占 80,同机 3x-ui 用 acme.sh 续证书时要用 80),证书经 TLS-ALPN 自动申请续期;不做 http→https 跳转。后台仍需密码登录,登录失败按客户端 IP 限流。
-- **订阅域名(Cloudflare Tunnel)**:Cloudflare Zero Trust 新建隧道,token 写进 `.env` 的 `CF_TUNNEL_TOKEN`,`COMPOSE_PROFILES` 加上 `tunnel`,`SUB_DOMAINS` 和 `SUB_BASE_URL` 写订阅域名,隧道路由服务填 `http://app:8788`。服务器 IP 被墙时订阅仍可更新。
+- **网络**:出站要能访问各面板的 API 端口;入站开 SSH 和 8788(后台与订阅都走它)。
 
 ### 首次部署
 
@@ -82,16 +79,26 @@ docker compose ps          # STATUS 显示 healthy
 docker compose logs -f
 ```
 
-打开后台,先在「面板」页添加面板(3x-ui 地址、API token、类型),再在「客户」页新建客户、开通线路、复制订阅链接。
+浏览器打开 `http://<服务器 IP>:8788`,用 `ADMIN_PASSWORD` 登录。先在「面板」页添加面板(3x-ui 地址、API token、类型),再在「客户」页新建客户、开通线路、复制订阅链接。客户的订阅链接默认就是 `http://<服务器 IP>:8788/sub/<token>`,不需要域名。
+
+后台密码走明文 HTTP,登录失败按 IP 限流;在意的话用下面的 HTTPS 方案,或者 `LISTEN_ADDR=127.0.0.1` 只绑本机、用 SSH 隧道(`ssh -L 8788:127.0.0.1:8788 root@<服务器>`)访问后台。
+
+### 可选:HTTPS 和独立订阅域名
+
+两项都不是必需的,只在有域名、想把后台和订阅分开时用。
+
+- **后台 HTTPS(Caddy)**:域名 A 记录指向服务器,`.env` 里设 `DOMAIN=<域名>`、`LISTEN_ADDR=127.0.0.1`、`COMPOSE_PROFILES=https`,开放 443,`docker compose up -d`。Caddy 只占 443(不占 80,同机 3x-ui 用 acme.sh 续证书时要用 80),证书经 TLS-ALPN 自动申请续期;不做 http→https 跳转。
+- **订阅域名(Cloudflare Tunnel)**:服务器 IP 被墙时订阅仍可更新。Cloudflare Zero Trust 新建隧道,公共主机名指向 `http://app:8788`;`.env` 里设 `CF_TUNNEL_TOKEN`、`SUB_DOMAINS=sub.example.com`、`SUB_BASE_URL=https://sub.example.com`,`COMPOSE_PROFILES` 加上 `tunnel`。订阅域名只放行 `/sub/<token>`,后台域名不提供订阅。
 
 ### 环境变量
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `ADMIN_PASSWORD` | 空 | 后台密码。容器内监听 0.0.0.0,必须设置 |
-| `SUB_BASE_URL` | 空 | 订阅链接的域名,如 `https://sub.example.com`;空 = 后台生成不了订阅链接 |
+| `ADMIN_PASSWORD` | 空 | 后台密码,必须设置 |
+| `LISTEN_ADDR` / `HOST_PORT` | `0.0.0.0` / `8788` | 宿主机上监听的地址和端口。用 Caddy 或 Tunnel 时改成 `127.0.0.1` 只绑本机 |
+| `SUB_BASE_URL` | 空 | 订阅链接的地址前缀;空 = 用打开后台时的地址。订阅走单独域名时填,如 `https://sub.example.com` |
 | `SUB_DOMAINS` | 空 | 订阅专用域名(逗号分隔):只提供订阅,后台与其他路径 404 |
-| `DOMAIN` | 空 | 后台域名(启用 caddy 时必填,A 记录指向本机) |
+| `DOMAIN` | 空 | 后台 HTTPS 域名(启用 caddy 时必填) |
 | `CF_TUNNEL_TOKEN` | 空 | Cloudflare Tunnel token(启用 tunnel 时必填) |
 | `MIHOMO_TEMPLATE` | 空 | Clash 输出套 Mihomo 头部模板(dns / tcp-concurrent / unified-delay)的范围:`all` / 逗号分隔的客户名 / 空 = 关闭 |
 | `SYNC_INTERVAL_SEC` / `SYNC_CONCURRENCY` | `60` / `8` | 同步间隔(秒)与同时同步的面板数 |

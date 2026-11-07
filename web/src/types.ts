@@ -226,7 +226,7 @@ export interface Customer {
   monthly_reset_at: number;
   /** 订阅链接 /sub/<token> 里的 token,每个客户一个 */
   sub_token: string;
-  /** 订阅链接;未配置 SUB_BASE_URL 时为 null */
+  /** 订阅链接;未配置 SUB_BASE_URL 时为 null,前端用当前地址拼(format.ts 的 subUrl) */
   sub_url: string | null;
   sub_fetched_at: number | null;
   /** 上次拉取订阅用的客户端(User-Agent) */

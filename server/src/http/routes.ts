@@ -67,7 +67,7 @@ export interface RouteDeps {
   historyDays: number;
   /** 订阅拉取记录保留天数 */
   subLogDays: number;
-  /** 订阅链接域名(SUB_BASE_URL);空 = 生成不了订阅链接 */
+  /** 订阅链接地址前缀(SUB_BASE_URL);空 = sub_url 为 null,前端用打开后台的地址拼 */
   subBaseUrl: string;
   linkFetcher: LinkFetcher;
   /** 操作面板上的 client(流量清零、启用/停用、清面板限制) */

@@ -51,7 +51,7 @@ export const env = {
   subLogDays: positiveInt('SUB_LOG_DAYS', 7),
   /** 订阅专用域名(SUB_DOMAINS,逗号分隔):只提供订阅,经 Cloudflare Tunnel 回源 */
   subDomains: (process.env.SUB_DOMAINS ?? '').split(',').map((d) => d.trim().toLowerCase()).filter(Boolean),
-  /** 订阅链接的域名,如 https://sub.example.com;空 = 后台生成不了订阅链接 */
+  /** 订阅链接的地址前缀,如 https://sub.example.com;空 = 前端用打开后台的地址拼 */
   subBaseUrl: (process.env.SUB_BASE_URL?.trim() || '').replace(/\/+$/, ''),
   /** Clash 输出套用 Mihomo 基础模板的范围:all / 逗号分隔的客户名(灰度)/ 空 = 关闭 */
   mihomoTemplate: process.env.MIHOMO_TEMPLATE ?? '',
