@@ -113,7 +113,7 @@ test('没有入站时新建:照其他面板的 reality 入站复制并换密钥,
   assert.equal(data.d.clients.length, 0);
 });
 
-test('hy2:照其他面板的 hy2 入站建,证书换成本面板的、混淆密码重新生成;没证书或没模板时报错', async () => {
+test('hy2:照其他面板的 hy2 入站建,证书换成本面板的、混淆密码重新生成;没模板用内置的;没证书报错', async () => {
   const db = memoryDb();
   const a = addPanel(db, 'a', 'https://a.example.com:2053/p');
   const b = addPanel(db, 'b');
@@ -134,8 +134,20 @@ test('hy2:照其他面板的 hy2 入站建,证书换成本面板的、混淆密�
   const again = await createClient(a, adminFor(a), { name: 'li', protocol: 'hy2' }, { otherPanels: [a, b], adminFor });
   assert.deepEqual([again.email, again.inbound.created], ['li-2', false]);
 
+  // 其他面板都没有 hy2 入站:用内置模板,证书还是本面板的
+  const c = addPanel(db, 'c', 'https://9.9.9.9:2053/p');
+  data.c = { inbounds: [], clients: [], cert: '/root/cert/c/fullchain.pem' };
+  const builtin = await createClient(c, adminFor(c), { name: 'y', protocol: 'hy2' }, { otherPanels: [c, a], adminFor: (p) => adminFor({ ...p, name: p.name === 'a' ? 'nope' : p.name }) });
+  assert.equal(builtin.inbound.created, true);
+  const cs = decodeJson(data.c.inbounds[0].streamSettings);
+  assert.deepEqual([cs.network, cs.security, cs.hysteriaSettings.version, cs.tlsSettings.alpn, cs.tlsSettings.serverName], ['hysteria', 'tls', 2, ['h3'], '9.9.9.9']);
+  assert.equal(cs.tlsSettings.certificates[0].certificateFile, '/root/cert/c/fullchain.pem');
+  assert.deepEqual(decodeJson(data.c.inbounds[0].settings), { version: 2, clients: [] });
+  assert.equal(data.c.inbounds[0].protocol, 'hysteria');
+
+  // 面板没配证书:不管有没有模板都报错
   const noCert = addPanel(db, 'nocert');
   data.nocert = { inbounds: [], clients: [] };
   await assert.rejects(createClient(noCert, adminFor(noCert), { name: 'x', protocol: 'hy2' }, { otherPanels: [noCert, b], adminFor }), /证书/);
-  await assert.rejects(createClient(noCert, adminFor(noCert), { name: 'x', protocol: 'hy2' }, { otherPanels: [noCert], adminFor }), /没有 hy2 入站/);
+  await assert.rejects(createClient(noCert, adminFor(noCert), { name: 'x', protocol: 'hy2' }, { otherPanels: [noCert], adminFor }), /证书/);
 });

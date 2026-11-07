@@ -1,4 +1,5 @@
-// 新建入站用的模板:先照这台面板或其他面板上已有的同协议入站复制(换新密钥 / 证书),都没有时 vless 用内置的 reality 模板。
+// 新建入站用的模板:先照其他面板上已有的同协议入站复制(换新密钥 / 证书),都没有时用内置模板(vless reality / hy2)。
+// 结构按 3x-ui v3 的表单默认值(frontend/src/schemas/protocols)写。
 // 字段格式与 3x-ui /inbounds/list 返回的一致(settings、streamSettings 等为 JSON 字符串),可以直接提交给 /inbounds/add。
 
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
@@ -84,6 +85,43 @@ export function builtinVlessReality(): any {
         settings: { publicKey: keys.publicKey, fingerprint: 'chrome', serverName: '', spiderX: '/', mldsa65Verify: '' },
       },
       tcpSettings: { acceptProxyProtocol: false, header: { type: 'none' } },
+    }),
+    sniffing: JSON.stringify({ enabled: true, destOverride: ['http', 'tls', 'quic', 'fakedns'], metadataOnly: false, routeOnly: false }),
+    allocate: JSON.stringify({ strategy: 'always', refresh: 5, concurrency: 3 }),
+  };
+}
+
+/** 内置的 hysteria2 入站:TLS 用面板自己配置的证书,SNI 填面板地址;不开混淆。面板没配证书时建不了 */
+export function builtinHysteria2(cert: { certFile: string; keyFile: string }, serverName: string): any {
+  return {
+    up: 0,
+    down: 0,
+    total: 0,
+    remark: '',
+    enable: true,
+    expiryTime: 0,
+    listen: '',
+    port: 0,
+    protocol: 'hysteria',
+    settings: JSON.stringify({ version: 2, clients: [] }),
+    streamSettings: JSON.stringify({
+      network: 'hysteria',
+      security: 'tls',
+      externalProxy: [],
+      hysteriaSettings: { version: 2, auth: '', udpIdleTimeout: 60 },
+      tlsSettings: {
+        serverName,
+        minVersion: '1.2',
+        maxVersion: '1.3',
+        cipherSuites: '',
+        rejectUnknownSni: false,
+        disableSystemRoot: false,
+        enableSessionResumption: false,
+        certificates: [{ certificateFile: cert.certFile, keyFile: cert.keyFile, ocspStapling: 3600, oneTimeLoading: false, usage: 'encipherment', buildChain: false }],
+        alpn: ['h3'],
+        echServerKeys: '',
+        settings: { fingerprint: '', echConfigList: '', pinnedPeerCertSha256: [], verifyPeerCertByName: '' },
+      },
     }),
     sniffing: JSON.stringify({ enabled: true, destOverride: ['http', 'tls', 'quic', 'fakedns'], metadataOnly: false, routeOnly: false }),
     allocate: JSON.stringify({ strategy: 'always', refresh: 5, concurrency: 3 }),

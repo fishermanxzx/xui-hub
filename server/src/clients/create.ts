@@ -1,6 +1,6 @@
 // 在一台面板上创建客户端(client),协议 vless(reality)或 hy2:
 // - 面板上已有这个协议、启用着的入站就复用(vless 优先 reality,都优先 client 多的);
-// - 没有就新建一个入站:照这台面板或其他面板上的同协议入站复制(换新密钥 / 证书),vless 都没有时用内置 reality 模板;
+// - 没有就新建一个入站:照其他面板上的同协议入站复制(换新密钥 / 证书),没有就用内置模板;
 //   hy2 新建需要这台面板配置了证书(面板设置里的证书路径)。
 // 建好后读回核对,再从面板取这个 client 的分享链接。
 
@@ -8,7 +8,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { connect } from 'node:net';
 import { InputError, type Panel } from '../panels/repo';
 import { decodeJson } from '../xui/json';
-import { builtinVlessReality, cloneInbound, freshHysteria, freshReality, isReality, isTemplate, type ClientProtocol } from './templates';
+import { builtinHysteria2, builtinVlessReality, cloneInbound, freshHysteria, freshReality, isReality, isTemplate, type ClientProtocol } from './templates';
 
 export interface ClientAdmin {
   listInbounds(): Promise<any[]>;
@@ -124,27 +124,29 @@ function remarkFor(protocol: ClientProtocol, inbounds: any[]): string {
   return name;
 }
 
-/** 新建入站照着谁:其他面板上的同协议入站(换密钥 / 证书),vless 都没有时用内置模板 */
+/** 新建入站照着谁:其他面板上的同协议入站(换密钥 / 证书),都没有就用内置模板。hy2 要这台面板配了证书 */
 async function templateFor(protocol: ClientProtocol, panel: Panel, admin: ClientAdmin, opts: CreateOptions): Promise<{ body: any; from: string }> {
+  let cert: { certFile: string; keyFile: string } | null = null;
+  if (protocol === 'hysteria') {
+    cert = await admin.panelCert();
+    if (!cert.certFile || !cert.keyFile) throw new InputError('这台面板没有配置证书,建不了 hy2 入站:先在面板设置(面板设置 → 证书)里填好证书,或用 x-ui 命令申请一张');
+  }
+  const host = new URL(panel.base_url).hostname;
   for (const other of opts.otherPanels ?? []) {
     if (other.id === panel.id || !opts.adminFor) continue;
     const client = opts.adminFor(other);
     try {
       const ib = (await client.listInbounds()).find(isTemplate(protocol));
       if (!ib) continue;
-      if (protocol === 'vless') return { body: freshReality(ib), from: `${other.name} 的 ${ib.remark || ib.port}` };
-      const cert = await admin.panelCert();
-      if (!cert.certFile || !cert.keyFile) throw new InputError('这台面板没有配置证书,建不了 hy2 入站:先在面板设置里申请证书,或在面板上手动建一个 hy2 入站');
-      return { body: freshHysteria(ib, cert, new URL(panel.base_url).hostname), from: `${other.name} 的 ${ib.remark || ib.port}` };
-    } catch (e) {
-      if (e instanceof InputError) throw e;
+      const from = `${other.name} 的 ${ib.remark || ib.port}`;
+      return protocol === 'vless' ? { body: freshReality(ib), from } : { body: freshHysteria(ib, cert!, host), from };
+    } catch {
       // 别的面板读不到就跳过
     } finally {
       await client.close?.().catch(() => {});
     }
   }
-  if (protocol === 'vless') return { body: builtinVlessReality(), from: '内置模板' };
-  throw new InputError('这台面板上没有 hy2 入站,其他面板上也没有可以照着建的:先在面板上手动建一个 hy2 入站');
+  return protocol === 'vless' ? { body: builtinVlessReality(), from: '内置模板' } : { body: builtinHysteria2(cert!, host), from: '内置模板' };
 }
 
 async function createInbound(protocol: ClientProtocol, panel: Panel, admin: ClientAdmin, inbounds: any[], opts: CreateOptions): Promise<any> {
