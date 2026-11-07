@@ -1,0 +1,28 @@
+[Unit]
+Description=xui-hub
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=180
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=xuihub
+Group=xuihub
+WorkingDirectory=/usr/local/xui-hub
+# .env 和 Docker 部署共用一套变量名:ADMIN_PASSWORD、LISTEN_ADDR、HOST_PORT
+EnvironmentFile=/etc/xui-hub/.env
+Environment=NODE_ENV=production
+Environment=DATA_DIR=/etc/xui-hub
+ExecStart=/bin/sh -c 'HOST="${LISTEN_ADDR:-0.0.0.0}" PORT="${HOST_PORT:-8788}" exec /usr/local/xui-hub/bin/node server/dist/index.js'
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/xui-hub
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

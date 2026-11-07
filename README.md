@@ -24,25 +24,26 @@ Node 22 + Express + SQLite + Vue 3,单容器 Docker 部署。
 
 两种方式二选一,效果一样:默认直接开 `http://<服务器 IP>:8788`,不需要域名。服务器 1 核 / 1 GB 内存足够,Debian 12 或 Ubuntu 22.04 / 24.04;出站要能访问各面板的 API 端口,入站开 SSH 和 8788(云服务器还要在安全组里放行)。
 
-### 方式一:一键脚本(systemd)
+### 方式一:一键脚本
 
-root 执行:
+root 执行(支持 Debian / Ubuntu / CentOS / Fedora / Arch 等 systemd 发行版,amd64 和 arm64):
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/install.sh)
 ```
 
-脚本会装 Node 22、把代码拉到 `/opt/xui-hub`、构建、生成随机后台密码写进 `/opt/xui-hub/.env`,用 systemd 托管(服务名 `xui-hub`,专用用户 `xuihub`),最后打印后台地址和密码。ufw 开着的话顺手放行端口。
+脚本从 [GitHub Release](https://github.com/fishermanxzx/xui-hub/releases) 下载按架构打好的包(自带 Node 运行时,服务器上不用装 Node / npm),校验 sha256 后解压到 `/usr/local/xui-hub`,数据和 `.env` 放在 `/etc/xui-hub`,用 systemd 托管(服务名 `xui-hub`,专用用户 `xuihub`)。交互运行时会问后台密码和端口,直接回车就是随机密码 + 8788;`curl | bash` 这类非交互方式下不提问,密码取环境变量 `XUIHUB_PASSWORD`(没有就随机生成并打印),端口取 `XUIHUB_PORT`。装完打印后台地址和密码,ufw / firewalld 开着的话顺手放行端口。后面加版本号可以装指定版本,如 `install.sh v0.1.0`。
 
-之后用 `xui-hub` 命令管理:
+之后用 `xui-hub` 命令管理,不带参数是菜单,也可以直接用子命令:
 
 | 命令 | 作用 |
 |---|---|
-| `xui-hub status` / `xui-hub logs` | 运行状态 / 实时日志 |
-| `xui-hub update` | 拉最新代码、重新构建、重启(再跑一遍安装脚本也一样) |
-| `xui-hub password` | 重设后台密码 |
-| `xui-hub restart` / `start` / `stop` | 启停 |
-| `xui-hub uninstall` | 停掉服务并删除,会问要不要保留数据目录 |
+| `xui-hub status` / `xui-hub log` | 运行状态 / 实时日志 |
+| `xui-hub update` | 更新到最新版(`xui-hub update v0.2.0` 指定版本) |
+| `xui-hub password` / `xui-hub port` | 重设后台密码 / 改端口 |
+| `xui-hub settings` | 当前设置 |
+| `xui-hub start` / `stop` / `restart` / `enable` / `disable` | 启停与开机自启 |
+| `xui-hub uninstall` | 卸载,会问要不要保留数据目录 |
 
 ### 方式二:Docker
 
@@ -63,7 +64,7 @@ docker compose ps                        # STATUS 显示 healthy
 
 数据只有 `data/hub.db` 一个文件(面板的地址和 token),备份它就够。后台密码走明文 HTTP,登录失败按 IP 限流;要 HTTPS 的话在前面放 Caddy 或 Nginx 反代到 8788,并在 `.env` 里设 `LISTEN_ADDR=127.0.0.1` 只绑本机。
 
-### 环境变量(`.env`,两种方式通用)
+### 环境变量(`.env`,两种方式通用;一键脚本的在 `/etc/xui-hub/.env`)
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
@@ -78,6 +79,8 @@ cd server && npm install && npm run dev    # http://127.0.0.1:8788
 cd web && npm install && npm run dev       # http://127.0.0.1:5174,/api 代理到 8788
 cd server && npm test                      # 测试
 ```
+
+发版:打 tag(`git tag v0.1.0 && git push origin v0.1.0`),GitHub Actions 会构建 amd64 / arm64 两个包并创建 Release;本地打包用 `scripts/build-release.sh amd64 v0.1.0`。
 
 ## License
 
