@@ -143,13 +143,14 @@ install_xui_hub() {
   systemctl enable -q "$SERVICE"
   systemctl restart "$SERVICE"
 
-  local port i
+  local port i scheme=http
   port="$(env_get HOST_PORT)"; port="${port:-8788}"
+  [ -n "$(env_get TLS_CERT_FILE)" ] && scheme=https
   for i in $(seq 1 30); do
-    curl -fsS -o /dev/null "http://127.0.0.1:$port/api/session" 2>/dev/null && break
+    curl -fsSk -o /dev/null "$scheme://127.0.0.1:$port/api/session" 2>/dev/null && break
     sleep 1
   done
-  if ! curl -fsS -o /dev/null "http://127.0.0.1:$port/api/session" 2>/dev/null; then
+  if ! curl -fsSk -o /dev/null "$scheme://127.0.0.1:$port/api/session" 2>/dev/null; then
     journalctl -u "$SERVICE" -n 30 --no-pager || true
     die "服务没有在 30 秒内就绪,看上面的日志(xui-hub log)"
   fi
@@ -157,7 +158,7 @@ install_xui_hub() {
 
   echo
   echo -e "${green}xui-hub $tag 安装完成,正在运行${plain}"
-  echo -e "  后台地址:${green}http://$(public_ip):$port${plain}"
+  echo -e "  后台地址:${green}$scheme://$(public_ip):$port${plain}"
   if [ -n "$NEW_PASSWORD" ]; then
     echo -e "  后台密码:${green}$NEW_PASSWORD${plain}   (已写入 $ENV_FILE)"
   else
@@ -172,6 +173,7 @@ install_xui_hub() {
 │  ${green}xui-hub update${plain}     更新到最新版              │
 │  ${green}xui-hub password${plain}   重设后台密码              │
 │  ${green}xui-hub port${plain}       改后台端口                │
+│  ${green}xui-hub ssl${plain}        SSL 证书管理(HTTPS)      │
 │  ${green}xui-hub uninstall${plain}  卸载                      │
 └──────────────────────────────────────────────┘"
 }

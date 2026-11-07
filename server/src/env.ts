@@ -18,6 +18,15 @@ export function isLoopbackHost(host: string): boolean {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1';
 }
 
+/** HTTPS 证书:TLS_CERT_FILE / TLS_KEY_FILE 都填才启用,都不填 = 纯 HTTP */
+function tlsFiles(): { cert: string; key: string } | null {
+  const cert = process.env.TLS_CERT_FILE?.trim() ?? '';
+  const key = process.env.TLS_KEY_FILE?.trim() ?? '';
+  if (!cert && !key) return null;
+  if (!cert || !key) throw new Error('TLS_CERT_FILE 和 TLS_KEY_FILE 要么都填,要么都不填');
+  return { cert, key };
+}
+
 export const env = {
   host: process.env.HOST?.trim() || '127.0.0.1',
   port: positiveInt('PORT', 8788),
@@ -26,4 +35,6 @@ export const env = {
   adminPassword: process.env.ADMIN_PASSWORD ?? '',
   /** 多久自动检查一次各面板连通性(秒) */
   checkIntervalSec: positiveInt('CHECK_INTERVAL_SEC', 300),
+  /** HTTPS 证书文件;null = HTTP */
+  tls: tlsFiles(),
 };

@@ -42,6 +42,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/in
 | `xui-hub update` | 更新到最新版(`xui-hub update v0.2.0` 指定版本) |
 | `xui-hub password` / `xui-hub port` | 重设后台密码 / 改端口 |
 | `xui-hub settings` | 当前设置 |
+| `xui-hub ssl` | SSL 证书管理:给域名或 IP 申请 Let's Encrypt 证书(也可走 Cloudflare DNS),设给 xui-hub 后台就变成 HTTPS,acme.sh 自动续期后自动重启。做法和 3x-ui 的 `x-ui` 菜单一致 |
 | `xui-hub start` / `stop` / `restart` / `enable` / `disable` | 启停与开机自启 |
 | `xui-hub uninstall` | 卸载,会问要不要保留数据目录 |
 
@@ -64,7 +65,9 @@ docker compose ps                        # STATUS 显示 healthy
 
 浏览器打开 `http://<服务器 IP>:8788`,用后台密码登录,「添加面板」填上 3x-ui 的地址和 API token(面板设置 → API 里生成),点面板名称进去「创建客户端」。
 
-数据只有 `data/hub.db` 一个文件(面板的地址和 token),备份它就够。后台密码走明文 HTTP,登录失败按 IP 限流;要 HTTPS 的话在前面放 Caddy 或 Nginx 反代到 8788,并在 `.env` 里设 `LISTEN_ADDR=127.0.0.1` 只绑本机。
+数据只有 `data/hub.db` 一个文件(面板的地址和 token),备份它就够。
+
+**HTTPS**:默认是明文 HTTP(登录失败按 IP 限流)。一键脚本装的用 `xui-hub ssl` 申请证书:没域名就选「IP 证书」(Let's Encrypt 给 IP 签 6 天短证书,自动续),有域名选域名证书或 Cloudflare DNS 验证;申请完会问要不要设给 xui-hub,设了就直接 HTTPS。Docker 装的把现成的证书目录挂进容器(compose 里 `./cert:/cert:ro`),`.env` 填 `TLS_CERT_FILE=/cert/fullchain.pem` 和 `TLS_KEY_FILE=/cert/privkey.pem`。也可以不管这些,前面放 Caddy / Nginx 反代。
 
 ### 环境变量(`.env`,两种方式通用;一键脚本的在 `/etc/xui-hub/.env`)
 
@@ -73,6 +76,7 @@ docker compose ps                        # STATUS 显示 healthy
 | `ADMIN_PASSWORD` | 空 | 后台密码,必须设置(一键脚本会自动生成) |
 | `LISTEN_ADDR` / `HOST_PORT` | `0.0.0.0` / `8788` | 监听的地址和端口 |
 | `CHECK_INTERVAL_SEC` | `300` | 多久自动检查一次面板连通性(秒) |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | 空 | 两项都填就直接提供 HTTPS(fullchain 和私钥的路径);`xui-hub ssl` 会自动写 |
 
 ## 开发
 

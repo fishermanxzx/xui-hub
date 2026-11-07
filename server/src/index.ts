@@ -1,7 +1,9 @@
 // 入口:打开数据库,提供 /api 和前端静态页,定期检查面板连通性。
 
 import express from 'express';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { createServer as createHttpServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { join, resolve } from 'node:path';
 import { tcpOpen } from './clients/create';
 import { openDb } from './db';
@@ -37,8 +39,10 @@ if (existsSync(dist)) {
   app.get('*', (_req, res) => res.sendFile(join(dist, 'index.html')));
 }
 
-const server = app.listen(env.port, env.host, () => {
-  console.log(`xui-hub listening on http://${env.host}:${env.port}` + (env.adminPassword ? '' : '(未设置 ADMIN_PASSWORD,不鉴权)'));
+// 配了 TLS_CERT_FILE / TLS_KEY_FILE 就直接提供 HTTPS(证书续期后重启服务即可生效)
+const server = env.tls ? createHttpsServer({ cert: readFileSync(env.tls.cert), key: readFileSync(env.tls.key) }, app) : createHttpServer(app);
+server.listen(env.port, env.host, () => {
+  console.log(`xui-hub listening on ${env.tls ? 'https' : 'http'}://${env.host}:${env.port}` + (env.adminPassword ? '' : '(未设置 ADMIN_PASSWORD,不鉴权)'));
 });
 
 // 定期检查各面板连通性

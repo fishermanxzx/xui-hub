@@ -4,6 +4,7 @@
 #   xui-hub update [版本]   更新(默认最新版)      xui-hub install     重新安装
 #   xui-hub password        重设后台密码          xui-hub port        改后台端口
 #   xui-hub settings        当前设置              xui-hub uninstall   卸载
+#   xui-hub ssl             SSL 证书管理菜单(xui-hub ssl ip | domain <域名> | cf <域名> 可直接执行)
 set -uo pipefail
 
 REPO="${XUIHUB_REPO:-fishermanxzx/xui-hub}"
@@ -35,6 +36,7 @@ installed() { [ -f "$DIR/server/dist/index.js" ] && [ -f /etc/systemd/system/$SE
 check_install() { installed || { err "xui-hub 还没安装,先执行 xui-hub install"; return 1; }; }
 version() { cat "$DIR/VERSION" 2>/dev/null || echo 未知; }
 port() { local p; p="$(env_get HOST_PORT)"; echo "${p:-8788}"; }
+scheme() { [ -n "$(env_get TLS_CERT_FILE)" ] && echo https || echo http; }
 public_ip() { curl -4fsS --max-time 3 https://api4.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}'; }
 
 run_installer() {
@@ -83,13 +85,14 @@ set_port() {
   env_set HOST_PORT "$p"
   systemctl restart "$SERVICE"
   if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then ufw allow "$p"/tcp >/dev/null; fi
-  ok "端口已改为 $p,后台地址 http://$(public_ip):$p(云服务器记得放行安全组)"
+  ok "端口已改为 $p,后台地址 $(scheme)://$(public_ip):$p(云服务器记得放行安全组)"
 }
 
 settings() {
   check_install || return 1
   echo "版本:$(version)"
-  echo "后台地址:http://$(public_ip):$(port)"
+  echo "后台地址:$(scheme)://$(public_ip):$(port)"
+  if [ -n "$(env_get TLS_CERT_FILE)" ]; then echo "HTTPS 证书:$(env_get TLS_CERT_FILE)($(cert_summary "$(env_get TLS_CERT_FILE)"))"; else echo "HTTPS:未开启(xui-hub ssl 可申请证书)"; fi
   echo "监听地址:$(env_get LISTEN_ADDR | grep . || echo 0.0.0.0)"
   echo "程序目录:$DIR"
   echo "数据目录:$ETC(hub.db、.env)"
@@ -98,6 +101,250 @@ settings() {
 }
 
 svc() { need_root; systemctl "$1" "$SERVICE" && show_status; }
+
+# ======================= SSL 证书(照 x-ui 的做法:acme.sh + Let's Encrypt) =======================
+CERT_DIR="$ETC/cert"
+ACME="$HOME/.acme.sh/acme.sh"
+is_domain() { [[ "$1" =~ ^([A-Za-z0-9](-*[A-Za-z0-9])*\.)+[A-Za-z]{2,}$ ]]; }
+is_ipv4() { [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; }
+
+cert_summary() {
+  local f="$1" issuer end
+  [ -f "$f" ] || { echo "文件不存在"; return; }
+  issuer="$(openssl x509 -in "$f" -noout -issuer 2>/dev/null | sed 's/.*O *= *\([^,]*\).*/\1/')"
+  end="$(openssl x509 -in "$f" -noout -enddate 2>/dev/null | cut -d= -f2)"
+  echo "签发:${issuer:-?},到期:${end:-?}"
+}
+
+install_acme() {
+  [ -x "$ACME" ] && return 0
+  ok "安装 acme.sh"
+  # HTTP-01 验证要用 socat,自动续期要用 cron
+  if command -v apt-get >/dev/null; then DEBIAN_FRONTEND=noninteractive apt-get install -y -qq socat cron openssl >/dev/null 2>&1
+  elif command -v dnf >/dev/null; then dnf install -y -q socat cronie openssl >/dev/null 2>&1
+  elif command -v yum >/dev/null; then yum install -y -q socat cronie openssl >/dev/null 2>&1
+  elif command -v pacman >/dev/null; then pacman -Sy --noconfirm --needed socat cronie openssl >/dev/null 2>&1
+  elif command -v zypper >/dev/null; then zypper -q install -y socat cron openssl >/dev/null 2>&1
+  fi
+  (cd "$HOME" && curl -fsSL https://get.acme.sh | sh -s >/dev/null 2>&1) || { err "acme.sh 安装失败"; return 1; }
+  [ -x "$ACME" ] || { err "acme.sh 安装失败"; return 1; }
+  "$ACME" --set-default-ca --server letsencrypt >/dev/null 2>&1
+}
+
+port_in_use() { ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$1$"; }
+
+# acme.sh 的证书状态目录(申请失败时清掉,否则下次会沿用坏状态)
+acme_state_rm() { local id="${1:?}"; rm -rf "${HOME:?}/.acme.sh/${id}" "${HOME:?}/.acme.sh/${id}_ecc"; }
+
+# 把 acme.sh 里的证书装到 $CERT_DIR/<名字>/,续期后自动重启 xui-hub;服务用户要能读
+install_cert_files() {
+  local id="$1" name="$2" dir="$CERT_DIR/$2"
+  mkdir -p "$dir"
+  "$ACME" --install-cert -d "$id" --ecc --fullchain-file "$dir/fullchain.pem" --key-file "$dir/privkey.pem" --reloadcmd "xui-hub restart" >/dev/null 2>&1 ||
+    "$ACME" --install-cert -d "$id" --fullchain-file "$dir/fullchain.pem" --key-file "$dir/privkey.pem" --reloadcmd "xui-hub restart" >/dev/null 2>&1 || true
+  [ -s "$dir/fullchain.pem" ] && [ -s "$dir/privkey.pem" ] || { err "证书文件没有写出来"; return 1; }
+  chown -R root:"$RUN_USER" "$CERT_DIR"
+  chmod 750 "$CERT_DIR" "$dir"
+  chmod 640 "$dir/privkey.pem"
+  chmod 644 "$dir/fullchain.pem"
+  "$ACME" --upgrade --auto-upgrade >/dev/null 2>&1 || true
+  echo "$dir"
+}
+
+# 把证书设给 xui-hub:写 .env 并重启
+use_cert() {
+  local dir="$1" host="$2"
+  env_set TLS_CERT_FILE "$dir/fullchain.pem"
+  env_set TLS_KEY_FILE "$dir/privkey.pem"
+  systemctl restart "$SERVICE"
+  sleep 2
+  if systemctl is-active -q "$SERVICE"; then
+    ok "xui-hub 已切到 HTTPS:https://$host:$(port)"
+    [ "$host" != "$(public_ip)" ] && echo "  确认域名 $host 已解析到本机 $(public_ip)"
+  else
+    err "xui-hub 没起来,看日志:xui-hub log"; journalctl -u "$SERVICE" -n 10 --no-pager
+  fi
+}
+
+ask_use_cert() {
+  local dir="$1" host="$2" yn
+  if [ "${XUIHUB_NONINTERACTIVE:-0}" = 1 ]; then use_cert "$dir" "$host"; return; fi
+  read -r -p "把这张证书设为 xui-hub 的 HTTPS 证书?[Y/n] " yn
+  [ "$yn" = n ] || [ "$yn" = N ] || use_cert "$dir" "$host"
+}
+
+ssl_issue_ip() {
+  need_root; install_acme || return 1
+  local ip="${1:-$(public_ip)}" a
+  if [ "${XUIHUB_NONINTERACTIVE:-0}" != 1 ] && [ -z "${1:-}" ]; then
+    read -r -p "给哪个公网 IPv4 申请证书 [$ip]:" a; ip="${a:-$ip}"
+  fi
+  is_ipv4 "$ip" || { err "IP 不合法:$ip"; return 1; }
+  port_in_use 80 && { err "80 端口被占用,Let's Encrypt 要从 80 端口验证;先停掉占用的服务再试"; return 1; }
+  warn "Let's Encrypt 给 IP 签的证书只有 6 天有效期,acme.sh 的 cron 会自动续,续完自动重启 xui-hub"
+  ok "申请 $ip 的证书(HTTP-01,监听 80)"
+  if ! "$ACME" --issue --standalone -d "$ip" --server letsencrypt --certificate-profile shortlived --days 6 --keylength ec-256 --force 2>&1 | grep -E "Cert success|error|Error" | grep -q "Cert success"; then
+    err "申请失败:确认 80 端口能从公网访问(安全组 / 防火墙)"; acme_state_rm "$ip"; return 1
+  fi
+  local dir; dir="$(install_cert_files "$ip" ip)" || return 1
+  ok "证书已装到 $dir($(cert_summary "$dir/fullchain.pem"))"
+  ask_use_cert "$dir" "$ip"
+}
+
+ssl_issue_domain() {
+  need_root; install_acme || return 1
+  local domain="${1:-}"
+  while ! is_domain "$domain"; do
+    [ "${XUIHUB_NONINTERACTIVE:-0}" = 1 ] && { err "域名不合法:$domain"; return 1; }
+    read -r -p "域名(A 记录已指向本机):" domain
+  done
+  port_in_use 80 && { err "80 端口被占用,HTTP-01 验证要用 80;先停掉占用的服务,或用 xui-hub ssl cf 走 Cloudflare DNS 验证"; return 1; }
+  ok "申请 $domain 的证书(HTTP-01,监听 80)"
+  if ! "$ACME" --issue --standalone -d "$domain" --server letsencrypt --keylength ec-256 --force 2>&1 | grep -E "Cert success|error|Error" | grep -q "Cert success"; then
+    err "申请失败:确认域名已解析到本机、80 端口能从公网访问"; acme_state_rm "$domain"; return 1
+  fi
+  local dir; dir="$(install_cert_files "$domain" "$domain")" || return 1
+  ok "证书已装到 $dir($(cert_summary "$dir/fullchain.pem")),acme.sh 会自动续期"
+  ask_use_cert "$dir" "$domain"
+}
+
+ssl_issue_cf() {
+  need_root; install_acme || return 1
+  local domain="${1:-}" token="${CF_Token:-}"
+  while ! is_domain "$domain"; do
+    [ "${XUIHUB_NONINTERACTIVE:-0}" = 1 ] && { err "域名不合法:$domain"; return 1; }
+    read -r -p "域名(会同时签 *.域名 通配符):" domain
+  done
+  if [ -z "$token" ]; then
+    [ "${XUIHUB_NONINTERACTIVE:-0}" = 1 ] && { err "非交互模式要用环境变量 CF_Token 传 Cloudflare API Token"; return 1; }
+    read -r -s -p "Cloudflare API Token(权限 Zone:DNS:Edit):" token; echo
+  fi
+  [ -n "$token" ] || { err "Token 不能为空"; return 1; }
+  export CF_Token="$token"
+  ok "申请 $domain 和 *.$domain 的证书(Cloudflare DNS 验证,不需要开 80)"
+  if ! "$ACME" --issue --dns dns_cf -d "$domain" -d "*.$domain" --server letsencrypt --keylength ec-256 --force 2>&1 | grep -E "Cert success|error|Error" | grep -q "Cert success"; then
+    err "申请失败:检查 Token 权限和域名是否在这个 Cloudflare 账号下"; return 1
+  fi
+  local dir; dir="$(install_cert_files "$domain" "$domain")" || return 1
+  ok "证书已装到 $dir($(cert_summary "$dir/fullchain.pem")),acme.sh 会自动续期"
+  ask_use_cert "$dir" "$domain"
+}
+
+ssl_list() {
+  local d found=0
+  for d in "$CERT_DIR"/*/; do
+    [ -d "$d" ] || continue
+    found=1
+    echo "$(basename "$d"):${d%/}"
+    echo "  $(cert_summary "$d/fullchain.pem")"
+  done
+  [ $found = 1 ] || echo "$CERT_DIR 下还没有证书"
+  local cur; cur="$(env_get TLS_CERT_FILE)"
+  if [ -n "$cur" ]; then echo "xui-hub 正在用:$cur($(cert_summary "$cur"))"; else echo "xui-hub 目前是 HTTP"; fi
+}
+
+# acme.sh 里对应的记录名:域名就是域名,ip 目录对应签的那个 IP
+acme_id_of() { if [ "$1" = ip ]; then "$ACME" --list 2>/dev/null | awk 'NR>1 {print $1}' | grep -E '^[0-9.]+$' | sed -n 1p; else echo "$1"; fi; }
+
+pick_cert_name() {
+  local names name; names="$(ls -1 "$CERT_DIR" 2>/dev/null)"
+  [ -n "$names" ] || { err "还没有证书"; return 1; }
+  echo "$names" | sed 's/^/  /' >&2
+  read -r -p "选哪一个(输入名字):" name
+  echo "$names" | grep -qx "$name" || { err "没有这个证书"; return 1; }
+  echo "$name"
+}
+
+ssl_renew() {
+  need_root; [ -x "$ACME" ] || { err "acme.sh 没装,没有可续的证书"; return 1; }
+  local name id; name="$(pick_cert_name)" || return 1
+  id="$(acme_id_of "$name")"
+  "$ACME" --renew -d "$id" --ecc --force 2>&1 | grep -E "Cert success|Skip|error|Error|Reload" || true
+  ok "已强制续期 $name($(cert_summary "$CERT_DIR/$name/fullchain.pem"))"
+}
+
+ssl_remove() {
+  need_root
+  local name id; name="$(pick_cert_name)" || return 1
+  confirm "吊销并删除 $name 的证书(连同自动续期)?" || return 0
+  id="$(acme_id_of "$name")"
+  if [ -x "$ACME" ] && [ -n "$id" ]; then
+    "$ACME" --revoke -d "$id" --ecc >/dev/null 2>&1; "$ACME" --remove -d "$id" --ecc >/dev/null 2>&1
+    acme_state_rm "$id"
+  fi
+  rm -rf "${CERT_DIR:?}/${name:?}"
+  if [ "$(env_get TLS_CERT_FILE)" = "$CERT_DIR/$name/fullchain.pem" ]; then ssl_disable; fi
+  ok "已删除 $name"
+}
+
+ssl_set_paths() {
+  need_root
+  echo "  1. 用 $CERT_DIR 下已有的证书"
+  echo "  2. 自定义证书文件路径(如 certbot 的 /etc/letsencrypt/live/...)"
+  local c cf kf name
+  read -r -p "选择:" c
+  if [ "$c" = 2 ]; then
+    read -r -p "证书(fullchain)路径:" cf; read -r -p "私钥路径:" kf
+    [ -f "$cf" ] && [ -f "$kf" ] || { err "文件不存在"; return 1; }
+    sudo -u "$RUN_USER" test -r "$cf" -a -r "$kf" 2>/dev/null || warn "注意:服务用户 $RUN_USER 读不到这两个文件,起不来的话给它读权限(chgrp $RUN_USER 并 chmod 640)"
+    env_set TLS_CERT_FILE "$cf"; env_set TLS_KEY_FILE "$kf"; systemctl restart "$SERVICE"; sleep 2
+    if systemctl is-active -q "$SERVICE"; then ok "已切到 HTTPS:https://$(public_ip):$(port)"; else err "xui-hub 没起来:xui-hub log"; fi
+    return
+  fi
+  name="$(pick_cert_name)" || return 1
+  use_cert "$CERT_DIR/$name" "$name"
+}
+
+ssl_disable() {
+  need_root
+  { grep -vE '^TLS_(CERT|KEY)_FILE=' "$ENV_FILE" || true; } >"$ENV_FILE.tmp"
+  mv "$ENV_FILE.tmp" "$ENV_FILE"; chown root:"$RUN_USER" "$ENV_FILE" 2>/dev/null; chmod 640 "$ENV_FILE"
+  systemctl restart "$SERVICE"
+  ok "已关闭 HTTPS,后台地址 http://$(public_ip):$(port)"
+}
+
+ssl_menu() {
+  echo -e "
+  ${green}SSL 证书管理${plain}(acme.sh + Let's Encrypt,证书放在 $CERT_DIR)
+  ${green}1.${plain} 申请域名证书(HTTP-01,需要 80 端口能从公网访问)
+  ${green}2.${plain} 申请 IP 证书(6 天有效,自动续期)
+  ${green}3.${plain} 用 Cloudflare DNS 申请域名证书(含通配符,不需要开 80)
+  ${green}4.${plain} 查看已有证书
+  ${green}5.${plain} 强制续期
+  ${green}6.${plain} 吊销并删除
+  ${green}7.${plain} 给 xui-hub 设置证书路径
+  ${green}8.${plain} 关闭 HTTPS
+  ${green}0.${plain} 返回"
+  local c
+  read -r -p "请选择 [0-8]:" c
+  case "$c" in
+    0) return ;;
+    1) ssl_issue_domain ;;
+    2) ssl_issue_ip ;;
+    3) ssl_issue_cf ;;
+    4) ssl_list ;;
+    5) ssl_renew ;;
+    6) ssl_remove ;;
+    7) ssl_set_paths ;;
+    8) ssl_disable ;;
+    *) err "没有这个选项" ;;
+  esac
+}
+
+ssl_cmd() {
+  case "${1:-}" in
+    "") ssl_menu ;;
+    ip) ssl_issue_ip "${2:-}" ;;
+    domain) ssl_issue_domain "${2:-}" ;;
+    cf) ssl_issue_cf "${2:-}" ;;
+    list) ssl_list ;;
+    renew) ssl_renew ;;
+    remove) ssl_remove ;;
+    use) ssl_set_paths ;;
+    off) ssl_disable ;;
+    *) echo "用法:xui-hub ssl [ip [IP] | domain <域名> | cf <域名> | list | renew | remove | use | off]"; return 1 ;;
+  esac
+}
 
 show_status() {
   if ! installed; then warn "状态:未安装"; return; fi
@@ -122,11 +369,13 @@ show_menu() {
 ║  ${green}7.${plain} 启动          ${green}8.${plain} 停止          ${green}9.${plain} 重启  ║
 ║  ${green}10.${plain} 运行状态     ${green}11.${plain} 查看日志            ║
 ║  ${green}12.${plain} 开机自启     ${green}13.${plain} 取消自启            ║
+║──────────────────────────────────────────║
+║  ${green}14.${plain} SSL 证书管理(HTTPS)                   ║
 ╚══════════════════════════════════════════╝"
   show_status
   echo
   local num
-  read -r -p "请选择 [0-13]:" num
+  read -r -p "请选择 [0-14]:" num
   case "$num" in
     0) exit 0 ;;
     1) install ;;
@@ -142,6 +391,7 @@ show_menu() {
     11) journalctl -u "$SERVICE" -f -n 100 ;;
     12) svc enable ;;
     13) svc disable ;;
+    14) ssl_menu ;;
     *) err "没有这个选项" ;;
   esac
 }
@@ -154,6 +404,7 @@ case "${1:-}" in
   password) password ;;
   port) set_port ;;
   settings) settings ;;
+  ssl) shift; ssl_cmd "$@" ;;
   start | stop | restart | enable | disable) svc "$1" ;;
   status) systemctl status "$SERVICE" --no-pager ;;
   log | logs) journalctl -u "$SERVICE" -f -n 100 ;;

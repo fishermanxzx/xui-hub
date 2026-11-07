@@ -24,5 +24,5 @@ RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 8788
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
-  CMD node -e "fetch('http://127.0.0.1:8788/api/session').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+  CMD node -e "process.env.NODE_TLS_REJECT_UNAUTHORIZED='0';fetch((process.env.TLS_CERT_FILE?'https':'http')+'://127.0.0.1:8788/api/session').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 CMD ["node", "server/dist/index.js"]
