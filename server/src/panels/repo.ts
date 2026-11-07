@@ -14,6 +14,10 @@ export interface Panel {
   check_error: string | null;
   inbound_count: number | null;
   client_count: number | null;
+  /** 最近一次检查读到的面板版本、Xray 内核版本和状态(running / stopped / error) */
+  panel_version: string | null;
+  xray_version: string | null;
+  xray_state: string | null;
 }
 
 export type PanelView = Omit<Panel, 'token'>;
@@ -83,17 +87,17 @@ export function deletePanel(db: DB, id: number): void {
   if (!db.prepare('DELETE FROM panels WHERE id = ?').run(id).changes) throw new InputError('面板不存在');
 }
 
-export type CheckResult = { ok: true; inbounds: number; clients: number } | { ok: false; error: string };
+export type CheckResult =
+  | { ok: true; inbounds: number; clients: number; panel_version?: string; xray_version?: string; xray_state?: string }
+  | { ok: false; error: string };
 
 export function recordCheck(db: DB, id: number, result: CheckResult, now = Date.now()): void {
   if (result.ok) {
-    db.prepare('UPDATE panels SET checked_at = ?, check_ok_at = ?, check_error = NULL, inbound_count = ?, client_count = ? WHERE id = ?').run(
-      now,
-      now,
-      result.inbounds,
-      result.clients,
-      id,
-    );
+    db.prepare(
+      `UPDATE panels SET checked_at = ?, check_ok_at = ?, check_error = NULL, inbound_count = ?, client_count = ?,
+              panel_version = COALESCE(?, panel_version), xray_version = COALESCE(?, xray_version), xray_state = COALESCE(?, xray_state)
+       WHERE id = ?`,
+    ).run(now, now, result.inbounds, result.clients, result.panel_version ?? null, result.xray_version ?? null, result.xray_state ?? null, id);
   } else {
     db.prepare('UPDATE panels SET checked_at = ?, check_error = ? WHERE id = ?').run(now, result.error.slice(0, 500), id);
   }

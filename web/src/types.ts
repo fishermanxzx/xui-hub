@@ -11,6 +11,22 @@ export interface Panel {
   check_error: string | null;
   inbound_count: number | null;
   client_count: number | null;
+  /** 最近一次检查读到的面板版本、Xray 内核版本和状态 */
+  panel_version: string | null;
+  xray_version: string | null;
+  xray_state: string | null;
+}
+
+/** 现从面板取的版本信息 */
+export interface PanelVersions {
+  panel: { current: string; latest: string | null; update_available: boolean; channel: string | null };
+  xray: { current: string; state: string; error: string; available: string[] };
+}
+
+export interface UpdateStatus {
+  runId: string;
+  state: 'pending' | 'success' | 'failed' | string;
+  exitCode: number;
 }
 
 export interface PanelInput {

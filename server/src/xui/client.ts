@@ -91,6 +91,51 @@ export class XUIClient {
     await this.req('POST', `/inbounds/del/${id}`);
   }
 
+  /** 面板版本、Xray 内核版本与运行状态(/server/status 的一小部分) */
+  async serverStatus(): Promise<{ panelVersion: string; xrayVersion: string; xrayState: string; xrayError: string }> {
+    const s = await this.req<any>('GET', '/server/status');
+    return {
+      panelVersion: String(s?.panelVersion ?? ''),
+      xrayVersion: String(s?.xray?.version ?? ''),
+      xrayState: String(s?.xray?.state ?? ''),
+      xrayError: String(s?.xray?.errorMsg ?? ''),
+    };
+  }
+
+  /** 可切换的 Xray 版本(面板从 GitHub 取并缓存),新的在前 */
+  async xrayVersions(): Promise<string[]> {
+    return ((await this.req<string[]>('GET', '/server/getXrayVersion')) ?? []).map(String);
+  }
+
+  /** 面板升级信息;面板查 GitHub 失败时返回 null */
+  async panelUpdateInfo(): Promise<{ channel: string; current: string; latest: string; available: boolean } | null> {
+    try {
+      const o = await this.req<any>('GET', '/server/getPanelUpdateInfo');
+      if (!o) return null;
+      return { channel: String(o.channel ?? ''), current: String(o.currentVersion ?? ''), latest: String(o.latestVersion ?? ''), available: o.updateAvailable === true };
+    } catch (e) {
+      if (e instanceof XUIError && /success=false/.test(e.message)) return null;
+      throw e;
+    }
+  }
+
+  /** 切换 Xray 内核版本(面板下载并重启 Xray) */
+  async installXray(version: string): Promise<void> {
+    await this.req('POST', `/server/installXray/${encodeURIComponent(version)}`);
+  }
+
+  /** 让面板升级自己(后台异步跑 update.sh),返回 runId;用 updateStatus 查结果 */
+  async updatePanel(): Promise<string> {
+    const o = await this.req<any>('POST', '/server/updatePanel');
+    return String(o?.runId ?? '');
+  }
+
+  /** 面板升级进度:state 为 pending / success / failed */
+  async updateStatus(): Promise<{ runId: string; state: string; exitCode: number }> {
+    const o = await this.req<any>('GET', '/server/getUpdateStatus');
+    return { runId: String(o?.runId ?? ''), state: String(o?.state ?? 'pending'), exitCode: Number(o?.exitCode ?? 0) };
+  }
+
   /** 面板设置里面板自己用的证书路径(新建 hy2 入站用这份证书) */
   async panelCert(): Promise<{ certFile: string; keyFile: string }> {
     const s = await this.req<any>('POST', '/setting/all');

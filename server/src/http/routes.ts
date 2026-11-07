@@ -21,6 +21,12 @@ import {
 
 export interface PanelClient extends ClientAdmin, PanelReader, PanelProbe {
   deleteClient(email: string): Promise<void>;
+  serverStatus(): Promise<{ panelVersion: string; xrayVersion: string; xrayState: string; xrayError: string }>;
+  xrayVersions(): Promise<string[]>;
+  panelUpdateInfo(): Promise<{ channel: string; current: string; latest: string; available: boolean } | null>;
+  installXray(version: string): Promise<void>;
+  updatePanel(): Promise<string>;
+  updateStatus(): Promise<{ runId: string; state: string; exitCode: number }>;
 }
 
 export interface RouteDeps {
@@ -122,6 +128,55 @@ export function apiRouter(deps: RouteDeps): Router {
     wrap((req) => {
       const panel = panelOf(req);
       return readPanelDetail(panel, deps.clientFor(panel));
+    }),
+  );
+
+  // ---------- 版本与升级 ----------
+  const withClient = async <T>(panel: Panel, fn: (client: PanelClient) => Promise<T>): Promise<T> => {
+    const client = deps.clientFor(panel);
+    try {
+      return await fn(client);
+    } finally {
+      await client.close?.().catch(() => {});
+    }
+  };
+  // 面板版本、可升级信息、Xray 当前版本与可选版本(现从面板取)
+  r.get(
+    '/panels/:id/versions',
+    wrap((req) =>
+      withClient(panelOf(req), async (client) => {
+        const [status, update, versions] = await Promise.all([client.serverStatus(), client.panelUpdateInfo(), client.xrayVersions().catch(() => [] as string[])]);
+        return {
+          panel: { current: status.panelVersion, latest: update?.latest ?? null, update_available: update?.available ?? false, channel: update?.channel ?? null },
+          xray: { current: status.xrayVersion, state: status.xrayState, error: status.xrayError, available: versions },
+        };
+      }),
+    ),
+  );
+  // 切换 Xray 内核版本:面板下载对应版本并重启 Xray(上面所有客户端断流几秒)
+  r.post(
+    '/panels/:id/xray/:version',
+    wrap(async (req) => {
+      const panel = panelOf(req);
+      const version = String(req.params.version);
+      if (!/^v?\d+\.\d+\.\d+$/.test(version)) throw new InputError('版本号不合法');
+      await withClient(panel, (client) => client.installXray(version));
+      return toPanelView(await checkPanel(db, panel, deps.clientFor(panel)));
+    }),
+  );
+  // 升级面板:面板自己在后台跑升级脚本,这里拿到 runId;前端轮询 update-status
+  r.post(
+    '/panels/:id/update',
+    wrap((req) => withClient(panelOf(req), async (client) => ({ run_id: await client.updatePanel() }))),
+  );
+  r.get(
+    '/panels/:id/update-status',
+    wrap(async (req) => {
+      const panel = panelOf(req);
+      const status = await withClient(panel, (client) => client.updateStatus());
+      // 升级成功后面板版本变了,顺手刷新记录
+      if (status.state === 'success') await checkPanel(db, panel, deps.clientFor(panel));
+      return status;
     }),
   );
 

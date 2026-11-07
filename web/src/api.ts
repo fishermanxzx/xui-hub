@@ -1,4 +1,4 @@
-import type { ClientProtocol, CreatedClient, Panel, PanelDetail, PanelInput } from './types';
+import type { ClientProtocol, CreatedClient, Panel, PanelDetail, PanelInput, PanelVersions, UpdateStatus } from './types';
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -36,6 +36,12 @@ export const api = {
   checkPanels: () => call<Panel[]>('POST', '/api/panels/check'),
   checkPanel: (id: number) => call<Panel>('POST', `/api/panels/${id}/check`),
   panelInbounds: (id: number) => call<PanelDetail>('GET', `/api/panels/${id}/inbounds`),
+  panelVersions: (id: number) => call<PanelVersions>('GET', `/api/panels/${id}/versions`),
+  /** 切换 Xray 内核版本,面板会重启 Xray */
+  installXray: (id: number, version: string) => call<Panel>('POST', `/api/panels/${id}/xray/${encodeURIComponent(version)}`),
+  /** 让面板升级自己;之后轮询 updateStatus */
+  upgradePanel: (id: number) => call<{ run_id: string }>('POST', `/api/panels/${id}/update`),
+  updateStatus: (id: number) => call<UpdateStatus>('GET', `/api/panels/${id}/update-status`),
 
   createClient: (panelId: number, name: string, protocol: ClientProtocol) =>
     call<CreatedClient>('POST', `/api/panels/${panelId}/clients`, { name, protocol }),

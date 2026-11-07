@@ -4,7 +4,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
 import { dueLevel, fmtAgo, fmtBytes, fmtDue, hostOf } from '../format';
 import { toast, toastError } from '../toast';
-import type { ClientProtocol, CreatedClient, Panel, PanelClient, PanelDetail, PanelInbound } from '../types';
+import type { ClientProtocol, CreatedClient, Panel, PanelClient, PanelDetail, PanelInbound, PanelVersions } from '../types';
 import ClientLinks from './ClientLinks.vue';
 import Modal from './Modal.vue';
 
@@ -56,6 +56,88 @@ const groups = computed(() => {
   if (d.unattached.length) all.push({ key: 'unattached', inbound: null, clients: d.unattached });
   return all;
 });
+
+// ---------- 版本:内核切换 / 面板升级 ----------
+const versions = ref<PanelVersions | null>(null);
+const loadingVersions = ref(false);
+const showXray = ref(false);
+const xrayPick = ref('');
+const switching = ref(false);
+const upgrading = ref(false);
+const upgradeNote = ref('');
+
+async function loadVersions() {
+  loadingVersions.value = true;
+  try {
+    versions.value = await api.panelVersions(props.panel.id);
+    xrayPick.value = versions.value.xray.available.find((v) => v.replace(/^v/, '') === versions.value!.xray.current) ?? versions.value.xray.available[0] ?? '';
+  } catch (e) {
+    toastError(e);
+  } finally {
+    loadingVersions.value = false;
+  }
+}
+
+async function openXray() {
+  showXray.value = true;
+  if (!versions.value) await loadVersions();
+}
+
+async function switchXray() {
+  const v = xrayPick.value;
+  if (!v) return;
+  if (!confirm(`把「${props.panel.name}」的 Xray 内核切换到 ${v}?面板会下载对应版本并重启 Xray,上面所有客户端会断流几秒。`)) return;
+  switching.value = true;
+  try {
+    await api.installXray(props.panel.id, v);
+    toast(`内核已切换到 ${v}`);
+    showXray.value = false;
+    versions.value = null;
+    emit('changed');
+  } catch (e) {
+    toastError(e);
+  } finally {
+    switching.value = false;
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function upgradePanel() {
+  const latest = versions.value?.panel.latest;
+  if (!confirm(`升级面板「${props.panel.name}」${latest ? `到 ${latest}` : ''}?面板会自己下载新版本并重启,期间短暂不可用。`)) return;
+  upgrading.value = true;
+  upgradeNote.value = '已通知面板开始升级…';
+  try {
+    const { run_id } = await api.upgradePanel(props.panel.id);
+    // 面板在后台跑升级脚本,这里每 5 秒问一次结果,最多等 5 分钟
+    for (let i = 0; i < 60; i++) {
+      await sleep(5000);
+      let st;
+      try {
+        st = await api.updateStatus(props.panel.id);
+      } catch {
+        upgradeNote.value = '面板正在重启,等它回来…';
+        continue;
+      }
+      if (st.runId === run_id && st.state === 'success') {
+        toast('面板升级完成');
+        upgradeNote.value = '';
+        versions.value = null;
+        emit('changed');
+        return;
+      }
+      if (st.runId === run_id && st.state === 'failed') throw new Error(`面板升级失败(退出码 ${st.exitCode}),去面板日志里看原因`);
+      upgradeNote.value = `升级中…(${(i + 1) * 5} 秒)`;
+    }
+    throw new Error('等了 5 分钟面板还没报告结果,去面板上确认');
+  } catch (e) {
+    toastError(e);
+    upgradeNote.value = '';
+  } finally {
+    upgrading.value = false;
+  }
+}
 
 // ---------- 创建客户端 ----------
 const showCreate = ref(false);
@@ -124,12 +206,17 @@ async function removeClient(c: PanelClient) {
         <template v-else-if="panel.check_ok_at">
           <span class="text-ok">正常</span>
           <span class="muted">{{ panel.inbound_count ?? 0 }} 入站 · {{ panel.client_count ?? 0 }} 客户端 · {{ fmtAgo(panel.check_ok_at) }}检查</span>
+          <span v-if="panel.panel_version" class="muted">面板 {{ panel.panel_version }}</span>
+          <span v-if="panel.xray_version" :class="panel.xray_state === 'running' ? 'muted' : 'text-err'" :title="panel.xray_state ?? ''">
+            内核 {{ panel.xray_version }}<template v-if="panel.xray_state && panel.xray_state !== 'running'">({{ panel.xray_state }})</template>
+          </span>
         </template>
         <span v-else class="muted">还没检查</span>
       </div>
       <div class="ops">
         <button class="primary small-btn" @click="openCreate">创建客户端</button>
         <button class="link" :disabled="checking" @click="check">{{ checking ? '检查中…' : '检查' }}</button>
+        <button class="link" :disabled="!!panel.check_error" @click="openXray">内核版本</button>
         <a class="link" :href="panel.base_url" target="_blank" rel="noopener noreferrer" title="需要用面板的账号密码登录">打开面板</a>
         <button class="link" @click="emit('edit')">编辑</button>
         <button class="link danger" @click="emit('remove')">删除</button>
@@ -143,9 +230,21 @@ async function removeClient(c: PanelClient) {
       </div>
       <p v-else-if="!detail" class="muted small loading">正在读取入站和 client…</p>
       <template v-else>
-        <div class="meta muted small">
-          读取于 {{ fmtAgo(detail.fetched_at) }}
+        <div class="meta small">
+          <span class="muted">读取于 {{ fmtAgo(detail.fetched_at) }}</span>
           <button class="link" :disabled="loading" @click="load">{{ loading ? '读取中…' : '刷新' }}</button>
+          <span class="spacer" />
+          <template v-if="versions">
+            <span class="muted">面板 {{ versions.panel.current }}</span>
+            <template v-if="versions.panel.update_available">
+              <span class="text-warn">可升级到 {{ versions.panel.latest }}</span>
+              <button class="link" :disabled="upgrading" @click="upgradePanel">{{ upgrading ? '升级中…' : '升级面板' }}</button>
+            </template>
+            <span v-else-if="versions.panel.latest" class="muted">已是最新</span>
+            <span v-else class="muted">(查不到最新版本)</span>
+            <span v-if="upgradeNote" class="muted">{{ upgradeNote }}</span>
+          </template>
+          <button v-else class="link" :disabled="loadingVersions" @click="loadVersions">{{ loadingVersions ? '查询中…' : '检查面板更新' }}</button>
         </div>
         <section v-for="g in groups" :key="g.key" class="inbound" :class="{ off: g.inbound && !g.inbound.enable }">
           <header class="ib-head">
@@ -208,6 +307,29 @@ async function removeClient(c: PanelClient) {
         <button @click="created = null">再创建一个</button>
         <button class="primary" @click="showCreate = false">完成</button>
       </template>
+    </template>
+  </Modal>
+
+  <Modal v-if="showXray" :title="`「${panel.name}」的 Xray 内核`" @close="showXray = false">
+    <p v-if="!versions" class="muted small">{{ loadingVersions ? '正在从面板读取版本…' : '读取失败,关掉重试' }}</p>
+    <template v-else>
+      <p class="small">
+        当前 <strong>{{ versions.xray.current || '未知' }}</strong>
+        <span :class="versions.xray.state === 'running' ? 'text-ok' : 'text-err'">{{ versions.xray.state === 'running' ? '运行中' : versions.xray.state || '状态未知' }}</span>
+        <span v-if="versions.xray.error" class="text-err">{{ versions.xray.error }}</span>
+      </p>
+      <label class="field">
+        切换到
+        <select v-model="xrayPick">
+          <option v-for="v in versions.xray.available" :key="v" :value="v">{{ v }}{{ v.replace(/^v/, '') === versions.xray.current ? '(当前)' : '' }}</option>
+        </select>
+      </label>
+      <p class="muted small hint">版本列表由面板从 GitHub 读取。切换时面板下载对应版本并重启 Xray,上面所有客户端断流几秒;切到更老的版本可能不支持现有入站的配置。</p>
+    </template>
+    <template #footer>
+      <span class="spacer" />
+      <button @click="showXray = false">取消</button>
+      <button class="primary" :disabled="!versions || switching || !xrayPick || xrayPick.replace(/^v/, '') === versions.xray.current" @click="switchXray">{{ switching ? '切换中…' : '切换' }}</button>
     </template>
   </Modal>
 
@@ -283,8 +405,13 @@ async function removeClient(c: PanelClient) {
 }
 .meta {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
   margin-bottom: 8px;
+}
+.meta .spacer {
+  flex: 1;
 }
 .loading {
   margin: 0;

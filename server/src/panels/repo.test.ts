@@ -15,11 +15,15 @@ test('面板增删改:地址规范化、名称唯一、token 留空不改、视�
   assert.equal(updatePanel(db, p.id, { token: 'new' }).token, 'new');
   assert.ok(!('token' in toPanelView(getPanel(db, p.id)!)));
 
-  recordCheck(db, p.id, { ok: true, inbounds: 2, clients: 5 }, 100);
-  assert.deepEqual([getPanel(db, p.id)!.check_ok_at, getPanel(db, p.id)!.inbound_count, getPanel(db, p.id)!.client_count], [100, 2, 5]);
+  recordCheck(db, p.id, { ok: true, inbounds: 2, clients: 5, panel_version: '3.11.0', xray_version: '26.10.21', xray_state: 'running' }, 100);
+  const got = getPanel(db, p.id)!;
+  assert.deepEqual([got.check_ok_at, got.inbound_count, got.client_count, got.panel_version, got.xray_version, got.xray_state], [100, 2, 5, '3.11.0', '26.10.21', 'running']);
+  // 这次读不到版本:沿用上次的
+  recordCheck(db, p.id, { ok: true, inbounds: 2, clients: 5 }, 150);
+  assert.equal(getPanel(db, p.id)!.xray_version, '26.10.21');
   recordCheck(db, p.id, { ok: false, error: '连接失败' }, 200);
   const after = getPanel(db, p.id)!;
-  assert.deepEqual([after.checked_at, after.check_ok_at, after.check_error, after.client_count], [200, 100, '连接失败', 5]);
+  assert.deepEqual([after.checked_at, after.check_ok_at, after.check_error, after.client_count, after.panel_version], [200, 150, '连接失败', 5, '3.11.0']);
 
   deletePanel(db, p.id);
   assert.equal(listPanels(db).length, 0);

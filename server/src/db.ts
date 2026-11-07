@@ -27,6 +27,12 @@ const MIGRATIONS: string[] = [
     client_count  INTEGER
   );
   `,
+  `
+  -- 检查时顺带记下面板版本、Xray 内核版本和运行状态
+  ALTER TABLE panels ADD COLUMN panel_version TEXT;
+  ALTER TABLE panels ADD COLUMN xray_version TEXT;
+  ALTER TABLE panels ADD COLUMN xray_state TEXT;
+  `,
 ];
 
 export function openDb(file: string): DB {
