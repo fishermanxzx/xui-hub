@@ -51,9 +51,12 @@ install_base() {
 }
 
 latest_tag() {
-  # GitHub API 偶尔限流,失败就跟随 releases/latest 的跳转
-  curl -fsSL --max-time 15 "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep -m1 -oE '"tag_name": *"[^"]+"' | cut -d'"' -f4 ||
-    curl -fsSLI -o /dev/null -w '%{url_effective}' --max-time 15 "https://github.com/$REPO/releases/latest" | sed 's|.*/tag/||'
+  # GitHub API 偶尔限流,拿不到就跟随 releases/latest 的跳转。管道里不能用 head / grep -m1:上游会被 SIGPIPE 打断,
+  # pipefail 下整条算失败,之前因此把两种结果都输出了(得到两行版本号)
+  local tag
+  tag="$(curl -fsSL --max-time 15 "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep -oE '"tag_name": *"[^"]+"' | sed -n '1s/.*"\([^"]*\)"$/\1/p')" || true
+  [ -n "$tag" ] || tag="$(curl -fsSLI -o /dev/null -w '%{url_effective}' --max-time 15 "https://github.com/$REPO/releases/latest" | sed 's|.*/tag/||')"
+  printf '%s' "$tag"
 }
 
 rand() { head -c 256 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-"${1:-16}"; }
