@@ -52,11 +52,11 @@ install_base() {
 
 latest_tag() {
   # GitHub API 偶尔限流,失败就跟随 releases/latest 的跳转
-  curl -fsSL --max-time 15 "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep -oE '"tag_name": *"[^"]+"' | head -1 | cut -d'"' -f4 ||
+  curl -fsSL --max-time 15 "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep -m1 -oE '"tag_name": *"[^"]+"' | cut -d'"' -f4 ||
     curl -fsSLI -o /dev/null -w '%{url_effective}' --max-time 15 "https://github.com/$REPO/releases/latest" | sed 's|.*/tag/||'
 }
 
-rand() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-16}"; }
+rand() { head -c 256 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-"${1:-16}"; }
 env_get() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-; }
 env_set() {
   { grep -vE "^$1=" "$ENV_FILE" 2>/dev/null || true; printf '%s=%s\n' "$1" "$2"; } >"$ENV_FILE.tmp"
@@ -90,7 +90,8 @@ install_xui_hub() {
   say "安装 xui-hub $tag"
   local name="xui-hub-linux-$ARCH.tar.gz" base="https://github.com/$REPO/releases/download/$tag" tmp
   tmp="$(mktemp -d)"
-  curl -fL --retry 5 --retry-delay 3 --connect-timeout 15 -o "$tmp/$name" "$base/$name" || die "下载失败:$base/$name(检查版本是否存在、服务器能否访问 GitHub)"
+  say "下载 $name(约 47 MB)"
+  curl -fsSL --retry 5 --retry-delay 3 --connect-timeout 15 -o "$tmp/$name" "$base/$name" || die "下载失败:$base/$name(检查版本是否存在、服务器能否访问 GitHub)"
   curl -fsL --retry 3 -o "$tmp/$name.sha256" "$base/$name.sha256" || die "下载校验文件失败"
   (cd "$tmp" && sha256sum -c "$name.sha256" >/dev/null) || die "sha256 校验不通过,下载的包不完整或被改动"
   tar -xzf "$tmp/$name" -C "$tmp"
@@ -110,11 +111,13 @@ install_xui_hub() {
   id "$RUN_USER" >/dev/null 2>&1 || useradd --system --home-dir "$DIR" --shell /usr/sbin/nologin "$RUN_USER" 2>/dev/null || useradd --system --home-dir "$DIR" --shell /sbin/nologin "$RUN_USER"
   mkdir -p "$ETC"
 
-  # 首次安装:写 .env,密码 / 端口来自环境变量或提问,否则随机 / 默认
+  # 首次安装(或 .env 里还没有密码):写 .env,密码 / 端口来自环境变量或提问,否则随机 / 默认
   NEW_PASSWORD=""
-  if [ ! -f "$ENV_FILE" ]; then
-    cp "$DIR/.env.example" "$ENV_FILE"
-    local pw="${XUIHUB_PASSWORD:-}" port="${XUIHUB_PORT:-}"
+  [ -f "$ENV_FILE" ] || cp "$DIR/.env.example" "$ENV_FILE"
+  local cur_pw
+  cur_pw="$(env_get ADMIN_PASSWORD)"
+  if [ -z "$cur_pw" ] || [ "$cur_pw" = change-me ]; then
+    local pw="${XUIHUB_PASSWORD:-}" port="${XUIHUB_PORT:-$(env_get HOST_PORT)}"
     if [ "$NONINTERACTIVE" = 0 ]; then
       [ -n "$pw" ] || { read -r -s -p "后台密码(直接回车随机生成):" pw; echo; }
       [ -n "$port" ] || read -r -p "后台端口 [8788]:" port

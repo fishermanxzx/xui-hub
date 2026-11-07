@@ -18,7 +18,7 @@ ok() { echo -e "${green}$*${plain}"; }
 warn() { echo -e "${yellow}$*${plain}"; }
 err() { echo -e "${red}$*${plain}" >&2; }
 need_root() { [ "$(id -u)" = 0 ] || { err "请用 root 执行"; exit 1; }; }
-rand() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-16}"; }
+rand() { head -c 256 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-"${1:-16}"; }
 env_get() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-; }
 env_set() {
   { grep -vE "^$1=" "$ENV_FILE" 2>/dev/null || true; printf '%s=%s\n' "$1" "$2"; } >"$ENV_FILE.tmp"
