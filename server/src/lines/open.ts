@@ -1,13 +1,14 @@
 // 给客户开一条线路:
 // - 直连:在选定面板上,挂到已有入站或新建入站,新建 client;
-// - 中转:先把出口准备好(SOCKS,或落地面板上的 socks 入站),在中转面板上选定 / 新建入站,把这个入站路由到出口,再新建 client。
+// - 中转:先把出口准备好(SOCKS,或落地面板上的 socks 入站),在中转面板上选定 / 新建入站,给这个客户端(按 email)加一条到出口的路由规则,再新建 client。
+//   规则按客户端区分,所以中转和直连的客户端可以挂在同一个入站上,各走各的出口。
 // 返回线路记录和客户端的分享链接(链接指向客户端直连的那块面板:直连是落地本身,中转是中转机)。
 
-import { addClientTo, ensureInbound, type ClientAdmin, type CreateOptions } from '../clients/create';
+import { addClientTo, ensureInbound, freeEmail, type ClientAdmin, type CreateOptions } from '../clients/create';
 import { addLine, getCustomer, type Line } from '../customers/repo';
 import type { DB } from '../db';
 import { getPanel, InputError, listPanels, type Panel } from '../panels/repo';
-import { applyRoute, parseExitSpec, prepareExit, type ExitAdmin, type RouteAdmin } from './relay';
+import { applyRoute, parseExitSpec, prepareExit, removeRoute, type ExitAdmin, type RouteAdmin } from './relay';
 
 export interface LineAdmin extends ClientAdmin, ExitAdmin, RouteAdmin {
   deleteClient(email: string): Promise<void>;
@@ -41,15 +42,15 @@ export async function openLine(db: DB, customerId: number, input: OpenLineInput,
   const admin = adminFor(panel);
   try {
     const opts: CreateOptions = { otherPanels: listPanels(db), adminFor, probe };
-    // 中转选「新建入站」时一定新建:复用已有入站会把它上面别的客户端一起路由到这个出口
-    const { inbound, created, protocol } = await ensureInbound(panel, admin, { inbound_id: input.inbound?.id, protocol: input.inbound?.protocol, forceNew: kind === 'relay' }, opts);
+    const { inbound, created, protocol } = await ensureInbound(panel, admin, { inbound_id: input.inbound?.id, protocol: input.inbound?.protocol }, opts);
+    const email = await freeEmail(admin, customer.name);
     let exit = null;
     if (exitSpec) {
       exit = await prepareExit(db, exitSpec, adminFor, new URL(panel.base_url).hostname);
       if (!inbound.tag) throw new Error('入站没有 tag,没法加路由规则');
-      await applyRoute(admin, String(inbound.tag), exit.server);
+      await applyRoute(admin, String(inbound.tag), email, exit.server);
     }
-    const { email, links } = await addClientTo(admin, inbound, customer.name);
+    const { links } = await addClientTo(admin, inbound, customer.name, email);
     const line = addLine(db, {
       customer_id: customer.id,
       kind,
@@ -70,16 +71,19 @@ export async function openLine(db: DB, customerId: number, input: OpenLineInput,
   }
 }
 
-/** 删掉线路对应的 client(面板上已经没有也算成功),再删记录 */
+/** 删掉线路对应的 client(面板上已经没有也算成功);中转线路再把他的出口规则去掉(入站和出站不动)。调用方负责删记录 */
 export async function removeLine(db: DB, line: Line, adminFor: (panel: Panel) => LineAdmin): Promise<void> {
   const panel = getPanel(db, line.panel_id);
-  if (panel) {
-    const admin = adminFor(panel);
-    try {
-      const exists = (await admin.listClients()).some((c) => c.email === line.email);
-      if (exists) await admin.deleteClient(line.email);
-    } finally {
-      await admin.close?.().catch(() => {});
+  if (!panel) return;
+  const admin = adminFor(panel);
+  try {
+    const exists = (await admin.listClients()).some((c) => c.email === line.email);
+    if (exists) await admin.deleteClient(line.email);
+    if (line.kind === 'relay') {
+      const tag = (await admin.listInbounds()).find((ib) => Number(ib.id) === line.inbound_id)?.tag;
+      if (tag) await removeRoute(admin, String(tag), line.email);
     }
+  } finally {
+    await admin.close?.().catch(() => {});
   }
 }

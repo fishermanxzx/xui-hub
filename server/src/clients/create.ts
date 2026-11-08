@@ -167,11 +167,11 @@ async function createInbound(protocol: ClientProtocol, panel: Panel, admin: Clie
   return created;
 }
 
-/** 选定或新建一个能挂客户端的入站:给了 inbound_id 就用它,否则按协议复用 / 新建(forceNew 时不复用,一定新建)。不关闭 admin */
+/** 选定或新建一个能挂客户端的入站:给了 inbound_id 就用它,否则按协议复用 / 新建。不关闭 admin */
 export async function ensureInbound(
   panel: Panel,
   admin: ClientAdmin,
-  choice: { inbound_id?: unknown; protocol?: unknown; forceNew?: boolean },
+  choice: { inbound_id?: unknown; protocol?: unknown },
   opts: CreateOptions = {},
 ): Promise<{ inbound: any; created: boolean; protocol: string }> {
   const [inbounds, clients] = await Promise.all([admin.listInbounds(), admin.listClients()]);
@@ -184,14 +184,19 @@ export async function ensureInbound(
     return { inbound, created: false, protocol: String(inbound.protocol) };
   }
   const protocol = protocolOf(choice.protocol);
-  const existing = choice.forceNew ? undefined : reusable(protocol, inbounds, clients);
+  const existing = reusable(protocol, inbounds, clients);
   if (existing) return { inbound: existing, created: false, protocol };
   return { inbound: await createInbound(protocol, panel, admin, inbounds, opts), created: true, protocol };
 }
 
-/** 在入站上新建一个客户端(email 由名称生成、面板内唯一),读回核对,返回分享链接。不关闭 admin */
-export async function addClientTo(admin: ClientAdmin, inbound: any, name: unknown): Promise<{ email: string; links: string[] }> {
-  const email = emailFor(name, new Set((await admin.listClients()).map((c) => String(c.email))));
+/** 面板上还没用过的 email:由名称生成,重名加后缀 */
+export async function freeEmail(admin: ClientAdmin, name: unknown): Promise<string> {
+  return emailFor(name, new Set((await admin.listClients()).map((c) => String(c.email))));
+}
+
+/** 在入站上新建一个客户端(email 不传就由名称生成、面板内唯一),读回核对,返回分享链接。不关闭 admin */
+export async function addClientTo(admin: ClientAdmin, inbound: any, name: unknown, fixedEmail?: string): Promise<{ email: string; links: string[] }> {
+  const email = fixedEmail ?? (await freeEmail(admin, name));
   const inboundId = Number(inbound.id);
   await admin.addClient(newClient(email, inbound), [inboundId]);
   const back = (await admin.listClients()).find((c) => c.email === email);

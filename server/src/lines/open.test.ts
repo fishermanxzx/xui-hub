@@ -51,15 +51,15 @@ test('直连:在面板上挂已有入站或新建入站,建 client 并记录线�
   await removeLine(db, out.line, adminFor); // 面板上已经没有也不报错
 });
 
-test('中转:落地上新建 socks 入站,中转上新建入站并路由到它,再建 client;出口也可以是 SOCKS', async () => {
+test('中转:落地上新建 socks 入站,中转上复用 / 新建入站并按客户端路由,再建 client;出口也可以是 SOCKS;删线路去掉规则', async () => {
   const db = memoryDb();
   const relay = addPanel(db, 'relay', 'https://1.1.1.1:2053/p');
   const landing = addPanel(db, 'landing', 'https://2.2.2.2:2053/p');
   const data: Record<string, Data> = {
     relay: {
-      // 中转上已有一个 reality 入站:选「新建入站」时不能复用它(否则它上面的客户端会跟着改出口)
+      // 中转上已有一个 reality 入站,上面有一个直连客户端 direct-guy:中转客户端挂上同一个入站,各走各的出口
       inbounds: [{ id: 5, remark: 'existing', protocol: 'vless', port: 500, enable: true, tag: 'in-500', streamSettings: reality }],
-      clients: [],
+      clients: [{ email: 'direct-guy', id: 'dg', inboundIds: [5] }],
       xray: { outbounds: [{ tag: 'direct', protocol: 'freedom' }], routing: { rules: [{ type: 'field', outboundTag: 'direct' }] } },
       restarts: 0,
     },
@@ -68,30 +68,38 @@ test('中转:落地上新建 socks 入站,中转上新建入站并路由到它,�
   const adminFor = fake(data);
   const cid = createCustomer(db, { name: 'li' });
   const out = await openLine(db, cid, { kind: 'relay', panel_id: relay.id, inbound: { protocol: 'vless' }, exit: { kind: 'panel', panel_id: landing.id } }, adminFor);
-  assert.deepEqual([out.line.kind, out.line.panel_name, out.line.exit_kind, out.line.exit_panel_name, out.created.inbound, out.created.exit_inbound], ['relay', 'relay', 'panel', 'landing', 'vless-reality', 'relay-socks']);
-  assert.equal(data.relay.inbounds.length, 2, '新建了入站而不是复用 existing');
-  assert.equal(out.line.inbound_id, data.relay.inbounds[1].id);
+  assert.deepEqual([out.line.kind, out.line.panel_name, out.line.exit_kind, out.line.exit_panel_name, out.created.inbound, out.created.exit_inbound], ['relay', 'relay', 'panel', 'landing', null, 'relay-socks']);
+  assert.equal(data.relay.inbounds.length, 1, '复用了已有的 reality 入站');
+  assert.equal(out.line.inbound_id, 5);
   const mixed = data.landing.inbounds[1];
   assert.equal(mixed.protocol, 'mixed');
   assert.equal(out.line.exit_port, Number(mixed.port));
-  // 中转的 Xray:多了指向落地 socks 入站的出站,规则在兜底规则前面,重启过一次
+  // 中转的 Xray:多了指向落地 socks 入站的出站,规则只管 li 这个客户端、在兜底规则前面,重启过一次
   const acc = decodeJson(mixed.settings).accounts[0];
   const outs = data.relay.xray.outbounds;
   assert.deepEqual(outs[1].settings.servers[0], { address: '2.2.2.2', port: Number(mixed.port), users: [{ user: acc.user, pass: acc.pass }] });
-  assert.deepEqual(data.relay.xray.routing.rules.map((r: any) => [r.inboundTag ?? null, r.outboundTag]), [[[`in-${data.relay.inbounds[1].port}`], outs[1].tag], [null, 'direct']]);
+  assert.deepEqual(data.relay.xray.routing.rules.map((r: any) => [r.inboundTag ?? null, r.user ?? null, r.outboundTag]), [[['in-500'], ['li'], outs[1].tag], [null, null, 'direct']]);
   assert.equal(data.relay.restarts, 1);
-  assert.equal(data.relay.clients[0].email, 'li');
+  assert.equal(data.relay.clients[1].email, 'li');
   assert.match(out.links[0], /^vless:\/\/.+@1\.1\.1\.1#li$/);
 
-  // 第二位客户用 SOCKS 出口,复用中转上已有的 vless 入站(同一入站共用出口:规则被换成新出口)
+  // 第二位客户用 SOCKS 出口,同一个入站:多一条 wang 的规则,li 的不动
   const sid = createSocks(db, { name: 'isp', address: 'socks5://u:p@isp.example.com:1080' });
   const c2 = createCustomer(db, { name: 'wang' });
-  const two = await openLine(db, c2, { kind: 'relay', panel_id: relay.id, inbound: { id: data.relay.inbounds[1].id }, exit: { kind: 'socks', socks_id: sid } }, adminFor);
+  const two = await openLine(db, c2, { kind: 'relay', panel_id: relay.id, inbound: { id: 5 }, exit: { kind: 'socks', socks_id: sid } }, adminFor);
   assert.deepEqual([two.line.exit_kind, two.line.exit_socks_name, two.line.exit_label, two.created], ['socks', 'isp', 'SOCKS isp', { inbound: null, exit_inbound: null }]);
   assert.equal(data.relay.xray.outbounds.length, 3);
-  assert.deepEqual(data.relay.xray.routing.rules[0], { type: 'field', inboundTag: [`in-${data.relay.inbounds[1].port}`], outboundTag: 'socks-isp.example.com-1080' });
+  // 新规则插在兜底规则前,所以在 li 之后
+  assert.deepEqual(data.relay.xray.routing.rules.map((r: any) => [r.user ?? null, r.outboundTag]), [[['li'], outs[1].tag], [['wang'], 'socks-isp.example.com-1080'], [null, 'direct']]);
   assert.equal(data.relay.restarts, 2);
   assert.equal(linesOf(db, c2).length, 1);
+
+  // 删掉 li 的线路:client 没了,他的规则没了,wang 的还在;出站和入站不动
+  await removeLine(db, out.line, adminFor);
+  assert.equal(data.relay.clients.some((c) => c.email === 'li'), false);
+  assert.deepEqual(data.relay.xray.routing.rules.map((r: any) => r.user ?? null), [['wang'], null]);
+  assert.equal(data.relay.xray.outbounds.length, 3);
+  assert.equal(data.relay.restarts, 3);
 
   await assert.rejects(openLine(db, cid, { kind: 'relay', panel_id: relay.id, inbound: { protocol: 'vless' } }, adminFor), /出口/);
 });

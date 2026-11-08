@@ -1,8 +1,8 @@
 // 中转线路的出口与路由:
 // - 出口可以是 SOCKS 页登记的代理,或落地面板上的 socks(mixed)入站(选已有的,或新建一个带随机账号的);
-// - 在中转的 Xray 配置里补一个指向出口的 socks 出站(已有同地址同账号的就复用)和一条「这个入站 → 该出站」的规则,
-//   规则放在第一条不限入站的兜底规则之前(否则会被兜底规则抢走),然后重启 Xray。
-// 同一个入站上的所有客户端共用这条规则,也就是共用同一个出口。
+// - 在中转的 Xray 配置里补一个指向出口的 socks 出站(已有同地址同账号的就复用)和一条「这个入站 + 这个客户端(user = email)→ 该出站」
+//   的规则,放在会接住这个入站流量的兜底规则之前,然后重启 Xray。
+// 规则按客户端区分:同一个入站上的客户端可以各走各的出口,没配规则的客户端照旧按入站 / 全局的兜底规则走(一般是直出)。
 
 import { randomBytes } from 'node:crypto';
 import type { DB } from '../db';
@@ -177,34 +177,51 @@ const CONDITIONS = ['domain', 'ip', 'port', 'sourcePort', 'source', 'protocol', 
 /** 只按入站匹配(或不限入站)的兜底规则,没有别的条件 */
 const plainRule = (r: any) => CONDITIONS.every((k) => r?.[k] == null || (Array.isArray(r[k]) && !r[k].length) || r[k] === '');
 
-/** 让 inboundTag 这个入站走指定出口:去掉它在旧规则里的身影,把新规则放在第一条不限入站的兜底规则之前。返回出站 tag */
-export function routeToExit(xray: any, inboundTag: string, server: ExitServer): string {
+/** 是不是我们给某个客户端加的规则:只有 inboundTag + user 两个条件 */
+const isUserRule = (r: any, inboundTag: string, email: string) =>
+  Array.isArray(r?.inboundTag) && r.inboundTag.length === 1 && r.inboundTag[0] === inboundTag && Array.isArray(r?.user) && r.user.length === 1 && r.user[0] === email;
+
+/** 会接住这个入站流量的兜底规则:不限入站、或点名这个入站,且没有别的条件 */
+const catchesInbound = (r: any, inboundTag: string) => r?.enabled !== false && plainRule(r) && (r?.outboundTag || r?.balancerTag) && (!r?.inboundTag?.length || r.inboundTag.includes(inboundTag));
+
+/** 让 inboundTag 入站上的 email 这个客户端走指定出口:换掉他旧的规则,新规则放在会接住这个入站的兜底规则之前。返回出站 tag */
+export function routeUserToExit(xray: any, inboundTag: string, email: string, server: ExitServer): string {
   const outTag = ensureOutbound(xray, server);
-  const rules: any[] = Array.isArray(xray.routing?.rules) ? xray.routing.rules : [];
-  const kept: any[] = [];
-  for (const r of rules) {
-    if (Array.isArray(r?.inboundTag) && r.inboundTag.includes(inboundTag) && plainRule(r)) {
-      // 这条规则只管这个入站就整条删掉,还管别的入站就把这个入站摘出来
-      const rest = r.inboundTag.filter((t: string) => t !== inboundTag);
-      if (!rest.length) continue;
-      kept.push({ ...r, inboundTag: rest });
-    } else kept.push(r);
-  }
-  const rule = { type: 'field', inboundTag: [inboundTag], outboundTag: outTag };
-  const fallback = kept.findIndex((r) => r?.enabled !== false && !r?.inboundTag?.length && plainRule(r) && (r?.outboundTag || r?.balancerTag));
-  if (fallback >= 0) kept.splice(fallback, 0, rule);
-  else kept.push(rule);
-  xray.routing = { ...(xray.routing ?? {}), rules: kept };
+  const rules: any[] = (Array.isArray(xray.routing?.rules) ? xray.routing.rules : []).filter((r: any) => !isUserRule(r, inboundTag, email));
+  const rule = { type: 'field', inboundTag: [inboundTag], user: [email], outboundTag: outTag };
+  const at = rules.findIndex((r) => catchesInbound(r, inboundTag));
+  if (at >= 0) rules.splice(at, 0, rule);
+  else rules.push(rule);
+  xray.routing = { ...(xray.routing ?? {}), rules };
   return outTag;
 }
 
-/** 读中转的 Xray 配置 → 改路由 → 写回 → 重启 Xray(上面所有客户端断流几秒) */
-export async function applyRoute(admin: RouteAdmin, inboundTag: string, server: ExitServer): Promise<string> {
+/** 去掉某个客户端的出口规则(删线路时);没有这条规则就返回 false */
+export function unrouteUser(xray: any, inboundTag: string, email: string): boolean {
+  const rules: any[] = Array.isArray(xray.routing?.rules) ? xray.routing.rules : [];
+  const kept = rules.filter((r) => !isUserRule(r, inboundTag, email));
+  if (kept.length === rules.length) return false;
+  xray.routing = { ...(xray.routing ?? {}), rules: kept };
+  return true;
+}
+
+/** 读中转的 Xray 配置 → 给客户端加出口规则 → 写回 → 重启 Xray(上面所有客户端断流几秒) */
+export async function applyRoute(admin: RouteAdmin, inboundTag: string, email: string, server: ExitServer): Promise<string> {
   const raw = await admin.xraySettings();
   const xray = xrayConfig(raw);
   if (!Array.isArray(xray.outbounds) || !xray.outbounds.length) throw new Error('读到的 Xray 配置不完整(没有出站)');
-  const outTag = routeToExit(xray, inboundTag, server);
+  const outTag = routeUserToExit(xray, inboundTag, email, server);
   await admin.updateXray(xray, decodeJson(raw)?.outboundTestUrl || DEFAULT_TEST_URL);
   await admin.restartXray();
   return outTag;
+}
+
+/** 删线路时把客户端的出口规则去掉;本来就没有就不碰配置 */
+export async function removeRoute(admin: RouteAdmin, inboundTag: string, email: string): Promise<boolean> {
+  const raw = await admin.xraySettings();
+  const xray = xrayConfig(raw);
+  if (!unrouteUser(xray, inboundTag, email)) return false;
+  await admin.updateXray(xray, decodeJson(raw)?.outboundTestUrl || DEFAULT_TEST_URL);
+  await admin.restartXray();
+  return true;
 }

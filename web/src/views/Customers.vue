@@ -137,7 +137,7 @@ async function open() {
   const f = lf.value;
   const body: OpenLineInput = { kind: f.kind, panel_id: f.panel_id, inbound: f.inbound === 'new' ? { protocol: f.protocol } : { id: f.inbound } };
   if (f.kind === 'relay') body.exit = f.exit_kind === 'socks' ? { kind: 'socks', socks_id: f.socks_id } : { kind: 'panel', panel_id: f.exit_panel_id, inbound_id: f.exit_inbound === 'new' ? null : f.exit_inbound };
-  if (f.kind === 'relay' && !confirm('开中转线路会改中转面板的 Xray 路由并重启 Xray,中转上所有客户端会断流几秒。继续?')) return;
+  if (f.kind === 'relay' && !confirm('开中转线路会给中转面板加一条路由规则并重启 Xray,中转上所有客户端会断流几秒。继续?')) return;
   opening.value = true;
   try {
     opened.value = await api.openLine(lineFor.value.id, body);
@@ -169,7 +169,7 @@ async function showLinks(line: Line) {
 }
 
 async function removeLine(line: Line) {
-  if (!confirm(`删除这条线路?会从 ${line.panel_name} 上删掉客户端 ${line.email},链接立即失效。入站和路由不动。`)) return;
+  if (!confirm(`删除这条线路?会从 ${line.panel_name} 上删掉客户端 ${line.email},链接立即失效${line.kind === 'relay' ? ',并去掉他的出口规则(重启 Xray)' : ''}。入站不动。`)) return;
   try {
     await api.deleteLine(line.customer_id, line.id);
     toast('已删除');
@@ -190,18 +190,10 @@ function exitText(l: Line): string {
   <div class="toolbar">
     <div>
       <h2>客户</h2>
-      <p class="muted small">一位客户可以有多条线路:直连某块面板,或经中转面板转到落地面板 / SOCKS。每条线路就是面板上的一个客户端。</p>
+      <p class="muted small">一位客户可以有多条线路:直连某块面板,或经中转面板转到落地面板 / SOCKS。每条线路就是面板上的一个客户端。拓扑图可以滚轮缩放、拖动,点节点看下游路径和线上的协议 / 客户端名。</p>
     </div>
     <button class="primary" @click="openForm(null)">新建客户</button>
   </div>
-
-  <section v-if="customers.length" class="sheet topo">
-    <header class="topo-head">
-      <h3>网络拓扑</h3>
-      <span class="muted small">滚轮缩放,拖动画布或节点;点一个节点,只看它的连线并显示线上的协议 / 客户端名,点空白恢复。蓝边是面板,黄底是 SOCKS,虚线箭头是出网。</span>
-    </header>
-    <TopologyGraph :customers="customers" :panels="panels" :socks="socksList" />
-  </section>
 
   <div class="cards">
     <article v-for="c in customers" :key="c.id" class="card sheet">
@@ -217,6 +209,7 @@ function exitText(l: Line): string {
           <button class="link danger" @click="remove(c)">删除</button>
         </div>
       </header>
+      <TopologyGraph v-if="c.lines.length" :customer="c" :panels="panels" :socks="socksList" class="topo" />
       <ul v-if="c.lines.length" class="lines">
         <li v-for="l in c.lines" :key="l.id" class="line">
           <span class="chip" :class="l.kind">{{ l.kind === 'direct' ? '直连' : '中转' }}</span>
@@ -269,7 +262,7 @@ function exitText(l: Line): string {
         <div class="field-block">
           <span class="label">{{ lf.kind === 'relay' ? '中转上的入站' : '入站' }}</span>
           <div class="choices">
-            <label class="row small"><input v-model="lf.inbound" type="radio" value="new" />新建入站(或复用同协议的)</label>
+            <label class="row small"><input v-model="lf.inbound" type="radio" value="new" />自动:面板上有同协议的入站就挂上去,没有就新建</label>
             <select v-if="lf.inbound === 'new'" v-model="lf.protocol" class="inline">
               <option value="vless">vless(reality)</option>
               <option value="hy2">hy2(hysteria2)</option>
@@ -283,7 +276,7 @@ function exitText(l: Line): string {
             </template>
             <span v-else class="muted small">这块面板上还没有能挂客户端的入站</span>
           </div>
-          <p v-if="lf.kind === 'relay' && lf.inbound !== 'new'" class="muted small hint">同一个入站上的客户端共用出口:选已有入站会把它整个路由到下面的出口。</p>
+          <p v-if="lf.kind === 'relay'" class="muted small hint">出口按客户端配路由规则,同一个入站上的客户端可以各走各的出口,直连的客户端不受影响。</p>
         </div>
 
         <template v-if="lf.kind === 'relay'">
@@ -363,20 +356,7 @@ h2 {
   max-width: 64ch;
 }
 .topo {
-  margin-bottom: 16px;
-  overflow: hidden;
-}
-.topo-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 12px;
-  padding: 12px 16px 10px;
-  border-bottom: 1px solid var(--rule-soft);
-}
-.topo-head h3 {
-  font-size: 14px;
-  font-weight: 600;
+  border-top: 1px solid var(--rule-soft);
 }
 .cards {
   display: flex;

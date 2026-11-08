@@ -4,7 +4,7 @@ import type { Panel } from '../panels/repo';
 import { createSocks } from '../socks/repo';
 import { decodeJson } from '../xui/json';
 import { addPanel, memoryDb } from '../testUtil';
-import { accountOf, applyRoute, builtinMixedInbound, ensureOutbound, parseExitSpec, prepareExit, routeToExit, type ExitAdmin } from './relay';
+import { accountOf, applyRoute, builtinMixedInbound, ensureOutbound, parseExitSpec, prepareExit, removeRoute, routeUserToExit, unrouteUser, type ExitAdmin } from './relay';
 
 const socksOut = (tag: string, address: string, port: number, user?: string, pass?: string) => ({
   tag,
@@ -22,7 +22,7 @@ test('出站:地址、端口、账号都一致才复用,否则新加一个不重
   assert.deepEqual(xray.outbounds[3].settings.servers[0].users, []);
 });
 
-test('路由:新规则放在兜底规则之前;入站原来的规则被替换;封锁规则和别的入站不动', () => {
+test('按客户端路由:规则带 user,放在会接住这个入站的兜底规则之前;同入站别的客户端不受影响;换出口替换旧规则;删线路去掉规则', () => {
   const xray: any = {
     outbounds: [{ tag: 'direct', protocol: 'freedom' }, { tag: 'block', protocol: 'blackhole' }],
     routing: {
@@ -33,23 +33,29 @@ test('路由:新规则放在兜底规则之前;入站原来的规则被替换;�
       ],
     },
   };
-  const tag = routeToExit(xray, 'in-a', { address: '9.9.9.9', port: 1080, user: 'u', pass: 'p' });
+  const tag = routeUserToExit(xray, 'in-a', 'zhang', { address: '9.9.9.9', port: 1080, user: 'u', pass: 'p' });
   assert.equal(tag, 'socks-9.9.9.9-1080');
   assert.deepEqual(xray.routing.rules, [
     { type: 'field', ip: ['geoip:private'], outboundTag: 'block' },
-    { type: 'field', inboundTag: ['in-b'], outboundTag: 'direct' },
-    { type: 'field', inboundTag: ['in-a'], outboundTag: 'socks-9.9.9.9-1080' },
+    { type: 'field', inboundTag: ['in-a'], user: ['zhang'], outboundTag: 'socks-9.9.9.9-1080' },
+    { type: 'field', inboundTag: ['in-a', 'in-b'], outboundTag: 'direct' },
     { type: 'field', outboundTag: 'direct' },
   ]);
-  // 再路由一次到别的出口:旧的专属规则整条换掉
-  routeToExit(xray, 'in-a', { address: '8.8.8.8', port: 1080, user: '', pass: '' });
+  // 同一入站上另一位客户端走别的出口:两条规则并存
+  routeUserToExit(xray, 'in-a', 'li', { address: '8.8.8.8', port: 1080, user: '', pass: '' });
+  // 张三换出口:他的旧规则被替换,李四的不动
+  routeUserToExit(xray, 'in-a', 'zhang', { address: '8.8.8.8', port: 1080, user: '', pass: '' });
   assert.deepEqual(
-    xray.routing.rules.map((r: any) => [r.inboundTag ?? null, r.outboundTag]),
-    [[null, 'block'], [['in-b'], 'direct'], [['in-a'], 'socks-8.8.8.8-1080'], [null, 'direct']],
+    xray.routing.rules.map((r: any) => [r.inboundTag ?? null, r.user ?? null, r.outboundTag]),
+    [[null, null, 'block'], [['in-a'], ['li'], 'socks-8.8.8.8-1080'], [['in-a'], ['zhang'], 'socks-8.8.8.8-1080'], [['in-a', 'in-b'], null, 'direct'], [null, null, 'direct']],
   );
+  assert.equal(xray.outbounds.length, 4);
+  assert.equal(unrouteUser(xray, 'in-a', 'zhang'), true);
+  assert.equal(unrouteUser(xray, 'in-a', 'zhang'), false);
+  assert.equal(xray.routing.rules.filter((r: any) => r.user).length, 1);
   // 没有兜底规则时追加在最后
   const bare: any = { outbounds: [{ tag: 'direct', protocol: 'freedom' }], routing: {} };
-  routeToExit(bare, 'in-x', { address: '9.9.9.9', port: 1, user: '', pass: '' });
+  routeUserToExit(bare, 'in-x', 'w', { address: '9.9.9.9', port: 1, user: '', pass: '' });
   assert.equal(bare.routing.rules.length, 1);
 });
 
@@ -61,10 +67,16 @@ test('applyRoute:读配置、改路由、按原 testUrl 写回并重启', async 
     updateXray: async (x: any, url: string) => void (calls.push(`update ${url}`), (saved = x)),
     restartXray: async () => void calls.push('restart'),
   };
-  const tag = await applyRoute(admin, 'in-1', { address: '1.1.1.1', port: 1080, user: 'u', pass: 'p' });
+  const tag = await applyRoute(admin, 'in-1', 'zhang', { address: '1.1.1.1', port: 1080, user: 'u', pass: 'p' });
   assert.equal(tag, 'socks-1.1.1.1-1080');
   assert.deepEqual(calls, ['update https://t/204', 'restart']);
-  assert.deepEqual(saved.routing.rules, [{ type: 'field', inboundTag: ['in-1'], outboundTag: 'socks-1.1.1.1-1080' }]);
+  assert.deepEqual(saved.routing.rules, [{ type: 'field', inboundTag: ['in-1'], user: ['zhang'], outboundTag: 'socks-1.1.1.1-1080' }]);
+  // 删规则:有就写回并重启,没有就不动
+  const admin2 = { xraySettings: async () => ({ xraySetting: JSON.stringify(saved) }), updateXray: async (x: any) => void (saved = x), restartXray: async () => void calls.push('restart2') };
+  assert.equal(await removeRoute(admin2, 'in-1', 'zhang'), true);
+  assert.equal(saved.routing.rules.length, 0);
+  assert.equal(await removeRoute(admin2, 'in-1', 'zhang'), false);
+  assert.deepEqual(calls.slice(2), ['restart2']);
 });
 
 test('出口:SOCKS 直接取登记的账号;落地用已有 socks 入站或新建一个带随机账号的 mixed 入站', async () => {

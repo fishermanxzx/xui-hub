@@ -1,11 +1,11 @@
 <script setup lang="ts">
-// 整体网络拓扑(cytoscape.js):客户 → 入口面板 → 出口(落地面板的 socks 入站 / SOCKS 代理)→ 互联网。
-// 滚轮缩放、拖画布平移、拖节点摆位置;点节点高亮它连着的边,点空白处恢复。面板节点共享:一块面板可同时是别人的直连面板和落地。
+// 一位客户的网络拓扑(cytoscape.js):客户端 → 入口面板 → 出口(落地面板的 socks 入站 / SOCKS 代理)→ 互联网。
+// 滚轮缩放、拖画布平移、拖节点摆位置;点节点高亮它下游的路径,点空白处恢复。只画这位客户用到的面板和 SOCKS。
 import cytoscape, { type Core, type ElementDefinition } from 'cytoscape';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Customer, Panel, Socks } from '../types';
 
-const props = defineProps<{ customers: Customer[]; panels: Panel[]; socks: Socks[] }>();
+const props = defineProps<{ customer: Customer; panels: Panel[]; socks: Socks[] }>();
 
 const el = ref<HTMLDivElement | null>(null);
 let cy: Core | null = null;
@@ -45,8 +45,9 @@ function build(): { elements: ElementDefinition[]; positions: Record<string, { x
   const landingPanels = new Set<number>();
   const usedSocks = new Set<number>();
   const directPanels = new Set<number>();
-  for (const c of props.customers) {
-    addNode(`c:${c.id}`, { label: c.name, sub: `${c.lines.length} 条线路` }, 'customer');
+  {
+    const c = props.customer;
+    addNode(`c:${c.id}`, { label: '客户端', sub: c.name }, 'customer');
     for (const l of c.lines) {
       entryPanels.add(l.panel_id);
       addEdge(`l:${l.id}`, `c:${c.id}`, `p:${l.panel_id}`, `${proto(l.protocol)} · ${l.email}`, l.kind);
@@ -60,19 +61,26 @@ function build(): { elements: ElementDefinition[]; positions: Record<string, { x
       }
     }
   }
-  for (const p of props.panels) addNode(`p:${p.id}`, { label: p.name, sub: hostOf(p.base_url) }, `panel${p.check_error ? ' bad' : ''}`);
-  for (const s of props.socks) addNode(`s:${s.id}`, { label: s.name, sub: `${s.host}:${s.port}` }, 'socks');
+  // 只画用到的面板和 SOCKS;已经删除的面板 / SOCKS 用占位节点
+  const panelIds = new Set([...entryPanels, ...landingPanels]);
+  for (const id of panelIds) {
+    const p = props.panels.find((x) => x.id === id);
+    addNode(`p:${id}`, p ? { label: p.name, sub: hostOf(p.base_url) } : { label: '面板(已删除)', sub: '' }, `panel${!p || p.check_error ? ' bad' : ''}`);
+  }
+  for (const id of usedSocks) {
+    const s = props.socks.find((x) => x.id === id);
+    addNode(`s:${id}`, s ? { label: s.name, sub: `${s.host}:${s.port}` } : { label: 'SOCKS(已删除)', sub: '' }, 'socks');
+  }
   addNode('net', { label: '互联网', sub: '' }, 'net');
   for (const id of new Set([...directPanels, ...landingPanels])) addEdge(`n:p${id}`, `p:${id}`, 'net', landingPanels.has(id) && !directPanels.has(id) ? '' : '直出', 'out');
   for (const id of usedSocks) addEdge(`n:s${id}`, `s:${id}`, 'net', '', 'out');
 
-  // 分列:客户 | 入口面板 | 出口(纯落地面板、SOCKS) | 互联网;没参与任何线路的面板 / SOCKS 放到出口列末尾
-  const cols: string[][] = [[], [], [], ['net']];
-  for (const c of props.customers) cols[0].push(`c:${c.id}`);
-  for (const p of props.panels) (entryPanels.has(p.id) ? cols[1] : cols[2]).push(`p:${p.id}`);
-  for (const s of props.socks) cols[2].push(`s:${s.id}`);
+  // 分列:客户端 | 入口面板 | 出口(纯落地面板、SOCKS) | 互联网
+  const cols: string[][] = [[`c:${props.customer.id}`], [], [], ['net']];
+  for (const id of panelIds) (entryPanels.has(id) ? cols[1] : cols[2]).push(`p:${id}`);
+  for (const id of usedSocks) cols[2].push(`s:${id}`);
   const positions: Record<string, { x: number; y: number }> = {};
-  const rowH = 100;
+  const rowH = 90;
   const tallest = Math.max(1, ...cols.map((c) => c.length));
   cols.forEach((ids, ci) => {
     const offset = ((tallest - ids.length) * rowH) / 2;
@@ -130,7 +138,7 @@ function relayout() {
 }
 
 onMounted(render);
-watch(() => [props.customers, props.panels, props.socks], render, { deep: true });
+watch(() => [props.customer, props.panels, props.socks], render, { deep: true });
 onBeforeUnmount(() => cy?.destroy());
 
 defineExpose({ fit, relayout });
@@ -151,12 +159,11 @@ defineExpose({ fit, relayout });
   position: relative;
 }
 .graph {
-  height: 380px;
+  height: 240px;
   width: 100%;
   background:
     linear-gradient(var(--rule-soft) 1px, transparent 1px) 0 0 / 24px 24px,
     linear-gradient(90deg, var(--rule-soft) 1px, transparent 1px) 0 0 / 24px 24px;
-  border-radius: 0 0 12px 12px;
 }
 .controls {
   position: absolute;
@@ -171,7 +178,7 @@ defineExpose({ fit, relayout });
 }
 @media (max-width: 720px) {
   .graph {
-    height: 300px;
+    height: 220px;
   }
 }
 </style>
