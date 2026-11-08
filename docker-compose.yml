@@ -12,7 +12,8 @@ services:
     environment:
       # 订阅转 Clash / Surge 用的内部 subconverter;它回源到本服务取节点
       SUBCONVERTER_URL: http://subconverter:25500
-      APP_INTERNAL_URL: http://app:8788
+      # subconverter 回源取节点走容器内网的内部监听(纯 HTTP,8789 不对外)
+      APP_INTERNAL_URL: http://app:8789
     depends_on:
       - subconverter
     ports:

@@ -14,7 +14,7 @@ FROM node:22-bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/fishermanxzx/xui-hub" \
       org.opencontainers.image.description="多面板 3x-ui 客户端管理:接入面板,创建 vless / hy2 客户端" \
       org.opencontainers.image.licenses="MIT"
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=8788 DATA_DIR=/data
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=8788 DATA_DIR=/data INTERNAL_HOST=0.0.0.0 INTERNAL_PORT=8789
 WORKDIR /app
 COPY --from=build /app/server/package.json server/
 COPY --from=build /app/server/node_modules server/node_modules

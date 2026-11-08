@@ -39,16 +39,15 @@ app.set('etag', false);
 app.set('trust proxy', ['loopback', 'uniquelocal']);
 app.use(express.json({ limit: '1mb' }));
 // 订阅 /sub/<token>(公开,凭客户各自的 token);Clash / Surge 由内部 subconverter 转换,它带内部密钥回源 /internal/nodes/:id 取节点
-app.use(
-  subscriptionRouter({
-    db,
-    fetcher: defaultFetcher({ timeoutMs: 6000 }),
-    convert: env.subconverterUrl ? subconverterClient(env.subconverterUrl) : null,
-    internalBaseUrl: env.appInternalUrl,
-    internalSecret: randomBytes(18).toString('base64url'),
-    mihomoTemplate: mihomoTemplateMatcher(env.mihomoTemplate),
-  }),
-);
+const subRouter = subscriptionRouter({
+  db,
+  fetcher: defaultFetcher({ timeoutMs: 6000 }),
+  convert: env.subconverterUrl ? subconverterClient(env.subconverterUrl) : null,
+  internalBaseUrl: env.appInternalUrl,
+  internalSecret: randomBytes(18).toString('base64url'),
+  mihomoTemplate: mihomoTemplateMatcher(env.mihomoTemplate),
+});
+app.use(subRouter);
 app.use('/api', apiRouter({ db, sessionSecret: loadSessionSecret(db), adminPassword: env.adminPassword, clientFor, probe: tcpOpen, subBaseUrl: env.subBaseUrl, subLogDays: env.subLogDays }));
 
 const dist = resolve(PROJECT_ROOT, 'web/dist');
@@ -62,6 +61,13 @@ const server = env.tls ? createHttpsServer({ cert: readFileSync(env.tls.cert), k
 server.listen(env.port, env.host, () => {
   console.log(`xui-hub listening on ${env.tls ? 'https' : 'http'}://${env.host}:${env.port}` + (env.adminPassword ? '' : '(未设置 ADMIN_PASSWORD,不鉴权)'));
 });
+// 内部监听:纯 HTTP,只有 /internal/nodes/:id(凭随机密钥),给 subconverter 回源用;主监听是 HTTPS 时它也能连
+const internalApp = express();
+internalApp.disable('x-powered-by');
+internalApp.use((req, res, next) => (req.path.startsWith('/internal/') ? next() : res.status(404).end()));
+internalApp.use(subRouter);
+const internalServer = createHttpServer(internalApp);
+internalServer.listen(env.internalPort, env.internalHost);
 
 // 定期:检查各面板(顺带同步各线路的客户端流量)→ 停用超额 / 到期客户的线路、恢复回到正常的
 const check = () =>
@@ -77,6 +83,7 @@ const timer = setInterval(check, env.checkIntervalSec * 1000);
 
 function shutdown() {
   clearInterval(timer);
+  internalServer.close();
   server.close(() => {
     db.close();
     process.exit(0);

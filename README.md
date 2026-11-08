@@ -12,6 +12,7 @@ Node 22 + Express + SQLite + Vue 3,单容器 Docker 部署。
   - 直连:选面板,入站选「自动(有同协议的就挂上去,没有就新建)」或指定已有入站。
   - 中转:选中转面板和入站,再选出口——落地面板(用它上面已有的 socks 入站,或自动新建一个随机端口随机账号的)或 SOCKS 页登记的代理。xui-hub 在中转的 Xray 里补一个指向出口的 socks 出站和一条「入站 + 客户端 → 出站」的路由规则(按客户端区分,同一入站上的客户端可以各走各的出口),重启 Xray 后再建客户端。
 - 每条线路直接给出客户端的分享链接和二维码;删线路会删掉面板上的客户端和他的路由规则。
+- 每位客户一条订阅链接 `/sub/<随机 token>`,包含他全部线路的节点,带全局已用 / 额度 / 到期(`subscription-userinfo`);按客户端 UA 自动给格式:Clash / Mihomo / Stash / Shadowrocket 拿 Clash 配置(内置 subconverter 转换,ACL4SSR 规则),sing-box / Hiddify 拿 sing-box 配置,Quantumult X / Loon 拿节点列表,v2rayN 等拿 base64 节点,`?target=` 可强制指定。节点每次现从面板取,到期 / 超额客户的订阅为空。可重置链接让旧链接失效,可看拉取记录(客户端、来源 IP)。
 - 额度与到期按客户算:各线路流量加总,每分钟从面板同步一次;超过额度或到了到期日,自动停用他所有客户端;改大额度、延后到期或「清零流量」后自动恢复。面板上手动停用的客户端不会被误开。
 - 每位客户一张可缩放、可拖动的网络拓扑图:客户端 → 入口面板 → 出口 → 互联网,点节点看他的下游路径。
 
@@ -67,7 +68,7 @@ docker compose up -d
 docker compose ps                        # STATUS 显示 healthy
 ```
 
-更新:`docker compose pull && docker compose up -d`。`.env` 里还可以设 `LISTEN_ADDR` / `HOST_PORT`(见下)。想自己从源码构建就克隆仓库,把 compose 里的 `image:` 换成 `build: .`。
+更新:`docker compose pull && docker compose up -d`。版本说明里提到 compose 文件有变动时(比如 v0.6.0 加了 subconverter 容器),先重新下载一次 `docker-compose.yml` 再 up。`.env` 里还可以设 `LISTEN_ADDR` / `HOST_PORT`(见下)。想自己从源码构建就克隆仓库,把 compose 里的 `image:` 换成 `build: .`。
 
 ### 之后
 
@@ -85,6 +86,10 @@ docker compose ps                        # STATUS 显示 healthy
 | `LISTEN_ADDR` / `HOST_PORT` | `0.0.0.0` / `8788` | 监听的地址和端口 |
 | `CHECK_INTERVAL_SEC` | `60` | 多久同步一次各面板(连通性、客户端流量)并执行额度 / 到期(秒) |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | 空 | 两项都填就直接提供 HTTPS(fullchain 和私钥的路径);`xui-hub ssl` 会自动写 |
+| `SUB_BASE_URL` | 空 | 订阅链接的地址前缀;空 = 用打开后台时的地址。订阅走单独域名时填 |
+| `MIHOMO_TEMPLATE` | 空 | Clash 输出套 Mihomo 头部模板(dns / tcp-concurrent / unified-delay):`all` / 逗号分隔的客户名 / 空 = 关闭 |
+| `SUB_LOG_DAYS` | `7` | 订阅拉取记录保留天数 |
+| `INTERNAL_PORT` | `8789` | 内部监听(纯 HTTP,默认只绑本机),subconverter 回源取节点用;一般不用改 |
 
 ## 开发
 
