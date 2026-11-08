@@ -109,12 +109,13 @@ function render() {
       { selector: 'node:selected', style: { 'border-width': 2, 'border-color': t.ink } },
     ],
   });
+  // 点节点:它直接相连的,加上它下游的整条路径(客户 → 中转 → 落地 / SOCKS → 互联网)都点亮,其余变淡
   cy.on('tap', 'node', (e) => {
     const n = e.target;
-    const keep = n.closedNeighborhood();
+    const keep = n.closedNeighborhood().union(n.successors());
     cy!.elements().addClass('faded').removeClass('focus');
     keep.removeClass('faded');
-    n.connectedEdges().addClass('focus');
+    keep.edges().addClass('focus');
   });
   cy.on('tap', (e) => {
     if (e.target === cy) cy!.elements().removeClass('faded').removeClass('focus');
