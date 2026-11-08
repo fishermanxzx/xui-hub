@@ -12,6 +12,35 @@ export function fmtBytes(n: number): string {
   return `${v >= 100 || i === 0 ? v.toFixed(0) : v.toFixed(v >= 10 ? 1 : 2)} ${units[i]}`;
 }
 
+const GB = 1024 ** 3;
+export function bytesToGb(n: number): number {
+  return Math.round((n / GB) * 100) / 100;
+}
+export function gbToBytes(gb: number): number {
+  return Math.round(gb * GB);
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, '0');
+}
+export function fmtDate(ms: number, empty = '不限期'): string {
+  if (!ms) return empty;
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+/** 日期输入框的值 → 当天 23:59:59 的毫秒时间戳;空 = 0(不限期) */
+export function dateInputToMs(value: string): number {
+  if (!value) return 0;
+  const [y, m, d] = value.split('-').map(Number);
+  return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+}
+export function msToDateInput(ms: number): string {
+  if (!ms) return '';
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+export const STATE_LABEL: Record<string, string> = { active: '正常', expired: '已到期', over_quota: '已超额' };
+
 export function fmtAgo(ms: number | null | undefined, empty = '从未'): string {
   if (!ms) return empty;
   const diff = Date.now() - ms;

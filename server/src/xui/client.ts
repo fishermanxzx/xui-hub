@@ -78,6 +78,17 @@ export class XUIClient {
     await this.req('POST', '/clients/add', { client, inboundIds });
   }
 
+  /** 批量启用 / 停用 client(面板会重载 Xray) */
+  async setClientsEnabled(emails: string[], enable: boolean): Promise<void> {
+    if (!emails.length) return;
+    await this.req('POST', enable ? '/clients/bulkEnable' : '/clients/bulkDisable', { emails });
+  }
+
+  /** 把 client 的上下行流量清零 */
+  async resetClientTraffic(email: string): Promise<void> {
+    await this.req('POST', `/clients/resetTraffic/${encodeURIComponent(email)}`);
+  }
+
   /** 删除 client(连同它挂的全部入站) */
   async deleteClient(email: string): Promise<void> {
     await this.req('POST', `/clients/del/${encodeURIComponent(email)}`);

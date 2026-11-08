@@ -5,9 +5,9 @@ import { api } from '../api';
 import ClientLinks from '../components/ClientLinks.vue';
 import TopologyGraph from '../components/TopologyGraph.vue';
 import Modal from '../components/Modal.vue';
-import { fmtAgo } from '../format';
+import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDue, gbToBytes, msToDateInput, STATE_LABEL } from '../format';
 import { toast, toastError } from '../toast';
-import type { ClientProtocol, Customer, Line, LineKind, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks } from '../types';
+import type { ClientProtocol, Customer, EnforceOp, Line, LineKind, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks } from '../types';
 
 const customers = ref<Customer[]>([]);
 const panels = ref<Panel[]>([]);
@@ -29,20 +29,33 @@ const proto = (p: string) => PROTOCOL[p] ?? p;
 const editing = ref<Customer | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', remark: '' });
+const form = ref({ name: '', remark: '', quotaGb: '', expire: '' });
 
 function openForm(c: Customer | null) {
   editing.value = c;
-  form.value = { name: c?.name ?? '', remark: c?.remark ?? '' };
+  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '' };
   showForm.value = true;
+}
+
+/** 面板上启停操作的结果提示 */
+function opsNote(ops: EnforceOp[]): string {
+  if (!ops.length) return '';
+  const bad = ops.filter((o) => !o.ok);
+  const did = ops.filter((o) => o.ok);
+  const parts = [];
+  if (did.length) parts.push(`已${did[0].action === 'disable' ? '停用' : '启用'} ${did.length} 个客户端`);
+  if (bad.length) parts.push(`${bad.length} 个操作失败:${bad.map((o) => `${o.panel} 上的 ${o.email}(${o.error})`).join('、')}`);
+  return parts.join(';');
 }
 
 async function submit() {
   saving.value = true;
+  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire) };
   try {
-    const saved = editing.value ? await api.updateCustomer(editing.value.id, form.value) : await api.createCustomer(form.value);
+    const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
     showForm.value = false;
-    toast('已保存');
+    const note = opsNote((saved as { ops?: EnforceOp[] }).ops ?? []);
+    toast(note ? `已保存,${note}` : '已保存', note.includes('失败') ? 'err' : 'ok');
     await load();
     // 新建完直接进开线路
     if (!editing.value) openLineFor(customers.value.find((c) => c.id === saved.id) ?? saved);
@@ -52,6 +65,35 @@ async function submit() {
     saving.value = false;
   }
 }
+
+async function resetUsage(c: Customer) {
+  if (!confirm(`把「${c.name}」的已用流量清零?会把他 ${c.lines.length} 个客户端在面板上的流量都清零,超额停掉的会恢复。`)) return;
+  try {
+    const r = await api.resetUsage(c.id);
+    const note = [r.failed.length ? `${r.failed.length} 个客户端没清成:${r.failed.map((f) => f.line).join('、')}` : '', opsNote(r.ops)].filter(Boolean).join(';');
+    toast(note ? `已清零,${note}` : '已清零', r.failed.length ? 'err' : 'ok');
+    await load();
+  } catch (e) {
+    toastError(e);
+  }
+}
+
+const syncing = ref(false);
+async function syncNow() {
+  syncing.value = true;
+  try {
+    const { ops } = await api.syncNow();
+    toast(opsNote(ops) || '已同步,没有需要启停的客户端');
+    await load();
+  } catch (e) {
+    toastError(e);
+  } finally {
+    syncing.value = false;
+  }
+}
+
+/** 拓扑弹窗 */
+const topoFor = ref<Customer | null>(null);
 
 async function remove(c: Customer) {
   if (!confirm(`删除客户「${c.name}」?会先删掉他在各面板上的 ${c.lines.length} 个客户端,链接立即失效。`)) return;
@@ -190,9 +232,12 @@ function exitText(l: Line): string {
   <div class="toolbar">
     <div>
       <h2>客户</h2>
-      <p class="muted small">一位客户可以有多条线路:直连某块面板,或经中转面板转到落地面板 / SOCKS。每条线路就是面板上的一个客户端。拓扑图可以滚轮缩放、拖动,点节点看下游路径和线上的协议 / 客户端名。</p>
+      <p class="muted small">一位客户可以有多条线路:直连某块面板,或经中转面板转到落地面板 / SOCKS,每条线路就是面板上的一个客户端。额度和到期按客户算:各线路流量加起来超过额度、或到了到期日,自动停用他所有客户端;加额度、续期或清零后自动恢复。</p>
     </div>
-    <button class="primary" @click="openForm(null)">新建客户</button>
+    <div class="row">
+      <button :disabled="syncing || !customers.length" title="马上读一遍各面板的流量,并执行额度 / 到期" @click="syncNow">{{ syncing ? '同步中…' : '立即同步' }}</button>
+      <button class="primary" @click="openForm(null)">新建客户</button>
+    </div>
   </div>
 
   <div class="cards">
@@ -200,16 +245,24 @@ function exitText(l: Line): string {
       <header class="head">
         <div class="title">
           <span class="name">{{ c.name }}</span>
+          <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ STATE_LABEL[c.state] }}</span>
           <span v-if="c.remark" class="muted small">{{ c.remark }}</span>
           <span class="muted small">{{ c.lines.length }} 条线路</span>
+          <span class="small" :class="{ 'text-err': c.state === 'over_quota' }">
+            已用 {{ fmtBytes(c.used) }}<template v-if="c.quota_bytes"> / {{ fmtBytes(c.quota_bytes) }}</template><span v-else class="muted">(不限额)</span>
+          </span>
+          <span class="small" :class="{ 'text-warn': dueLevel(c.expire_at) === 'warn', 'text-err': dueLevel(c.expire_at) === 'err', muted: !c.expire_at }" :title="fmtDate(c.expire_at)">
+            {{ fmtDue(c.expire_at) }}
+          </span>
         </div>
         <div class="ops">
           <button class="primary small-btn" :disabled="!panels.length" @click="openLineFor(c)">开线路</button>
+          <button class="link" :disabled="!c.lines.length" @click="topoFor = c">网络拓扑</button>
+          <button class="link" :disabled="!c.lines.length" @click="resetUsage(c)">清零流量</button>
           <button class="link" @click="openForm(c)">编辑</button>
           <button class="link danger" @click="remove(c)">删除</button>
         </div>
       </header>
-      <TopologyGraph v-if="c.lines.length" :customer="c" :panels="panels" :socks="socksList" class="topo" />
       <ul v-if="c.lines.length" class="lines">
         <li v-for="l in c.lines" :key="l.id" class="line">
           <span class="chip" :class="l.kind">{{ l.kind === 'direct' ? '直连' : '中转' }}</span>
@@ -218,7 +271,10 @@ function exitText(l: Line): string {
             <span class="muted small">{{ l.inbound_remark || l.inbound_id }} · {{ proto(l.protocol) }} · {{ l.email }}</span>
           </span>
           <span class="small exit" :class="{ muted: l.kind === 'direct' }">{{ exitText(l) }}</span>
-          <span class="muted small">{{ fmtAgo(l.created_at) }}开通</span>
+          <span class="muted small stat">
+            已用 {{ fmtBytes(l.up + l.down) }} · 在线 {{ fmtAgo(l.last_online, '—') }}
+            <span v-if="!l.enable" class="badge err">{{ l.auto_disabled ? '已停用(超额 / 到期)' : '面板上已停用' }}</span>
+          </span>
           <span class="l-ops">
             <button class="link" :disabled="loadingLinks === l.id" @click="showLinks(l)">{{ loadingLinks === l.id ? '读取中…' : '链接' }}</button>
             <button class="link danger" @click="removeLine(l)">删除</button>
@@ -234,6 +290,11 @@ function exitText(l: Line): string {
     <form id="customer-form" class="form" @submit.prevent="submit">
       <label class="field">名称<input v-model="form.name" required placeholder="客户端的名字会用它生成" /></label>
       <label class="field">备注<input v-model="form.remark" /></label>
+      <div class="two">
+        <label class="field">总额度(GB,空 = 不限)<input v-model="form.quotaGb" type="number" min="0" step="1" /></label>
+        <label class="field">到期日(空 = 不限期)<input v-model="form.expire" type="date" /></label>
+      </div>
+      <p class="muted small hint">流量按客户所有线路加总,每分钟从面板同步一次;超额或到期后自动停用他的全部客户端,改大额度、延后到期或清零流量会自动恢复。</p>
     </form>
     <template #footer>
       <span class="spacer" />
@@ -334,6 +395,11 @@ function exitText(l: Line): string {
     </template>
   </Modal>
 
+  <Modal v-if="topoFor" :title="`「${topoFor.name}」的网络拓扑`" wide @close="topoFor = null">
+    <p class="muted small topo-hint">滚轮缩放,拖动画布或节点;点节点看下游路径和线上的协议 / 客户端名,点空白恢复。蓝边是面板,黄底是 SOCKS,虚线箭头是出网。</p>
+    <TopologyGraph :customer="topoFor" :panels="panels" :socks="socksList" :height="420" />
+  </Modal>
+
   <Modal v-if="linksFor" :title="`「${linksFor.line.email}」的链接`" @close="linksFor = null">
     <ClientLinks :links="linksFor.links" :name="linksFor.line.email" />
   </Modal>
@@ -355,8 +421,24 @@ h2 {
   margin: 4px 0 0;
   max-width: 64ch;
 }
-.topo {
-  border-top: 1px solid var(--rule-soft);
+.topo-hint {
+  margin: 0 0 8px;
+}
+.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.badge.over_quota {
+  background: var(--caution-bg);
+  color: var(--caution);
+}
+.badge.expired {
+  background: var(--fault-bg);
+  color: var(--fault);
+}
+.stat .badge {
+  margin-left: 6px;
 }
 .cards {
   display: flex;
@@ -399,7 +481,7 @@ h2 {
 }
 .line {
   display: grid;
-  grid-template-columns: auto minmax(160px, 1.4fr) minmax(140px, 1fr) auto auto;
+  grid-template-columns: auto minmax(160px, 1.3fr) minmax(140px, 1fr) minmax(160px, 1fr) auto;
   gap: 4px 12px;
   align-items: center;
   padding: 8px 16px;
@@ -458,7 +540,7 @@ h2 {
     grid-template-columns: auto 1fr auto;
   }
   .exit,
-  .line > .muted.small:nth-child(4) {
+  .stat {
     grid-column: 2 / -1;
   }
 }

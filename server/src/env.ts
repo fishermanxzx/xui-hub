@@ -33,8 +33,8 @@ export const env = {
   dataDir: resolve(process.env.DATA_DIR?.trim() || resolve(PROJECT_ROOT, 'data')),
   /** 后台登录密码;监听非本机地址时必填 */
   adminPassword: process.env.ADMIN_PASSWORD ?? '',
-  /** 多久自动检查一次各面板连通性(秒) */
-  checkIntervalSec: positiveInt('CHECK_INTERVAL_SEC', 300),
+  /** 多久同步一次各面板(连通性、客户端流量)并执行额度 / 到期(秒) */
+  checkIntervalSec: positiveInt('CHECK_INTERVAL_SEC', 60),
   /** HTTPS 证书文件;null = HTTP */
   tls: tlsFiles(),
 };

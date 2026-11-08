@@ -6,7 +6,8 @@ import { createClient, type ClientAdmin } from '../clients/create';
 import { checkAllPanels, checkPanel, type PanelProbe } from '../panels/check';
 import { readPanelDetail, type PanelReader } from '../panels/inbounds';
 import { createPanel, deletePanel, getPanel, InputError, listPanels, toPanelView, updatePanel, type Panel } from '../panels/repo';
-import { createCustomer, deleteCustomer, getCustomer, getLine, listCustomers, updateCustomer, deleteLine } from '../customers/repo';
+import { createCustomer, deleteCustomer, getCustomer, getLine, listCustomers, updateCustomer, deleteLine, zeroLineTraffic } from '../customers/repo';
+import { enforceCustomers } from '../lines/enforce';
 import { openLine, removeLine, type LineAdmin } from '../lines/open';
 import { checkSocks } from '../socks/check';
 import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, saveCheck, updateSocks } from '../socks/repo';
@@ -25,6 +26,8 @@ import {
 
 export interface PanelClient extends ClientAdmin, PanelReader, PanelProbe, LineAdmin {
   deleteClient(email: string): Promise<void>;
+  setClientsEnabled(emails: string[], enable: boolean): Promise<void>;
+  resetClientTraffic(email: string): Promise<void>;
   serverStatus(): Promise<{ panelVersion: string; xrayVersion: string; xrayState: string; xrayError: string }>;
   xrayVersions(): Promise<string[]>;
   panelUpdateInfo(): Promise<{ channel: string; current: string; latest: string; available: boolean } | null>;
@@ -235,11 +238,41 @@ export function apiRouter(deps: RouteDeps): Router {
   };
   r.get('/customers', wrap(() => listCustomers(db)));
   r.post('/customers', wrap((req) => customerOf(createCustomer(db, req.body ?? {}))));
+  // 改了额度 / 到期马上执行一次停用 / 恢复,不等下一轮同步
   r.patch(
     '/customers/:id',
-    wrap((req) => {
+    wrap(async (req) => {
       updateCustomer(db, idParam(req), req.body ?? {});
-      return customerOf(idParam(req));
+      const ops = await enforceCustomers(db, deps.clientFor, Date.now(), idParam(req));
+      return { ...customerOf(idParam(req)), ops };
+    }),
+  );
+  // 清零已用:把各线路客户端在面板上的流量清零,超额停掉的随之恢复
+  r.post(
+    '/customers/:id/reset-usage',
+    wrap(async (req) => {
+      const c = customerOf(idParam(req));
+      const failed: { line: string; error: string }[] = [];
+      for (const line of c.lines) {
+        const panel = getPanel(db, line.panel_id);
+        if (!panel) continue;
+        try {
+          await withClient(panel, (client) => client.resetClientTraffic(line.email));
+          zeroLineTraffic(db, line.id);
+        } catch (e) {
+          failed.push({ line: `${line.panel_name} 上的 ${line.email}`, error: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      const ops = await enforceCustomers(db, deps.clientFor, Date.now(), c.id);
+      return { ...customerOf(c.id), failed, ops };
+    }),
+  );
+  // 立即同步全部面板并执行额度 / 到期
+  r.post(
+    '/sync',
+    wrap(async () => {
+      await checkAllPanels(db, deps.clientFor);
+      return { ops: await enforceCustomers(db, deps.clientFor) };
     }),
   );
   // 删除客户:先删掉他在各面板上的 client,有删不掉的照样删记录,结果里列出来

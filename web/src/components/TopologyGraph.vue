@@ -5,7 +5,7 @@ import cytoscape, { type Core, type ElementDefinition } from 'cytoscape';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Customer, Panel, Socks } from '../types';
 
-const props = defineProps<{ customer: Customer; panels: Panel[]; socks: Socks[] }>();
+const props = withDefaults(defineProps<{ customer: Customer; panels: Panel[]; socks: Socks[]; height?: number }>(), { height: 260 });
 
 const el = ref<HTMLDivElement | null>(null);
 let cy: Core | null = null;
@@ -152,7 +152,7 @@ defineExpose({ fit, relayout });
 
 <template>
   <div class="wrap">
-    <div ref="el" class="graph" />
+    <div ref="el" class="graph" :style="{ height: height + 'px' }" />
     <div class="controls">
       <button class="link small" @click="fit">适应窗口</button>
       <button class="link small" @click="relayout">重新排列</button>
@@ -165,8 +165,9 @@ defineExpose({ fit, relayout });
   position: relative;
 }
 .graph {
-  height: 240px;
   width: 100%;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
   background:
     linear-gradient(var(--rule-soft) 1px, transparent 1px) 0 0 / 24px 24px,
     linear-gradient(90deg, var(--rule-soft) 1px, transparent 1px) 0 0 / 24px 24px;
@@ -181,10 +182,5 @@ defineExpose({ fit, relayout });
   background: var(--sheet);
   border: 1px solid var(--rule);
   border-radius: 8px;
-}
-@media (max-width: 720px) {
-  .graph {
-    height: 220px;
-  }
 }
 </style>

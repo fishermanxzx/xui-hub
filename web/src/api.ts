@@ -1,4 +1,4 @@
-import type { ClientProtocol, CreatedClient, Customer, CustomerInput, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Socks, SocksInput, UpdateStatus } from './types';
+import type { ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Socks, SocksInput, UpdateStatus } from './types';
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -50,7 +50,12 @@ export const api = {
 
   customers: () => call<Customer[]>('GET', '/api/customers'),
   createCustomer: (body: CustomerInput) => call<Customer>('POST', '/api/customers', body),
-  updateCustomer: (id: number, body: CustomerInput) => call<Customer>('PATCH', `/api/customers/${id}`, body),
+  /** 改了额度 / 到期会立刻执行停用 / 恢复,ops 是到面板上的操作结果 */
+  updateCustomer: (id: number, body: CustomerInput) => call<Customer & { ops: EnforceOp[] }>('PATCH', `/api/customers/${id}`, body),
+  /** 清零已用:各线路客户端在面板上的流量清零,超额停掉的随之恢复 */
+  resetUsage: (id: number) => call<Customer & { failed: { line: string; error: string }[]; ops: EnforceOp[] }>('POST', `/api/customers/${id}/reset-usage`),
+  /** 立即同步全部面板并执行额度 / 到期 */
+  syncNow: () => call<{ ops: EnforceOp[] }>('POST', '/api/sync'),
   /** 先删掉客户在各面板上的 client(删不掉的列在 failed 里),再删客户 */
   deleteCustomer: (id: number) => call<{ failed: { line: string; error: string }[] }>('DELETE', `/api/customers/${id}`),
   openLine: (id: number, body: OpenLineInput) => call<OpenedLine>('POST', `/api/customers/${id}/lines`, body),

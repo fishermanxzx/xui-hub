@@ -94,6 +94,7 @@ export interface SocksInput {
 export type ClientProtocol = 'vless' | 'hy2';
 
 export type LineKind = 'direct' | 'relay';
+export type CustomerState = 'active' | 'expired' | 'over_quota';
 
 export interface Line {
   id: number;
@@ -113,20 +114,46 @@ export interface Line {
   exit_socks_name: string | null;
   exit_label: string;
   created_at: number;
+  /** 最近一次同步到的客户端流量与状态 */
+  up: number;
+  down: number;
+  enable: boolean;
+  auto_disabled: boolean;
+  last_online: number;
+  synced_at: number | null;
 }
 
 export interface Customer {
   id: number;
   name: string;
   remark: string;
+  /** 总额度(字节),0 = 不限 */
+  quota_bytes: number;
+  /** 到期时间(毫秒),0 = 不限期 */
+  expire_at: number;
   created_at: number;
   updated_at: number;
   lines: Line[];
+  used_up: number;
+  used_down: number;
+  used: number;
+  state: CustomerState;
 }
 
 export interface CustomerInput {
   name?: string;
   remark?: string;
+  quota_bytes?: number;
+  expire_at?: number;
+}
+
+export interface EnforceOp {
+  customer: string;
+  panel: string;
+  email: string;
+  action: 'disable' | 'enable';
+  ok: boolean;
+  error?: string;
 }
 
 /** 开线路的请求:直连选面板 + 入站;中转再选出口 */

@@ -4,6 +4,7 @@ import type { DB } from '../db';
 import { InputError } from '../panels/repo';
 
 export type LineKind = 'direct' | 'relay';
+export type CustomerState = 'active' | 'expired' | 'over_quota';
 
 export interface Line {
   id: number;
@@ -23,21 +24,54 @@ export interface Line {
   exit_socks_name: string | null;
   exit_label: string;
   created_at: number;
+  /** 最近一次同步到的客户端流量与状态 */
+  up: number;
+  down: number;
+  enable: boolean;
+  auto_disabled: boolean;
+  last_online: number;
+  synced_at: number | null;
 }
 
 export interface Customer {
   id: number;
   name: string;
   remark: string;
+  /** 总额度(字节),0 = 不限 */
+  quota_bytes: number;
+  /** 到期时间(毫秒),0 = 不限期 */
+  expire_at: number;
   created_at: number;
   updated_at: number;
 }
 
-export type CustomerView = Customer & { lines: Line[] };
+export type CustomerView = Customer & {
+  lines: Line[];
+  used_up: number;
+  used_down: number;
+  used: number;
+  state: CustomerState;
+};
 
 export interface CustomerInput {
   name?: unknown;
   remark?: unknown;
+  quota_bytes?: unknown;
+  expire_at?: unknown;
+}
+
+/** 客户状态:到期 > 超额 > 正常 */
+export function customerState(c: { quota_bytes: number; expire_at: number }, used: number, now = Date.now()): CustomerState {
+  if (c.expire_at > 0 && c.expire_at <= now) return 'expired';
+  if (c.quota_bytes > 0 && used >= c.quota_bytes) return 'over_quota';
+  return 'active';
+}
+
+function nonNegativeInt(value: unknown, label: string): number {
+  if (value == null || value === '') return 0;
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n < 0) throw new InputError(`${label}必须是大于等于 0 的整数`);
+  return n;
 }
 
 function validName(value: unknown): string {
@@ -73,6 +107,12 @@ function toLine(row: any): Line {
     exit_socks_name: row.exit_socks_name ?? null,
     exit_label: row.exit_label,
     created_at: row.created_at,
+    up: row.up ?? 0,
+    down: row.down ?? 0,
+    enable: row.enable !== 0,
+    auto_disabled: row.auto_disabled === 1,
+    last_online: row.last_online ?? 0,
+    synced_at: row.synced_at ?? null,
   };
 }
 
@@ -85,8 +125,14 @@ export function getLine(db: DB, id: number): Line | undefined {
   return row ? toLine(row) : undefined;
 }
 
-function withLines(db: DB, rows: any[]): CustomerView[] {
-  return rows.map((c) => ({ ...c, lines: linesOf(db, c.id) }));
+function withLines(db: DB, rows: any[], now = Date.now()): CustomerView[] {
+  return rows.map((c) => {
+    const lines = linesOf(db, c.id);
+    const used_up = lines.reduce((s, l) => s + l.up, 0);
+    const used_down = lines.reduce((s, l) => s + l.down, 0);
+    const used = used_up + used_down;
+    return { ...c, lines, used_up, used_down, used, state: customerState(c, used, now) };
+  });
 }
 
 export function listCustomers(db: DB): CustomerView[] {
@@ -99,19 +145,40 @@ export function getCustomer(db: DB, id: number): CustomerView | undefined {
 }
 
 export function createCustomer(db: DB, input: CustomerInput, now = Date.now()): number {
-  const info = db.prepare('INSERT INTO customers (name, remark, created_at, updated_at) VALUES (?, ?, ?, ?)').run(validName(input.name), String(input.remark ?? '').trim(), now, now);
+  const info = db
+    .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), now, now);
   return Number(info.lastInsertRowid);
 }
 
 export function updateCustomer(db: DB, id: number, input: CustomerInput, now = Date.now()): void {
   const cur = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as any;
   if (!cur) throw new InputError('客户不存在');
-  db.prepare('UPDATE customers SET name = ?, remark = ?, updated_at = ? WHERE id = ?').run(
+  db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, updated_at = ? WHERE id = ?').run(
     input.name === undefined ? cur.name : validName(input.name),
     input.remark === undefined ? cur.remark : String(input.remark ?? '').trim(),
+    input.quota_bytes === undefined ? cur.quota_bytes : nonNegativeInt(input.quota_bytes, '额度'),
+    input.expire_at === undefined ? cur.expire_at : nonNegativeInt(input.expire_at, '到期时间'),
     now,
     id,
   );
+}
+
+/** 同步到的客户端状态写回线路(面板上没有这个客户端时 present = false,流量保持上次的值) */
+export function updateLineStats(db: DB, lineId: number, s: { up: number; down: number; enable: boolean; last_online: number }, now = Date.now()): void {
+  db.prepare('UPDATE lines SET up = ?, down = ?, enable = ?, last_online = ?, synced_at = ? WHERE id = ?').run(s.up, s.down, s.enable ? 1 : 0, s.last_online, now, lineId);
+}
+
+export function markLineAuto(db: DB, lineId: number, autoDisabled: boolean, enable: boolean): void {
+  db.prepare('UPDATE lines SET auto_disabled = ?, enable = ? WHERE id = ?').run(autoDisabled ? 1 : 0, enable ? 1 : 0, lineId);
+}
+
+export function zeroLineTraffic(db: DB, lineId: number): void {
+  db.prepare('UPDATE lines SET up = 0, down = 0 WHERE id = ?').run(lineId);
+}
+
+export function linesOnPanel(db: DB, panelId: number): Line[] {
+  return (db.prepare(`${LINE_SQL} WHERE l.panel_id = ? ORDER BY l.id`).all(panelId) as any[]).map(toLine);
 }
 
 export function deleteCustomer(db: DB, id: number): void {

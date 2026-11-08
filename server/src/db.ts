@@ -84,6 +84,18 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX lines_customer ON lines(customer_id);
   `,
+  `
+  -- 客户的总额度(字节,0 = 不限)和到期时间(毫秒,0 = 不限期);线路记下同步到的客户端流量和启用状态
+  ALTER TABLE customers ADD COLUMN quota_bytes INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE customers ADD COLUMN expire_at INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE lines ADD COLUMN up INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE lines ADD COLUMN down INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE lines ADD COLUMN enable INTEGER NOT NULL DEFAULT 1;
+  -- 是本系统因超额 / 到期停用的(恢复正常时才会自动重新启用,面板上手动停的不管)
+  ALTER TABLE lines ADD COLUMN auto_disabled INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE lines ADD COLUMN last_online INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE lines ADD COLUMN synced_at INTEGER;
+  `,
 ];
 
 export function openDb(file: string): DB {

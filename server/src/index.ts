@@ -10,6 +10,7 @@ import { openDb } from './db';
 import { env, isLoopbackHost, PROJECT_ROOT } from './env';
 import { loadSessionSecret } from './http/auth';
 import { apiRouter } from './http/routes';
+import { enforceCustomers } from './lines/enforce';
 import { checkAllPanels } from './panels/check';
 import type { Panel } from './panels/repo';
 import { XUIClient } from './xui/client';
@@ -45,8 +46,14 @@ server.listen(env.port, env.host, () => {
   console.log(`xui-hub listening on ${env.tls ? 'https' : 'http'}://${env.host}:${env.port}` + (env.adminPassword ? '' : '(未设置 ADMIN_PASSWORD,不鉴权)'));
 });
 
-// 定期检查各面板连通性
-const check = () => checkAllPanels(db, clientFor).catch((e) => console.error('检查面板失败', e));
+// 定期:检查各面板(顺带同步各线路的客户端流量)→ 停用超额 / 到期客户的线路、恢复回到正常的
+const check = () =>
+  checkAllPanels(db, clientFor)
+    .then(() => enforceCustomers(db, clientFor))
+    .then((ops) => {
+      for (const o of ops) console.log(`${o.action === 'disable' ? '停用' : '启用'} ${o.customer} 在 ${o.panel} 上的 ${o.email}:${o.ok ? '成功' : o.error}`);
+    })
+    .catch((e) => console.error('同步失败', e));
 void check();
 const timer = setInterval(check, env.checkIntervalSec * 1000);
 
