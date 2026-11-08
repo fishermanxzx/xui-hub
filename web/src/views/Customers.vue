@@ -3,6 +3,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
 import ClientLinks from '../components/ClientLinks.vue';
+import LineTopology from '../components/LineTopology.vue';
 import Modal from '../components/Modal.vue';
 import { fmtAgo } from '../format';
 import { toast, toastError } from '../toast';
@@ -208,6 +209,7 @@ function exitText(l: Line): string {
           <button class="link danger" @click="remove(c)">删除</button>
         </div>
       </header>
+      <LineTopology v-if="c.lines.length" :lines="c.lines" />
       <ul v-if="c.lines.length" class="lines">
         <li v-for="l in c.lines" :key="l.id" class="line">
           <span class="chip" :class="l.kind">{{ l.kind === 'direct' ? '直连' : '中转' }}</span>
