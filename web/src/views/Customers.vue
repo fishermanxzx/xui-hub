@@ -3,7 +3,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
 import ClientLinks from '../components/ClientLinks.vue';
-import LineTopology from '../components/LineTopology.vue';
+import TopologyGraph from '../components/TopologyGraph.vue';
 import Modal from '../components/Modal.vue';
 import { fmtAgo } from '../format';
 import { toast, toastError } from '../toast';
@@ -195,6 +195,14 @@ function exitText(l: Line): string {
     <button class="primary" @click="openForm(null)">新建客户</button>
   </div>
 
+  <section v-if="customers.length" class="sheet topo">
+    <header class="topo-head">
+      <h3>网络拓扑</h3>
+      <span class="muted small">滚轮缩放,拖动画布或节点;点一个节点,只看它的连线并显示线上的协议 / 客户端名,点空白恢复。蓝边是面板,黄底是 SOCKS,虚线箭头是出网。</span>
+    </header>
+    <TopologyGraph :customers="customers" :panels="panels" :socks="socksList" />
+  </section>
+
   <div class="cards">
     <article v-for="c in customers" :key="c.id" class="card sheet">
       <header class="head">
@@ -209,7 +217,6 @@ function exitText(l: Line): string {
           <button class="link danger" @click="remove(c)">删除</button>
         </div>
       </header>
-      <LineTopology v-if="c.lines.length" :lines="c.lines" />
       <ul v-if="c.lines.length" class="lines">
         <li v-for="l in c.lines" :key="l.id" class="line">
           <span class="chip" :class="l.kind">{{ l.kind === 'direct' ? '直连' : '中转' }}</span>
@@ -354,6 +361,22 @@ h2 {
 .toolbar p {
   margin: 4px 0 0;
   max-width: 64ch;
+}
+.topo {
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.topo-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.topo-head h3 {
+  font-size: 14px;
+  font-weight: 600;
 }
 .cards {
   display: flex;
