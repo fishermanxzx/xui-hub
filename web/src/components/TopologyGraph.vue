@@ -72,7 +72,11 @@ function build(): { elements: ElementDefinition[]; positions: Record<string, { x
     addNode(`s:${id}`, s ? { label: s.name, sub: `${s.host}:${s.port}` } : { label: 'SOCKS(已删除)', sub: '' }, 'socks');
   }
   addNode('net', { label: '互联网', sub: '' }, 'net');
-  for (const id of new Set([...directPanels, ...landingPanels])) addEdge(`n:p${id}`, `p:${id}`, 'net', landingPanels.has(id) && !directPanels.has(id) ? '' : '直出', 'out');
+  const hasExitColumn = usedSocks.size > 0 || [...landingPanels].some((id) => !entryPanels.has(id));
+  for (const id of new Set([...directPanels, ...landingPanels])) {
+    const fromEntry = entryPanels.has(id);
+    addEdge(`n:p${id}`, `p:${id}`, 'net', landingPanels.has(id) && !directPanels.has(id) ? '' : '直出', `out${fromEntry && hasExitColumn ? ' arc' : ''}`);
+  }
   for (const id of usedSocks) addEdge(`n:s${id}`, `s:${id}`, 'net', '', 'out');
 
   // 分列:客户端 | 入口面板 | 出口(纯落地面板、SOCKS) | 互联网
@@ -112,7 +116,9 @@ function render() {
       { selector: 'edge', style: { width: 1.5, 'curve-style': 'bezier', 'line-color': t.soft, 'target-arrow-color': t.soft, 'target-arrow-shape': 'triangle', 'arrow-scale': 0.9, label: 'data(label)', 'font-size': 10, color: t.ink, 'text-background-color': t.sheet, 'text-background-opacity': 1, 'text-background-padding': '3px', 'text-background-shape': 'roundrectangle', 'text-opacity': 0 } },
       { selector: 'edge.focus', style: { 'text-opacity': 1, width: 2.5 } },
       { selector: 'edge.relay', style: { 'line-color': t.accent, 'target-arrow-color': t.accent } },
+      // 面板直出到互联网的虚线往上拱一下,免得被同一行的出口节点挡住
       { selector: 'edge.out', style: { 'line-style': 'dashed' } },
+      { selector: 'edge.out.arc', style: { 'curve-style': 'unbundled-bezier', 'control-point-distances': [-70], 'control-point-weights': [0.5] } },
       { selector: '.faded', style: { opacity: 0.15 } },
       { selector: 'node:selected', style: { 'border-width': 2, 'border-color': t.ink } },
     ],
