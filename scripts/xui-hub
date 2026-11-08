@@ -57,8 +57,8 @@ update() { check_install && run_installer "$@"; }
 uninstall() {
   need_root; check_install || return 1
   confirm "停掉并删除 xui-hub 程序?" || return 0
-  systemctl disable --now "$SERVICE" 2>/dev/null
-  rm -f /etc/systemd/system/$SERVICE.service /usr/bin/xui-hub
+  systemctl disable --now "$SERVICE" "$SERVICE-subconverter" 2>/dev/null
+  rm -f /etc/systemd/system/$SERVICE.service /etc/systemd/system/$SERVICE-subconverter.service /usr/bin/xui-hub
   systemctl daemon-reload
   rm -rf "$DIR"
   if confirm "连同数据目录 $ETC(数据库和 .env)一起删除?"; then rm -rf "$ETC"; ok "已删除 $ETC"; else ok "保留了 $ETC"; fi
@@ -100,7 +100,7 @@ settings() {
   cat "$DIR/BUILD" 2>/dev/null | sed 's/^/  /'
 }
 
-svc() { need_root; systemctl "$1" "$SERVICE" && show_status; }
+svc() { need_root; systemctl "$1" "$SERVICE-subconverter" 2>/dev/null; systemctl "$1" "$SERVICE" && show_status; }
 
 # ======================= SSL 证书(照 x-ui 的做法:acme.sh + Let's Encrypt) =======================
 CERT_DIR="$ETC/cert"
@@ -349,6 +349,7 @@ ssl_cmd() {
 show_status() {
   if ! installed; then warn "状态:未安装"; return; fi
   if systemctl is-active -q "$SERVICE"; then ok "状态:运行中($(version),端口 $(port))"; else err "状态:未运行"; fi
+  systemctl is-active -q "$SERVICE-subconverter" 2>/dev/null || warn "订阅转换引擎(subconverter)未运行,Clash / Surge 格式的订阅不可用:xui-hub restart"
   if systemctl is-enabled -q "$SERVICE" 2>/dev/null; then echo "开机自启:是"; else echo "开机自启:否"; fi
 }
 

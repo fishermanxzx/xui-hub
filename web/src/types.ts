@@ -131,6 +131,15 @@ export interface Customer {
   quota_bytes: number;
   /** 到期时间(毫秒),0 = 不限期 */
   expire_at: number;
+  /** 订阅链接 /sub/<token> 里的 token */
+  sub_token: string;
+  /** 订阅链接;未配置 SUB_BASE_URL 时为 null,前端用当前地址拼 */
+  sub_url: string | null;
+  sub_fetched_at: number | null;
+  sub_fetched_ua: string | null;
+  /** 近几天拉订阅用过几个客户端(按 UA 区分)、来自几个 IP */
+  sub_clients: number;
+  sub_ips: number;
   created_at: number;
   updated_at: number;
   lines: Line[];
@@ -138,6 +147,15 @@ export interface Customer {
   used_down: number;
   used: number;
   state: CustomerState;
+}
+
+export interface SubFetch {
+  at: number;
+  customer_id: number;
+  target: string;
+  status: number;
+  ua: string;
+  ip: string;
 }
 
 export interface CustomerInput {

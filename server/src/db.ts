@@ -96,6 +96,27 @@ const MIGRATIONS: string[] = [
   ALTER TABLE lines ADD COLUMN last_online INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE lines ADD COLUMN synced_at INTEGER;
   `,
+  `
+  -- 订阅:每个客户一个 token(/sub/<token>),记上次拉取的时间和客户端
+  ALTER TABLE customers ADD COLUMN sub_token TEXT;
+  ALTER TABLE customers ADD COLUMN sub_fetched_at INTEGER;
+  ALTER TABLE customers ADD COLUMN sub_fetched_ua TEXT;
+  UPDATE customers SET sub_token = lower(hex(randomblob(18))) WHERE sub_token IS NULL;
+  CREATE UNIQUE INDEX customers_sub_token ON customers(sub_token);
+
+  -- 订阅拉取记录(保留 SUB_LOG_DAYS 天):哪个客户、客户端 UA、来源 IP、给的格式、结果
+  CREATE TABLE sub_fetches (
+    id          INTEGER PRIMARY KEY,
+    at          INTEGER NOT NULL,
+    customer_id INTEGER NOT NULL,
+    target      TEXT NOT NULL,
+    status      INTEGER NOT NULL,
+    ua          TEXT NOT NULL,
+    ip          TEXT NOT NULL
+  );
+  CREATE INDEX sub_fetches_customer ON sub_fetches(customer_id, at);
+  CREATE INDEX sub_fetches_at ON sub_fetches(at);
+  `,
 ];
 
 export function openDb(file: string): DB {

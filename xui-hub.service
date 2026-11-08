@@ -1,7 +1,7 @@
 [Unit]
 Description=xui-hub
-After=network-online.target
-Wants=network-online.target
+After=network-online.target xui-hub-subconverter.service
+Wants=network-online.target xui-hub-subconverter.service
 StartLimitIntervalSec=180
 StartLimitBurst=10
 
@@ -14,6 +14,8 @@ WorkingDirectory=/usr/local/xui-hub
 EnvironmentFile=/etc/xui-hub/.env
 Environment=NODE_ENV=production
 Environment=DATA_DIR=/etc/xui-hub
+# 订阅转 Clash / Surge 用的 subconverter(同机的 xui-hub-subconverter 服务)
+Environment=SUBCONVERTER_URL=http://127.0.0.1:25500
 ExecStart=/bin/sh -c 'HOST="${LISTEN_ADDR:-0.0.0.0}" PORT="${HOST_PORT:-8788}" exec /usr/local/xui-hub/bin/node server/dist/index.js'
 Restart=always
 RestartSec=3

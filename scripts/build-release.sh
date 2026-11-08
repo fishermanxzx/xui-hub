@@ -10,8 +10,8 @@ OUT="$(mkdir -p "${3:-dist-release}" && cd "${3:-dist-release}" && pwd)"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 case "$ARCH" in
-  amd64) NODE_ARCH=x64 ;;
-  arm64) NODE_ARCH=arm64 ;;
+  amd64) NODE_ARCH=x64; SC_ARCH=linux64 ;;
+  arm64) NODE_ARCH=arm64; SC_ARCH=aarch64 ;;
   *) echo "不支持的架构:$ARCH(只有 amd64 / arm64)" >&2; exit 1 ;;
 esac
 
@@ -45,11 +45,20 @@ tar -xJf "$STAGE/node.tar.xz" -C "$STAGE" "node-$NODE_VERSION-linux-$NODE_ARCH/b
 mv "$STAGE/node-$NODE_VERSION-linux-$NODE_ARCH/bin/node" "$PKG/bin/node"
 chmod 755 "$PKG/bin/node"
 
+say "下载 subconverter(订阅转 Clash / Surge 用,$SC_ARCH)"
+SC_VERSION=v0.9.9
+curl -fsSL "https://github.com/asdlokj1qpi233/subconverter/releases/download/$SC_VERSION/subconverter_$SC_ARCH.tar.gz" -o "$STAGE/sc.tar.gz"
+tar -xzf "$STAGE/sc.tar.gz" -C "$STAGE"
+mv "$STAGE/subconverter" "$PKG/subconverter"
+# 只监听本机,xui-hub 经 127.0.0.1:25500 调它
+sed -e 's/^listen = .*/listen = "127.0.0.1"/' "$PKG/subconverter/pref.example.toml" > "$PKG/subconverter/pref.toml"
+chmod 755 "$PKG/subconverter/subconverter"
+
 say "打包"
 cp "$ROOT/scripts/xui-hub" "$PKG/xui-hub.sh"
-cp "$ROOT/xui-hub.service" "$ROOT/.env.example" "$ROOT/LICENSE" "$PKG/"
+cp "$ROOT/xui-hub.service" "$ROOT/xui-hub-subconverter.service" "$ROOT/.env.example" "$ROOT/LICENSE" "$PKG/"
 printf '%s\n' "$VERSION" >"$PKG/VERSION"
-printf 'node=%s\narch=%s\nbuilt=%s\n' "$NODE_VERSION" "$ARCH" "$(date -u +%FT%TZ)" >"$PKG/BUILD"
+printf 'node=%s\narch=%s\nsubconverter=%s\nbuilt=%s\n' "$NODE_VERSION" "$ARCH" "$SC_VERSION" "$(date -u +%FT%TZ)" >"$PKG/BUILD"
 chmod 755 "$PKG/xui-hub.sh"
 NAME="xui-hub-linux-$ARCH.tar.gz"
 tar -czf "$OUT/$NAME" -C "$STAGE" xui-hub

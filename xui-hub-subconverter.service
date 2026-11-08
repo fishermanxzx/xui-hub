@@ -1,0 +1,22 @@
+[Unit]
+Description=xui-hub subconverter (订阅转换引擎)
+After=network.target
+PartOf=xui-hub.service
+
+[Service]
+Type=simple
+User=xuihub
+Group=xuihub
+WorkingDirectory=/usr/local/xui-hub/subconverter
+ExecStart=/usr/local/xui-hub/subconverter/subconverter
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# subconverter 会在自己目录下写缓存
+ReadWritePaths=/usr/local/xui-hub/subconverter
+
+[Install]
+WantedBy=multi-user.target

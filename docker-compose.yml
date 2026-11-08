@@ -9,6 +9,12 @@ services:
     restart: unless-stopped
     init: true
     env_file: .env
+    environment:
+      # 订阅转 Clash / Surge 用的内部 subconverter;它回源到本服务取节点
+      SUBCONVERTER_URL: http://subconverter:25500
+      APP_INTERNAL_URL: http://app:8788
+    depends_on:
+      - subconverter
     ports:
       # 默认直接对公网开 8788:http://<服务器 IP>:8788 就是后台。要只绑本机(前面自己放反代)就在 .env 里设 LISTEN_ADDR=127.0.0.1
       - "${LISTEN_ADDR:-0.0.0.0}:${HOST_PORT:-8788}:8788"
@@ -17,8 +23,15 @@ services:
       - ./data:/data
       # 要 HTTPS 就把证书目录挂进来,并在 .env 里填 TLS_CERT_FILE=/cert/fullchain.pem、TLS_KEY_FILE=/cert/privkey.pem
       # - ./cert:/cert:ro
-    logging:
+    logging: &logging
       driver: json-file
       options:
         max-size: 10m
         max-file: "3"
+
+  # 订阅格式转换引擎(Clash / Surge)。只在 compose 内网可访问,不暴露端口
+  subconverter:
+    image: asdlokj1qpi23/subconverter:0.9.9
+    container_name: xui-hub-subconverter
+    restart: unless-stopped
+    logging: *logging

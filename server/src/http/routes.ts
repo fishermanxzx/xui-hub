@@ -6,7 +6,8 @@ import { createClient, type ClientAdmin } from '../clients/create';
 import { checkAllPanels, checkPanel, type PanelProbe } from '../panels/check';
 import { readPanelDetail, type PanelReader } from '../panels/inbounds';
 import { createPanel, deletePanel, getPanel, InputError, listPanels, toPanelView, updatePanel, type Panel } from '../panels/repo';
-import { createCustomer, deleteCustomer, getCustomer, getLine, listCustomers, updateCustomer, deleteLine, zeroLineTraffic } from '../customers/repo';
+import { createCustomer, deleteCustomer, getCustomer, getLine, listCustomers, resetSubToken, updateCustomer, deleteLine, zeroLineTraffic, type CustomerView } from '../customers/repo';
+import { listSubFetches, subClientCounts } from '../subscription/fetchLog';
 import { enforceCustomers } from '../lines/enforce';
 import { openLine, removeLine, type LineAdmin } from '../lines/open';
 import { checkSocks } from '../socks/check';
@@ -43,6 +44,10 @@ export interface RouteDeps {
   clientFor: (panel: Panel) => PanelClient;
   /** 新建 vless 入站后探测端口 */
   probe?: (host: string, port: number) => Promise<boolean>;
+  /** 订阅链接地址前缀(SUB_BASE_URL);空 = sub_url 为 null,前端用打开后台的地址拼 */
+  subBaseUrl: string;
+  /** 订阅拉取记录保留天数 */
+  subLogDays: number;
 }
 
 type Handler = (req: Request, res: Response) => unknown;
@@ -231,12 +236,26 @@ export function apiRouter(deps: RouteDeps): Router {
   );
 
   // ---------- 客户与线路 ----------
+  // 订阅链接:{SUB_BASE_URL}/sub/<客户的 token>;近几天拉过订阅的客户端数 / IP 数
+  const withSub = (customers: CustomerView[]) => {
+    const counts = subClientCounts(db, Date.now() - deps.subLogDays * 86_400_000);
+    return customers.map((c) => ({ ...c, sub_url: deps.subBaseUrl ? `${deps.subBaseUrl}/sub/${c.sub_token}` : null, sub_clients: counts.get(c.id)?.clients ?? 0, sub_ips: counts.get(c.id)?.ips ?? 0 }));
+  };
   const customerOf = (id: number) => {
     const c = getCustomer(db, id);
     if (!c) throw new InputError('客户不存在');
-    return c;
+    return withSub([c])[0];
   };
-  r.get('/customers', wrap(() => listCustomers(db)));
+  r.get('/customers', wrap(() => withSub(listCustomers(db))));
+  // 重置订阅链接:换一个 token,客户手里的旧链接立即失效
+  r.post(
+    '/customers/:id/sub-token',
+    wrap((req) => {
+      resetSubToken(db, idParam(req));
+      return customerOf(idParam(req));
+    }),
+  );
+  r.get('/customers/:id/sub-fetches', wrap((req) => ({ days: deps.subLogDays, rows: listSubFetches(db, customerOf(idParam(req)).id) })));
   r.post('/customers', wrap((req) => customerOf(createCustomer(db, req.body ?? {}))));
   // 改了额度 / 到期马上执行一次停用 / 恢复,不等下一轮同步
   r.patch(

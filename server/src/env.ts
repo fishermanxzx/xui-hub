@@ -37,4 +37,14 @@ export const env = {
   checkIntervalSec: positiveInt('CHECK_INTERVAL_SEC', 60),
   /** HTTPS 证书文件;null = HTTP */
   tls: tlsFiles(),
+  /** 订阅链接的地址前缀,如 https://sub.example.com;空 = 前端用打开后台的地址拼 */
+  subBaseUrl: (process.env.SUB_BASE_URL?.trim() || '').replace(/\/+$/, ''),
+  /** Clash 输出套用 Mihomo 基础模板的范围:all / 逗号分隔的客户名(灰度)/ 空 = 关闭 */
+  mihomoTemplate: process.env.MIHOMO_TEMPLATE ?? '',
+  /** 内部 subconverter 地址(转 Clash / Surge 用);空 = 这两种格式不可用 */
+  subconverterUrl: process.env.SUBCONVERTER_URL?.trim() || '',
+  /** subconverter 回源访问本服务取节点的地址 */
+  appInternalUrl: (process.env.APP_INTERNAL_URL?.trim() || `http://127.0.0.1:${positiveInt('PORT', 8788)}`).replace(/\/+$/, ''),
+  /** 订阅拉取记录保留天数 */
+  subLogDays: positiveInt('SUB_LOG_DAYS', 7),
 };

@@ -5,9 +5,11 @@ import { api } from '../api';
 import ClientLinks from '../components/ClientLinks.vue';
 import TopologyGraph from '../components/TopologyGraph.vue';
 import Modal from '../components/Modal.vue';
-import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDue, gbToBytes, msToDateInput, STATE_LABEL } from '../format';
+import { copyText } from '../clipboard';
+import QrCode from '../components/QrCode.vue';
+import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, region, shortUa, STATE_LABEL, subUrl } from '../format';
 import { toast, toastError } from '../toast';
-import type { ClientProtocol, Customer, EnforceOp, Line, LineKind, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks } from '../types';
+import type { ClientProtocol, Customer, EnforceOp, Line, LineKind, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubFetch } from '../types';
 
 const customers = ref<Customer[]>([]);
 const panels = ref<Panel[]>([]);
@@ -94,6 +96,29 @@ async function syncNow() {
 
 /** 拓扑弹窗 */
 const topoFor = ref<Customer | null>(null);
+
+// ---------- 订阅 ----------
+const qrFor = ref<Customer | null>(null);
+const fetchesFor = ref<{ customer: Customer; days: number; rows: SubFetch[] } | null>(null);
+
+async function resetLink(c: Customer) {
+  if (!confirm(`重置「${c.name}」的订阅链接?客户手里的旧链接立即失效,需要把新链接发给他。`)) return;
+  try {
+    await api.resetSubToken(c.id);
+    toast('订阅链接已重置');
+    await load();
+  } catch (e) {
+    toastError(e);
+  }
+}
+
+async function showFetches(c: Customer) {
+  try {
+    fetchesFor.value = { customer: c, ...(await api.subFetches(c.id)) };
+  } catch (e) {
+    toastError(e);
+  }
+}
 
 async function remove(c: Customer) {
   if (!confirm(`删除客户「${c.name}」?会先删掉他在各面板上的 ${c.lines.length} 个客户端,链接立即失效。`)) return;
@@ -263,6 +288,18 @@ function exitText(l: Line): string {
           <button class="link danger" @click="remove(c)">删除</button>
         </div>
       </header>
+      <div class="sub-row">
+        <span class="muted small">订阅</span>
+        <input class="sub-input" readonly :value="subUrl(c)" aria-label="订阅链接" @focus="($event.target as HTMLInputElement).select()" />
+        <button class="link" @click="copyText(subUrl(c), `已复制「${c.name}」的订阅链接`)">复制</button>
+        <button class="link" @click="qrFor = c">二维码</button>
+        <button class="link" @click="resetLink(c)">重置链接</button>
+        <span class="muted small sub-meta" :title="c.sub_fetched_ua ?? ''">
+          <template v-if="c.sub_fetched_at">上次拉取 {{ fmtAgo(c.sub_fetched_at) }}<template v-if="c.sub_fetched_ua">,{{ shortUa(c.sub_fetched_ua) }}</template>;{{ c.sub_clients }} 个客户端 / {{ c.sub_ips }} 个 IP</template>
+          <template v-else>还没被拉取过</template>
+          <button class="link small" @click="showFetches(c)">记录</button>
+        </span>
+      </div>
       <ul v-if="c.lines.length" class="lines">
         <li v-for="l in c.lines" :key="l.id" class="line">
           <span class="chip" :class="l.kind">{{ l.kind === 'direct' ? '直连' : '中转' }}</span>
@@ -395,6 +432,32 @@ function exitText(l: Line): string {
     </template>
   </Modal>
 
+  <Modal v-if="qrFor" :title="`「${qrFor.name}」的订阅二维码`" @close="qrFor = null">
+    <QrCode :text="subUrl(qrFor)" :name="`${qrFor.name}的订阅`" />
+    <p class="muted small">Shadowrocket、Hiddify、Stash 等客户端扫码会直接添加订阅。订阅按客户端自动给格式:Clash、Mihomo、Stash、Shadowrocket 拿 Clash 配置,sing-box、Hiddify 拿 sing-box 配置,v2rayN 等拿节点链接。</p>
+  </Modal>
+
+  <Modal v-if="fetchesFor" :title="`「${fetchesFor.customer.name}」近 ${fetchesFor.days} 天的订阅拉取记录`" wide @close="fetchesFor = null">
+    <p v-if="!fetchesFor.rows.length" class="muted small">还没有记录。</p>
+    <div v-else class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>时间</th><th>客户端</th><th>来源 IP</th><th>格式</th><th>结果</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="(f, i) in fetchesFor.rows" :key="i">
+            <td class="small">{{ fmtDateTime(f.at) }}</td>
+            <td class="small" :title="f.ua">{{ shortUa(f.ua) || '(空 UA)' }}</td>
+            <td class="small">{{ f.ip }}</td>
+            <td class="small">{{ f.target }}</td>
+            <td class="small" :class="f.status >= 400 ? 'text-err' : 'text-ok'">{{ f.status }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted small">来源 IP 多、客户端杂,可能是链接被分享了;「重置链接」可以让旧链接失效。</p>
+  </Modal>
+
   <Modal v-if="topoFor" :title="`「${topoFor.name}」的网络拓扑`" wide @close="topoFor = null">
     <p class="muted small topo-hint">滚轮缩放,拖动画布或节点;点节点看下游路径和线上的协议 / 客户端名,点空白恢复。蓝边是面板,黄底是 SOCKS,虚线箭头是出网。</p>
     <TopologyGraph :customer="topoFor" :panels="panels" :socks="socksList" :height="420" />
@@ -472,6 +535,22 @@ h2 {
 .small-btn {
   padding: 4px 10px;
   font-size: 13px;
+}
+.sub-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 16px 10px;
+}
+.sub-input {
+  flex: 1;
+  min-width: 200px;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+.sub-meta {
+  flex-basis: 100%;
 }
 .lines {
   list-style: none;

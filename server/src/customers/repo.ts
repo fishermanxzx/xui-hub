@@ -1,5 +1,6 @@
 // 客户与线路的存取。线路 = 客户在某块面板上的一个 client,直连或中转(带出口)。
 
+import { randomBytes } from 'node:crypto';
 import type { DB } from '../db';
 import { InputError } from '../panels/repo';
 
@@ -41,6 +42,11 @@ export interface Customer {
   quota_bytes: number;
   /** 到期时间(毫秒),0 = 不限期 */
   expire_at: number;
+  /** 订阅链接 /sub/<token> 里的 token,每个客户一个;重置后旧链接失效 */
+  sub_token: string;
+  /** 上次拉取订阅的时间和客户端(User-Agent) */
+  sub_fetched_at: number | null;
+  sub_fetched_ua: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -144,11 +150,26 @@ export function getCustomer(db: DB, id: number): CustomerView | undefined {
   return row ? withLines(db, [row])[0] : undefined;
 }
 
+const newSubToken = () => randomBytes(18).toString('base64url');
+
 export function createCustomer(db: DB, input: CustomerInput, now = Date.now()): number {
   const info = db
-    .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), now, now);
+    .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, sub_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), newSubToken(), now, now);
   return Number(info.lastInsertRowid);
+}
+
+export function customerIdBySubToken(db: DB, token: string): number | undefined {
+  return (db.prepare('SELECT id FROM customers WHERE sub_token = ?').get(token) as { id: number } | undefined)?.id;
+}
+
+/** 重置订阅链接:换一个 token,客户手里的旧链接立即失效 */
+export function resetSubToken(db: DB, id: number, now = Date.now()): void {
+  if (!db.prepare('UPDATE customers SET sub_token = ?, updated_at = ? WHERE id = ?').run(newSubToken(), now, id).changes) throw new InputError('客户不存在');
+}
+
+export function touchSubFetch(db: DB, id: number, ua: string, now = Date.now()): void {
+  db.prepare('UPDATE customers SET sub_fetched_at = ?, sub_fetched_ua = ? WHERE id = ?').run(now, ua.slice(0, 300), id);
 }
 
 export function updateCustomer(db: DB, id: number, input: CustomerInput, now = Date.now()): void {

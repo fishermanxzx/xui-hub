@@ -79,6 +79,25 @@ export function dueLevel(ms: number, now = Date.now()): '' | 'warn' | 'err' {
   return d < 0 ? 'err' : d <= 7 ? 'warn' : '';
 }
 
+/** 客户的订阅链接:服务端配了 SUB_BASE_URL 用它,否则用当前打开后台的地址 */
+export function subUrl(c: { sub_url: string | null; sub_token: string }): string {
+  return c.sub_url ?? `${location.origin}/sub/${c.sub_token}`;
+}
+
+/** 订阅客户端的简称:UA 的第一段(如 clash-verge/v2.5.8),浏览器统一叫浏览器 */
+export function shortUa(ua: string | null | undefined): string {
+  if (!ua) return '';
+  if (ua.startsWith('Mozilla/')) return '浏览器';
+  const first = ua.split(' ')[0];
+  return first.length > 28 ? `${first.slice(0, 27)}…` : first;
+}
+
+export function fmtDateTime(ms: number | null | undefined, empty = '—'): string {
+  if (!ms) return empty;
+  const d = new Date(ms);
+  return `${fmtDate(ms)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** 出口地区:常见的给中文名,其余原样显示代码 */
 const REGION: Record<string, string> = {
   US: '美国', TW: '台湾', HK: '香港', JP: '日本', SG: '新加坡', KR: '韩国', DE: '德国', GB: '英国',

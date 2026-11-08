@@ -112,6 +112,8 @@ install_xui_hub() {
 
   install -m 755 "$DIR/xui-hub.sh" /usr/bin/xui-hub
   id "$RUN_USER" >/dev/null 2>&1 || useradd --system --home-dir "$DIR" --shell /usr/sbin/nologin "$RUN_USER" 2>/dev/null || useradd --system --home-dir "$DIR" --shell /sbin/nologin "$RUN_USER"
+  # subconverter 以服务用户运行并在自己目录写缓存
+  [ -d "$DIR/subconverter" ] && chown -R "$RUN_USER:$RUN_USER" "$DIR/subconverter"
   mkdir -p "$ETC"
 
   # 首次安装(或 .env 里还没有密码):写 .env,密码 / 端口来自环境变量或提问,否则随机 / 默认
@@ -139,6 +141,12 @@ install_xui_hub() {
   chmod 640 "$ENV_FILE"
 
   install -m 644 "$DIR/xui-hub.service" /etc/systemd/system/$SERVICE.service
+  if [ -f "$DIR/xui-hub-subconverter.service" ]; then
+    install -m 644 "$DIR/xui-hub-subconverter.service" /etc/systemd/system/$SERVICE-subconverter.service
+    systemctl daemon-reload
+    systemctl enable -q "$SERVICE-subconverter"
+    systemctl restart "$SERVICE-subconverter"
+  fi
   systemctl daemon-reload
   systemctl enable -q "$SERVICE"
   systemctl restart "$SERVICE"
