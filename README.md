@@ -1,30 +1,28 @@
 # xui-hub
 
-把多台 3x-ui 面板接进来,按「客户」管理线路:直连或经中转落地 / SOCKS,统一额度与到期,自动停用超额 / 到期的客户端,拿链接和二维码。
-
-Node 22 + Express + SQLite + Vue 3,单容器 Docker 部署。
+把多台 3x-ui 面板接到一个后台,按「客户」统一管理线路、额度、到期和订阅。
 
 ## 界面预览
 
-下面的图都是演示数据。
+图中均为演示数据。
 
-**客户**:每位客户一张卡片,有额度、到期、订阅链接和他的全部线路(直连 / 中转 → 出口);超额或到期会自动停用。
+**客户**:额度、到期、订阅链接和全部线路。
 
 ![客户页](docs/images/customers.png)
 
-**开线路**:直连选面板和入站;中转再选出口——落地面板(已有或新建 socks 入站)或 SOCKS 代理。
+**开线路**:直连,或经中转面板转到落地面板 / SOCKS。
 
 ![开线路](docs/images/open-line.png)
 
-**网络拓扑**:每位客户一张可缩放、可拖动的图,客户端 → 入口面板 → 出口 → 互联网。
+**网络拓扑**:每位客户一张可缩放的线路图。
 
 ![网络拓扑](docs/images/topology.png)
 
-**面板**:接入的 3x-ui 面板,显示版本和内核,展开看入站和客户端,可切换内核版本、升级面板。
+**面板**:版本、入站和客户端。
 
 ![面板页](docs/images/panels.png)
 
-**SOCKS**:登记 SOCKS5 代理,测连通性、出口 IP 和地区,给中转线路当出口。
+**SOCKS**:代理的连通性和出口 IP。
 
 ![SOCKS 页](docs/images/socks.png)
 
@@ -32,98 +30,99 @@ Node 22 + Express + SQLite + Vue 3,单容器 Docker 部署。
 
 **客户**
 
-- 一位客户可以有多条线路,每条线路就是某块面板上的一个客户端(client)。开线路时选直连或中转:
-  - 直连:选面板,入站选「自动(有同协议的就挂上去,没有就新建)」或指定已有入站。
-  - 中转:选中转面板和入站,再选出口——落地面板(用它上面已有的 socks 入站,或自动新建一个随机端口随机账号的)或 SOCKS 页登记的代理。xui-hub 在中转的 Xray 里补一个指向出口的 socks 出站和一条「入站 + 客户端 → 出站」的路由规则(按客户端区分,同一入站上的客户端可以各走各的出口),重启 Xray 后再建客户端。
-- 每条线路直接给出客户端的分享链接和二维码;删线路会删掉面板上的客户端和他的路由规则。
-- 每位客户一条订阅链接 `/sub/<随机 token>`,包含他全部线路的节点,带全局已用 / 额度 / 到期(`subscription-userinfo`);按客户端 UA 自动给格式:Clash / Mihomo / Stash / Shadowrocket 拿 Clash 配置(内置 subconverter 转换,ACL4SSR 规则),sing-box / Hiddify 拿 sing-box 配置,Quantumult X / Loon 拿节点列表,v2rayN 等拿 base64 节点,`?target=` 可强制指定。节点每次现从面板取,到期 / 超额客户的订阅为空。可重置链接让旧链接失效,可看拉取记录(客户端、来源 IP)。
-- 额度与到期按客户算:各线路流量加总,每分钟从面板同步一次;超过额度或到了到期日,自动停用他所有客户端;改大额度、延后到期或「清零流量」后自动恢复。面板上手动停用的客户端不会被误开。
-- 每位客户一张可缩放、可拖动的网络拓扑图:客户端 → 入口面板 → 出口 → 互联网,点节点看他的下游路径。
+- 一位客户可以有多条线路,每条线路是某块面板上的一个客户端,协议可选 vless reality 或 hy2。
+- 直连线路:选面板,入站自动选择或指定;没有同协议入站时自动新建。
+- 中转线路:选中转面板和出口。出口可以是落地面板上的 socks 入站(没有就自动新建),也可以是 SOCKS 页登记的代理。路由按客户端区分,同一入站上的客户端可以走不同出口。
+- 额度和到期按客户计算,流量是各线路之和,每分钟同步一次。超额或到期自动停用他的全部客户端,调整额度、续期或清零流量后自动恢复。
+- 每位客户一条订阅链接,包含他的全部线路,按客户端自动给出格式:Clash / Mihomo / Stash / Shadowrocket、sing-box / Hiddify、Surge、Quantumult X、Loon、v2rayN(base64),也可用 `?target=` 指定。链接可重置,可查看拉取记录。
+- 每条线路可看分享链接和二维码,每位客户可看网络拓扑图。
 
 **面板**
 
-- 登记 3x-ui 面板(地址含 webBasePath、API token),保存时检查连通性,之后每分钟同步;卡片显示入站数、客户端数、面板版本、Xray 内核版本。
-- 展开卡片看入站(协议、端口、传输)和客户端(已用、到期、最近在线),可直接在卡片里创建客户端(vless reality / hy2)、看链接、删除。
-- 切换 Xray 内核版本(版本列表由面板从 GitHub 取),升级面板(面板自己跑升级脚本)。
-- 新建入站的做法:vless 照其他面板的 reality 入站复制并换密钥,一台都没有就用内置模板;hy2 用面板自己配置的证书(面板没配证书就建不了)。
+- 填面板地址和 API token 接入,每分钟同步一次状态。
+- 卡片显示面板版本、Xray 内核版本、入站和客户端,可直接创建或删除客户端。
+- 可切换 Xray 内核版本、升级面板。
 
 **SOCKS**
 
-- 登记购买的 SOCKS5 代理(支持 `socks5://用户:密码@主机:端口`、`主机:端口:用户:密码` 等写法),测试连通性拿出口 IP、地区、延迟;供中转线路当出口。
+- 登记 SOCKS5 代理,测试连通性、出口 IP、地区和延迟,供中转线路当出口。
 
-**会改动面板的只有这几处**:创建客户端 / 开线路(新建 client,必要时新建入站、加出站和路由规则并重启 Xray)、删线路 / 删客户(删 client 和他的路由规则)、额度 / 到期的自动停用与恢复(启停 client)、清零流量、切换内核版本、升级面板。同步、查看只读。
+说明:新建 hy2 入站要用面板自己配置的证书,面板没配证书就建不了。xui-hub 只在开线路、删线路、自动停用与恢复、清零流量、切换内核、升级面板时改动面板,其余操作只读。
 
 ## 部署
 
-两种方式二选一,效果一样:默认直接开 `http://<服务器 IP>:8788`,不需要域名。服务器 1 核 / 1 GB 内存足够,Debian 12 或 Ubuntu 22.04 / 24.04;出站要能访问各面板的 API 端口,入站开 SSH 和 8788(云服务器还要在安全组里放行)。
+服务器 1 核 1 GB 即可,需要放行 8788 端口,并能访问各面板的 API 地址。两种方式任选其一。
 
 ### 方式一:一键脚本
 
-root 执行(支持 Debian / Ubuntu / CentOS / Fedora / Arch 等 systemd 发行版,amd64 和 arm64):
+root 执行,支持 amd64 / arm64 的 systemd 发行版:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/install.sh)
 ```
 
-脚本从 [GitHub Release](https://github.com/fishermanxzx/xui-hub/releases) 下载按架构打好的包(自带 Node 运行时,服务器上不用装 Node / npm),校验 sha256 后解压到 `/usr/local/xui-hub`,数据和 `.env` 放在 `/etc/xui-hub`,用 systemd 托管(服务名 `xui-hub`,专用用户 `xuihub`)。交互运行时会问后台密码和端口,直接回车就是随机密码 + 8788;`curl | bash` 这类非交互方式下不提问,密码取环境变量 `XUIHUB_PASSWORD`(没有就随机生成并打印),端口取 `XUIHUB_PORT`。装完打印后台地址和密码,ufw / firewalld 开着的话顺手放行端口。后面加版本号可以装指定版本,如 `install.sh v0.1.0`。
+安装时会询问后台密码和端口,直接回车是随机密码和 8788,装完会打印后台地址和密码。非交互安装用环境变量 `XUIHUB_PASSWORD` 和 `XUIHUB_PORT`。
 
-之后用 `xui-hub` 命令管理,不带参数是菜单,也可以直接用子命令:
+之后用 `xui-hub` 命令管理,不带参数是菜单:
 
 | 命令 | 作用 |
 |---|---|
-| `xui-hub status` / `xui-hub log` | 运行状态 / 实时日志 |
-| `xui-hub update` | 更新到最新版(`xui-hub update v0.2.0` 指定版本) |
-| `xui-hub password` / `xui-hub port` | 重设后台密码 / 改端口 |
-| `xui-hub settings` | 当前设置 |
-| `xui-hub ssl` | SSL 证书管理:给域名或 IP 申请 Let's Encrypt 证书(也可走 Cloudflare DNS),设给 xui-hub 后台就变成 HTTPS,acme.sh 自动续期后自动重启。做法和 3x-ui 的 `x-ui` 菜单一致 |
-| `xui-hub start` / `stop` / `restart` / `enable` / `disable` | 启停与开机自启 |
-| `xui-hub uninstall` | 卸载,会问要不要保留数据目录 |
+| `xui-hub status` / `log` | 运行状态 / 实时日志 |
+| `xui-hub start` / `stop` / `restart` | 启停 |
+| `xui-hub enable` / `disable` | 开机自启 |
+| `xui-hub update` | 更新到最新版 |
+| `xui-hub password` / `port` / `settings` | 改密码 / 改端口 / 查看设置 |
+| `xui-hub ssl` | 申请和管理 HTTPS 证书 |
+| `xui-hub uninstall` | 卸载 |
+
+程序在 `/usr/local/xui-hub`,数据和配置在 `/etc/xui-hub`。
 
 ### 方式二:Docker
 
-镜像预构建好推在 `ghcr.io/fishermanxzx/xui-hub`(amd64 / arm64),不用克隆仓库:
-
 ```bash
-mkdir -p /opt/xui-hub && cd /opt/xui-hub
+mkdir -p /opt/xui-hub/data && cd /opt/xui-hub
+chown 1000:1000 data
 curl -fsSLO https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/docker-compose.yml
-echo "ADMIN_PASSWORD=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)" > .env && cat .env   # 或自己写一个密码
-mkdir -p data && chown 1000:1000 data    # 容器以 uid 1000(node)运行
+echo "ADMIN_PASSWORD=换成你的密码" > .env
 docker compose up -d
-docker compose ps                        # STATUS 显示 healthy
 ```
 
-更新:`docker compose pull && docker compose up -d`。版本说明里提到 compose 文件有变动时(比如 v0.6.0 加了 subconverter 容器),先重新下载一次 `docker-compose.yml` 再 up。`.env` 里还可以设 `LISTEN_ADDR` / `HOST_PORT`(见下)。想自己从源码构建就克隆仓库,把 compose 里的 `image:` 换成 `build: .`。
+更新:
 
-### 之后
+```bash
+docker compose pull && docker compose up -d
+```
 
-浏览器打开 `http://<服务器 IP>:8788`,用后台密码登录,「添加面板」填上 3x-ui 的地址和 API token(面板设置 → API 里生成),点面板名称进去「创建客户端」。
+### 使用
 
-数据只有 `data/hub.db` 一个文件(面板的地址和 token),备份它就够。
+1. 浏览器打开 `http://<服务器 IP>:8788`,用后台密码登录。
+2. 「面板」页添加 3x-ui 面板,填地址和 API token。
+3. 「客户」页新建客户,再给他开线路。
 
-**HTTPS**:默认是明文 HTTP(登录失败按 IP 限流)。一键脚本装的用 `xui-hub ssl` 申请证书:没域名就选「IP 证书」(Let's Encrypt 给 IP 签 6 天短证书,自动续),有域名选域名证书或 Cloudflare DNS 验证;申请完会问要不要设给 xui-hub,设了就直接 HTTPS。Docker 装的把现成的证书目录挂进容器(compose 里 `./cert:/cert:ro`),`.env` 填 `TLS_CERT_FILE=/cert/fullchain.pem` 和 `TLS_KEY_FILE=/cert/privkey.pem`。也可以不管这些,前面放 Caddy / Nginx 反代。
+备份只需要数据库文件 `hub.db`:一键脚本在 `/etc/xui-hub`,Docker 在 `data` 目录。
 
-### 环境变量(`.env`,两种方式通用;一键脚本的在 `/etc/xui-hub/.env`)
+### HTTPS
+
+默认是 HTTP。
+
+- 一键脚本:运行 `xui-hub ssl`,可给域名或 IP 申请 Let's Encrypt 证书并自动续期。
+- Docker:在 compose 里挂载证书目录,并在 `.env` 填 `TLS_CERT_FILE` 和 `TLS_KEY_FILE`。
+- 也可以在前面放 Caddy / Nginx 反代。
+
+### 环境变量
+
+写在 `.env` 里,一键脚本的在 `/etc/xui-hub/.env`,改完重启生效。
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `ADMIN_PASSWORD` | 空 | 后台密码,必须设置(一键脚本会自动生成) |
-| `LISTEN_ADDR` / `HOST_PORT` | `0.0.0.0` / `8788` | 监听的地址和端口 |
-| `CHECK_INTERVAL_SEC` | `60` | 多久同步一次各面板(连通性、客户端流量)并执行额度 / 到期(秒) |
-| `TLS_CERT_FILE` / `TLS_KEY_FILE` | 空 | 两项都填就直接提供 HTTPS(fullchain 和私钥的路径);`xui-hub ssl` 会自动写 |
-| `SUB_BASE_URL` | 空 | 订阅链接的地址前缀;空 = 用打开后台时的地址。订阅走单独域名时填 |
-| `MIHOMO_TEMPLATE` | 空 | Clash 输出套 Mihomo 头部模板(dns / tcp-concurrent / unified-delay):`all` / 逗号分隔的客户名 / 空 = 关闭 |
+| `ADMIN_PASSWORD` | 无 | 后台密码,必填 |
+| `LISTEN_ADDR` / `HOST_PORT` | `0.0.0.0` / `8788` | 监听地址和端口 |
+| `CHECK_INTERVAL_SEC` | `60` | 同步面板并执行额度 / 到期的间隔(秒) |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | 空 | 证书和私钥路径,两项都填即启用 HTTPS |
+| `SUB_BASE_URL` | 空 | 订阅链接的地址前缀,空则用打开后台时的地址 |
+| `MIHOMO_TEMPLATE` | 空 | Clash 订阅附加 Mihomo 基础配置:`all` 或逗号分隔的客户名 |
 | `SUB_LOG_DAYS` | `7` | 订阅拉取记录保留天数 |
-| `INTERNAL_PORT` | `8789` | 内部监听(纯 HTTP,默认只绑本机),subconverter 回源取节点用;一般不用改 |
-
-## 开发
-
-```bash
-cd server && npm install && npm run dev    # http://127.0.0.1:8788
-cd web && npm install && npm run dev       # http://127.0.0.1:5174,/api 代理到 8788
-cd server && npm test                      # 测试
-```
-
-发版:打 tag(`git tag v0.1.0 && git push origin v0.1.0`),GitHub Actions 会构建 amd64 / arm64 两个发布包创建 Release,并把多架构镜像推到 `ghcr.io/fishermanxzx/xui-hub`(`:0.1.0`、`:0.1`、`:latest`);本地打包用 `scripts/build-release.sh amd64 v0.1.0`。
+| `INTERNAL_PORT` | `8789` | 订阅转换用的内部端口,只绑本机,端口冲突时才需要改 |
 
 ## License
 
