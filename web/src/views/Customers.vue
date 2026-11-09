@@ -552,6 +552,9 @@ h2 {
 .sub-meta {
   flex-basis: 100%;
 }
+.sub-meta .link {
+  margin-left: 8px;
+}
 .lines {
   list-style: none;
   margin: 0;

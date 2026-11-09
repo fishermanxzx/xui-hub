@@ -4,6 +4,30 @@
 
 Node 22 + Express + SQLite + Vue 3,单容器 Docker 部署。
 
+## 界面预览
+
+下面的图都是演示数据。
+
+**客户**:每位客户一张卡片,有额度、到期、订阅链接和他的全部线路(直连 / 中转 → 出口);超额或到期会自动停用。
+
+![客户页](docs/images/customers.png)
+
+**开线路**:直连选面板和入站;中转再选出口——落地面板(已有或新建 socks 入站)或 SOCKS 代理。
+
+![开线路](docs/images/open-line.png)
+
+**网络拓扑**:每位客户一张可缩放、可拖动的图,客户端 → 入口面板 → 出口 → 互联网。
+
+![网络拓扑](docs/images/topology.png)
+
+**面板**:接入的 3x-ui 面板,显示版本和内核,展开看入站和客户端,可切换内核版本、升级面板。
+
+![面板页](docs/images/panels.png)
+
+**SOCKS**:登记 SOCKS5 代理,测连通性、出口 IP 和地区,给中转线路当出口。
+
+![SOCKS 页](docs/images/socks.png)
+
 ## 功能
 
 **客户**
