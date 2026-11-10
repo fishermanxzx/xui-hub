@@ -213,8 +213,10 @@ async function open() {
     opened.value = await api.openLine(lineFor.value.id, body);
     const notes = [opened.value.created.inbound ? `中转 / 面板上新建了入站 ${opened.value.created.inbound}` : '', opened.value.created.exit_inbound ? `落地上新建了 socks 入站 ${opened.value.created.exit_inbound}` : ''].filter(Boolean);
     toast(notes.length ? `线路已开通,${notes.join(',')}` : '线路已开通');
-    // 入站变了,下次打开重新取
+    // 入站变了:缓存清掉,表单正用着的两块马上重取(「再开一条」接着用这张表单)
     inboundsOf.value = {};
+    void fetchInbounds(f.panel_id);
+    void fetchInbounds(f.exit_panel_id);
     await load();
   } catch (e) {
     toastError(e);
