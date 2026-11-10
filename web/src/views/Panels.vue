@@ -83,9 +83,13 @@ async function submit() {
 }
 
 async function remove(panel: Panel) {
-  if (!confirm(`删除面板「${panel.name}」?只是从这里移除,面板上的入站和 client 不受影响。`)) return;
+  const notes = [
+    panel.line_count ? `这块面板上的 ${panel.line_count} 条客户线路会从客户名下消失,订阅里也不再有它们` : '',
+    panel.exit_line_count ? `${panel.exit_line_count} 条中转线路拿它当落地出口,之后显示成「落地 (已删除)」` : '',
+  ].filter(Boolean);
+  if (!confirm(`删除面板「${panel.name}」?只是从这里移除,面板上的入站和 client 不受影响。${notes.length ? `\n\n${notes.join(';')}。` : ''}`)) return;
   try {
-    await api.deletePanel(panel.id);
+    await api.deletePanel(panel.id, panel.line_count > 0);
     toast('已删除');
     await load();
   } catch (e) {

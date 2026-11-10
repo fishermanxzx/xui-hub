@@ -131,9 +131,13 @@ export function getLine(db: DB, id: number): Line | undefined {
   return row ? toLine(row) : undefined;
 }
 
+/** 给客户配上线路和用量。多个客户时一次查出全部线路再分组,不逐个查 */
 function withLines(db: DB, rows: any[], now = Date.now()): CustomerView[] {
+  const all = rows.length === 1 ? linesOf(db, rows[0].id) : (db.prepare(`${LINE_SQL} ORDER BY l.id`).all() as any[]).map(toLine);
+  const byCustomer = new Map<number, Line[]>();
+  for (const l of all) byCustomer.set(l.customer_id, [...(byCustomer.get(l.customer_id) ?? []), l]);
   return rows.map((c) => {
-    const lines = linesOf(db, c.id);
+    const lines = byCustomer.get(c.id) ?? [];
     const used_up = lines.reduce((s, l) => s + l.up, 0);
     const used_down = lines.reduce((s, l) => s + l.down, 0);
     const used = used_up + used_down;
@@ -200,6 +204,17 @@ export function zeroLineTraffic(db: DB, lineId: number): void {
 
 export function linesOnPanel(db: DB, panelId: number): Line[] {
   return (db.prepare(`${LINE_SQL} WHERE l.panel_id = ? ORDER BY l.id`).all(panelId) as any[]).map(toLine);
+}
+
+/** 面板上这个 email 的 client 是不是某位客户的线路 */
+export function lineByEmail(db: DB, panelId: number, email: string): Line | undefined {
+  const row = db.prepare(`${LINE_SQL} WHERE l.panel_id = ? AND l.email = ?`).get(panelId, email);
+  return row ? toLine(row) : undefined;
+}
+
+/** 出口是这个 SOCKS 的中转线路 */
+export function linesViaSocks(db: DB, socksId: number): Line[] {
+  return (db.prepare(`${LINE_SQL} WHERE l.exit_socks_id = ? ORDER BY l.id`).all(socksId) as any[]).map(toLine);
 }
 
 export function deleteCustomer(db: DB, id: number): void {

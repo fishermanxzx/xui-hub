@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { createServer, type AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import { memoryDb } from '../testUtil';
+import { addLine, createCustomer, deleteLine } from '../customers/repo';
+import { addPanel, memoryDb } from '../testUtil';
 import { checkSocks, parseTrace } from './check';
-import { createSocks, deleteSocks, getSocks, getSocksView, listSocks, parseSocksAddress, saveCheck, updateSocks } from './repo';
+import { createSocks, deleteSocks, getSocks, getSocksView, listSocks, parseSocksAddress, planSocksUpdate, saveCheck, updateSocks } from './repo';
 
 test('解析各种 SOCKS 地址写法', () => {
   const ep = (host: string, port: number, username = '', password = '') => ({ host, port, username, password });
@@ -60,4 +61,51 @@ test('连通性测试:握手失败 / 认证失败 / 连接被拒绝都有明确�
   const refused = await checkSocks({ host: '127.0.0.1', port: 1, username: '', password: '' }, 3000);
   assert.equal(refused.ok, false);
   assert.match(refused.error!, /连接代理失败/);
+});
+
+test('改 SOCKS 之前先算要不要动中转:地址和账号没变就不用;校验不过不落库', () => {
+  const db = memoryDb();
+  const id = createSocks(db, { name: 'att', address: 'socks5://u:secret@isp.example.com:10002', remark: '旧' }, 1);
+  createSocks(db, { name: 'other', address: '1.2.3.4:5' }, 1);
+  const endpoint = (input: object) => planSocksUpdate(db, id, input).endpoint;
+
+  const plan = planSocksUpdate(db, id, { remark: ' 新备注 ' });
+  assert.deepEqual([plan.name, plan.remark, plan.endpoint, plan.cur.password], ['att', '新备注', null, 'secret']);
+  assert.equal(endpoint({ name: 'att2' }), null);
+  assert.equal(endpoint({ address: '' }), null);
+  // 同一个出口换种写法,不算变
+  assert.equal(endpoint({ address: 'ISP.example.com:10002:u:secret' }), null);
+  assert.deepEqual(endpoint({ address: 'isp.example.com:10002:u:new' }), { host: 'isp.example.com', port: 10002, username: 'u', password: 'new' });
+  assert.equal(endpoint({ address: 'isp.example.com:10003:u:secret' })?.port, 10003);
+  assert.equal(endpoint({ address: 'isp2.example.com:10002:u:secret' })?.host, 'isp2.example.com');
+  assert.deepEqual(endpoint({ address: 'isp.example.com:10002' }), { host: 'isp.example.com', port: 10002, username: '', password: '' });
+
+  assert.equal(planSocksUpdate(db, id, { name: ' att ' }).name, 'att');
+  assert.throws(() => planSocksUpdate(db, id, { name: 'other' }), /名称已存在/);
+  assert.throws(() => planSocksUpdate(db, id, { name: ' ' }), /名称不能为空/);
+  assert.throws(() => planSocksUpdate(db, id, { address: 'http://x:1' }), /只支持 socks5/);
+  assert.throws(() => planSocksUpdate(db, 999, { remark: 'x' }), /SOCKS 不存在/);
+  // 只是算,什么都没写
+  const cur = getSocks(db, id)!;
+  assert.deepEqual([cur.name, cur.remark, cur.port, cur.password, cur.updated_at], ['att', '旧', 10002, 'secret', 1]);
+});
+
+test('在用的 SOCKS 删不了:有线路拿它当出口时先删线路', () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  const id = createSocks(db, { name: 'att', address: '1.2.3.4:5' }, 1);
+  const idle = createSocks(db, { name: 'idle', address: '1.2.3.4:6' }, 1);
+  const cid = createCustomer(db, { name: 'zhang' });
+  const line = addLine(db, { customer_id: cid, kind: 'relay', panel_id: a.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'zhang', exit_kind: 'socks', exit_socks_id: id, exit_label: 'SOCKS att' });
+
+  assert.deepEqual(listSocks(db).map((s) => [s.name, s.used_by]), [['att', 1], ['idle', 0]]);
+  assert.equal(getSocksView(db, id)!.used_by, 1);
+  assert.throws(() => deleteSocks(db, id), /还有 1 条线路在用这个 SOCKS/);
+  assert.ok(getSocks(db, id));
+  deleteSocks(db, idle);
+
+  deleteLine(db, line.id);
+  assert.equal(getSocksView(db, id)!.used_by, 0);
+  deleteSocks(db, id);
+  assert.deepEqual(listSocks(db), []);
 });

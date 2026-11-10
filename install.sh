@@ -24,6 +24,7 @@ command -v systemctl >/dev/null || die "需要 systemd"
 
 # 非交互:显式 XUIHUB_NONINTERACTIVE=1,或 stdin 不是终端(curl | bash)
 if [ "${XUIHUB_NONINTERACTIVE:-0}" = 1 ] || [ ! -t 0 ]; then NONINTERACTIVE=1; else NONINTERACTIVE=0; fi
+case "${XUIHUB_PASSWORD:-}" in *\'*) die "XUIHUB_PASSWORD 里不能有单引号" ;; esac
 
 # 发行版
 if [ -f /etc/os-release ]; then . /etc/os-release; release="${ID:-unknown}"; else release=unknown; fi
@@ -60,9 +61,18 @@ latest_tag() {
 }
 
 rand() { head -c 256 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-"${1:-16}"; }
-env_get() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-; }
+# .env 里的值:带特殊字符的用单引号包起来(systemd 的 EnvironmentFile 和 docker 的 env_file 都把单引号里的内容原样读);读的时候去掉引号
+env_quote() { case "$1" in *[!A-Za-z0-9_./:@%+=,-]*) printf "'%s'" "$1" ;; *) printf '%s' "$1" ;; esac; }
+env_get() {
+  local v
+  v="$(grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-)" || true
+  case "$v" in \'*\') v="${v#\'}"; v="${v%\'}" ;; \"*\") v="${v#\"}"; v="${v%\"}" ;; esac
+  printf '%s\n' "$v"
+}
+# 单引号包不住单引号自己,密码里不能有
+pw_ok() { case "$1" in *\'*) return 1 ;; esac; }
 env_set() {
-  { grep -vE "^$1=" "$ENV_FILE" 2>/dev/null || true; printf '%s=%s\n' "$1" "$2"; } >"$ENV_FILE.tmp"
+  { grep -vE "^$1=" "$ENV_FILE" 2>/dev/null || true; printf '%s=%s\n' "$1" "$(env_quote "$2")"; } >"$ENV_FILE.tmp"
   mv "$ENV_FILE.tmp" "$ENV_FILE"
 }
 
@@ -124,7 +134,10 @@ install_xui_hub() {
   if [ -z "$cur_pw" ] || [ "$cur_pw" = change-me ]; then
     local pw="${XUIHUB_PASSWORD:-}" port="${XUIHUB_PORT:-$(env_get HOST_PORT)}"
     if [ "$NONINTERACTIVE" = 0 ]; then
-      [ -n "$pw" ] || { read -r -s -p "后台密码(直接回车随机生成):" pw; echo; }
+      if [ -z "$pw" ]; then
+        read -r -s -p "后台密码(直接回车随机生成):" pw; echo
+        until pw_ok "$pw"; do read -r -s -p "密码里不能有单引号,换一个:" pw; echo; done
+      fi
       [ -n "$port" ] || read -r -p "后台端口 [8788]:" port
     fi
     [ -n "$pw" ] || { pw="$(rand 16)"; NEW_PASSWORD="$pw"; }

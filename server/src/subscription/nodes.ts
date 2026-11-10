@@ -1,26 +1,54 @@
 // 把面板给的分享链接解析成结构化节点,供 sing-box / Quantumult X / Loon 生成器使用。
-// 支持 vless(reality)、hysteria2(salamander 混淆)和 trojan(TLS,tcp / ws / grpc);其他协议返回 null,由调用方跳过。
+// 支持 vless(reality / TLS / 明文)、vmess、trojan(TLS)和 hysteria2(salamander 混淆);
+// vless / vmess / trojan 的传输层认 tcp、ws、grpc、httpupgrade。其他协议和传输返回 null,由调用方跳过。
 
-export interface VlessNode {
-  type: 'vless';
+/** 传输层和 TLS 参数(vless / vmess / trojan 共用) */
+export interface Transport {
+  /** tcp / ws / grpc / httpupgrade */
+  network: string;
+  /** ws / httpupgrade 的路径和 Host */
+  path?: string;
+  host?: string;
+  /** grpc 的服务名 */
+  serviceName?: string;
+  sni?: string;
+  alpn: string[];
+  fingerprint?: string;
+  insecure: boolean;
+}
+
+interface Endpoint {
   name: string;
   server: string;
   port: number;
+}
+
+export interface VlessNode extends Endpoint, Transport {
+  type: 'vless';
   uuid: string;
   flow?: string;
-  network: string;
+  /** none / tls / reality */
   security: string;
-  sni?: string;
-  fingerprint?: string;
   publicKey?: string;
   shortId?: string;
 }
 
-export interface Hysteria2Node {
+export interface VmessNode extends Endpoint, Transport {
+  type: 'vmess';
+  uuid: string;
+  alterId: number;
+  /** 加密方式(scy):auto / aes-128-gcm / chacha20-poly1305 / none / zero */
+  cipher: string;
+  tls: boolean;
+}
+
+export interface TrojanNode extends Endpoint, Transport {
+  type: 'trojan';
+  password: string;
+}
+
+export interface Hysteria2Node extends Endpoint {
   type: 'hysteria2';
-  name: string;
-  server: string;
-  port: number;
   password: string;
   sni?: string;
   alpn: string[];
@@ -29,26 +57,7 @@ export interface Hysteria2Node {
   insecure: boolean;
 }
 
-export interface TrojanNode {
-  type: 'trojan';
-  name: string;
-  server: string;
-  port: number;
-  password: string;
-  /** tcp / ws / grpc */
-  network: string;
-  sni?: string;
-  alpn: string[];
-  fingerprint?: string;
-  insecure: boolean;
-  /** ws 的路径和 Host */
-  path?: string;
-  host?: string;
-  /** grpc 的服务名 */
-  serviceName?: string;
-}
-
-export type ProxyNode = VlessNode | Hysteria2Node | TrojanNode;
+export type ProxyNode = VlessNode | VmessNode | TrojanNode | Hysteria2Node;
 
 function decode(value: string): string {
   try {
@@ -58,12 +67,56 @@ function decode(value: string): string {
   }
 }
 
-function host(url: URL): string {
-  return url.hostname.replace(/^\[|\]$/g, '');
+const list = (value: string | undefined) => (value ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+const truthy = (value: unknown) => value === true || value === '1' || value === 'true';
+const validPort = (port: number) => Number.isInteger(port) && port > 0;
+
+/** 生成器写得出来的传输:tcp(不带 http 伪装)、ws、grpc、httpupgrade;kcp、xhttp 等不行 */
+function supported(network: string, headerType: string | undefined): boolean {
+  return network === 'tcp' ? (headerType ?? 'none') === 'none' : ['ws', 'grpc', 'httpupgrade'].includes(network);
+}
+
+/** vmess://<base64 的 JSON>(v2rayN 的写法,3x-ui 给的就是这种) */
+function parseVmess(body: string): VmessNode | null {
+  let v: Record<string, unknown>;
+  try {
+    v = JSON.parse(Buffer.from(body, 'base64').toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!v || typeof v !== 'object') return null;
+  const str = (key: string) => (v[key] == null || v[key] === '' ? undefined : String(v[key]));
+  const server = str('add');
+  const port = Number(v.port);
+  const uuid = str('id');
+  const network = str('net') ?? 'tcp';
+  const security = str('tls') ?? 'none';
+  if (!server || !uuid || !validPort(port) || !supported(network, str('type')) || !['none', 'tls'].includes(security)) return null;
+  const grpc = network === 'grpc';
+  return {
+    type: 'vmess',
+    name: str('ps') ?? `${server}:${port}`,
+    server,
+    port,
+    uuid,
+    alterId: Number(v.aid) || 0,
+    cipher: str('scy') ?? 'auto',
+    tls: security === 'tls',
+    network,
+    // grpc 的服务名放在 path 里
+    path: grpc ? undefined : str('path'),
+    host: str('host'),
+    serviceName: grpc ? str('path') : undefined,
+    sni: str('sni'),
+    alpn: list(str('alpn')),
+    fingerprint: str('fp'),
+    insecure: truthy(v.allowInsecure),
+  };
 }
 
 export function parseNode(link: string): ProxyNode | null {
   const scheme = link.slice(0, link.indexOf('://')).toLowerCase();
+  if (scheme === 'vmess') return parseVmess(link.slice('vmess://'.length));
   let url: URL;
   try {
     url = new URL(link);
@@ -71,68 +124,33 @@ export function parseNode(link: string): ProxyNode | null {
     return null;
   }
   const q = url.searchParams;
-  const name = decode(url.hash.slice(1)) || `${host(url)}:${url.port}`;
+  const server = url.hostname.replace(/^\[|\]$/g, '');
   const port = Number(url.port);
-  if (!host(url) || !Number.isInteger(port) || port <= 0) return null;
+  if (!server || !validPort(port)) return null;
   const opt = (key: string) => q.get(key) || undefined;
+  const base = { name: decode(url.hash.slice(1)) || `${server}:${port}`, server, port };
+  const sni = opt('sni') ?? opt('peer') ?? opt('servername');
+  const alpn = list(opt('alpn'));
+  const insecure = truthy(q.get('insecure')) || truthy(q.get('allowInsecure'));
+  const secret = decode(url.username);
 
-  if (scheme === 'vless') {
-    const uuid = decode(url.username);
-    if (!uuid) return null;
-    return {
-      type: 'vless',
-      name,
-      server: host(url),
-      port,
-      uuid,
-      flow: opt('flow'),
-      network: opt('type') ?? 'tcp',
-      security: opt('security') ?? 'none',
-      sni: opt('sni') ?? opt('servername'),
-      fingerprint: opt('fp'),
-      publicKey: opt('pbk'),
-      shortId: opt('sid'),
-    };
-  }
   if (scheme === 'hysteria2' || scheme === 'hy2') {
-    const password = decode(url.username) + (url.password ? `:${decode(url.password)}` : '');
+    const password = secret + (url.password ? `:${decode(url.password)}` : '');
     if (!password) return null;
-    return {
-      type: 'hysteria2',
-      name,
-      server: host(url),
-      port,
-      password,
-      sni: opt('sni') ?? opt('peer'),
-      alpn: (opt('alpn') ?? '').split(',').map((s) => s.trim()).filter(Boolean),
-      obfs: opt('obfs'),
-      obfsPassword: opt('obfs-password'),
-      insecure: ['1', 'true'].includes(q.get('insecure') ?? q.get('allowInsecure') ?? ''),
-    };
+    return { type: 'hysteria2', ...base, password, sni, alpn, obfs: opt('obfs'), obfsPassword: opt('obfs-password'), insecure };
   }
+  if (scheme !== 'vless' && scheme !== 'trojan') return null;
+
+  const network = opt('type') ?? 'tcp';
+  if (!secret || !supported(network, opt('headerType'))) return null;
+  const transport = { network, path: opt('path'), host: opt('host'), serviceName: opt('serviceName'), sni, alpn, fingerprint: opt('fp'), insecure };
   if (scheme === 'trojan') {
-    const password = decode(url.username);
     // trojan 只认 TLS;reality 等其他安全层先不支持
-    if (!password || (opt('security') ?? 'tls') !== 'tls') return null;
-    const network = opt('type') ?? 'tcp';
-    if (!['tcp', 'ws', 'grpc'].includes(network)) return null;
-    return {
-      type: 'trojan',
-      name,
-      server: host(url),
-      port,
-      password,
-      network,
-      sni: opt('sni') ?? opt('peer'),
-      alpn: (opt('alpn') ?? '').split(',').map((s) => s.trim()).filter(Boolean),
-      fingerprint: opt('fp'),
-      insecure: ['1', 'true'].includes(q.get('allowInsecure') ?? q.get('insecure') ?? ''),
-      path: opt('path'),
-      host: opt('host'),
-      serviceName: opt('serviceName'),
-    };
+    return (opt('security') ?? 'tls') === 'tls' ? { type: 'trojan', ...base, password: secret, ...transport } : null;
   }
-  return null;
+  const security = opt('security') ?? 'none';
+  if (!['none', 'tls', 'reality'].includes(security)) return null;
+  return { type: 'vless', ...base, uuid: secret, flow: opt('flow'), security, publicKey: opt('pbk'), shortId: opt('sid'), ...transport };
 }
 
 /** 节点名在配置里要唯一:重名的依次加 " 2"、" 3"(跳过已被占用的) */

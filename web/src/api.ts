@@ -32,7 +32,8 @@ export const api = {
   panels: () => call<Panel[]>('GET', '/api/panels'),
   createPanel: (body: PanelInput) => call<Panel>('POST', '/api/panels', body),
   updatePanel: (id: number, body: PanelInput) => call<Panel>('PATCH', `/api/panels/${id}`, body),
-  deletePanel: (id: number) => call('DELETE', `/api/panels/${id}`),
+  /** 面板上还记着客户线路时要 force,线路记录一并删掉 */
+  deletePanel: (id: number, force = false) => call('DELETE', `/api/panels/${id}${force ? '?force=1' : ''}`),
   checkPanels: () => call<Panel[]>('POST', '/api/panels/check'),
   checkPanel: (id: number) => call<Panel>('POST', `/api/panels/${id}/check`),
   panelInbounds: (id: number) => call<PanelDetail>('GET', `/api/panels/${id}/inbounds`),
@@ -46,7 +47,8 @@ export const api = {
   createClient: (panelId: number, name: string, protocol: ClientProtocol) =>
     call<CreatedClient>('POST', `/api/panels/${panelId}/clients`, { name, protocol }),
   clientLinks: (panelId: number, email: string) => call<{ links: string[] }>('GET', `/api/panels/${panelId}/clients/${encodeURIComponent(email)}/links`),
-  deleteClient: (panelId: number, email: string) => call('DELETE', `/api/panels/${panelId}/clients/${encodeURIComponent(email)}`),
+  /** 这个 client 要是某位客户的线路,线路(和它的出口规则)一并删掉 */
+  deleteClient: (panelId: number, email: string) => call<{ ok: boolean; line_removed: boolean }>('DELETE', `/api/panels/${panelId}/clients/${encodeURIComponent(email)}`),
 
   customers: () => call<Customer[]>('GET', '/api/customers'),
   createCustomer: (body: CustomerInput) => call<Customer>('POST', '/api/customers', body),
@@ -63,7 +65,8 @@ export const api = {
   deleteCustomer: (id: number) => call<{ failed: { line: string; error: string }[] }>('DELETE', `/api/customers/${id}`),
   openLine: (id: number, body: OpenLineInput) => call<OpenedLine>('POST', `/api/customers/${id}/lines`, body),
   lineLinks: (id: number, lineId: number) => call<{ links: string[] }>('GET', `/api/customers/${id}/lines/${lineId}/links`),
-  deleteLine: (id: number, lineId: number) => call('DELETE', `/api/customers/${id}/lines/${lineId}`),
+  /** force:面板上删不掉(连不上、已经不在了)也把这里的线路记录删掉 */
+  deleteLine: (id: number, lineId: number, force = false) => call('DELETE', `/api/customers/${id}/lines/${lineId}${force ? '?force=1' : ''}`),
 
   socks: () => call<Socks[]>('GET', '/api/socks'),
   createSocks: (body: SocksInput) => call<Socks>('POST', '/api/socks', body),

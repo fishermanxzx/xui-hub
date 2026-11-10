@@ -6,7 +6,8 @@ import { dirname } from 'node:path';
 
 export type DB = Database.Database;
 
-const MIGRATIONS: string[] = [
+/** 导出是给测试用的(从旧版本的库升级) */
+export const MIGRATIONS: string[] = [
   `
   CREATE TABLE meta (
     key   TEXT PRIMARY KEY,

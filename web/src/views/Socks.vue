@@ -62,6 +62,8 @@ function openForm(s: Socks | null) {
 async function submit() {
   const body: SocksInput = { name: form.value.name, remark: form.value.remark };
   if (form.value.address.trim()) body.address = form.value.address.trim();
+  const used = editing.value?.used_by ?? 0;
+  if (body.address && used && !confirm(`有 ${used} 条线路在用这个 SOCKS:改地址会把这些中转面板上的出口一起改过去并重启 Xray,中转上的客户端会断流几秒。继续?`)) return;
   saving.value = true;
   try {
     const saved = editing.value ? await api.updateSocks(editing.value.id, body) : await api.createSocks(body);
@@ -81,7 +83,8 @@ async function submit() {
 }
 
 async function remove(s: Socks) {
-  if (!confirm(`删除 SOCKS「${s.name}」?只从这里移除,不影响面板上已经在用它的出站。`)) return;
+  if (s.used_by) return toast(`还有 ${s.used_by} 条线路在用「${s.name}」,先到客户页删掉这些线路`, 'err');
+  if (!confirm(`删除 SOCKS「${s.name}」?`)) return;
   try {
     await api.deleteSocks(s.id);
     toast('已删除');
@@ -114,6 +117,7 @@ async function remove(s: Socks) {
             <th>账号</th>
             <th>连通性</th>
             <th>出口</th>
+            <th>在用</th>
             <th>备注</th>
             <th></th>
           </tr>
@@ -133,6 +137,7 @@ async function remove(s: Socks) {
               <template v-if="s.check?.ok">{{ s.check.ip }} <span class="muted">{{ region(s.check.loc) }}</span></template>
               <span v-else class="muted">—</span>
             </td>
+            <td class="small"><template v-if="s.used_by">{{ s.used_by }} 条线路</template><span v-else class="muted">—</span></td>
             <td class="muted small">{{ s.remark || '' }}</td>
             <td class="num">
               <div class="ops">

@@ -1,5 +1,6 @@
 // 面板详情:现取一台面板的入站和挂在上面的 client。只读;不返回任何密钥(uuid、密码、reality 私钥、证书路径等)。
 
+import { CLIENT_PROTOCOLS } from '../clients/create';
 import { decodeJson } from '../xui/json';
 import { normalizeClients } from '../xui/normalize';
 import type { Panel } from './repo';
@@ -26,6 +27,8 @@ export interface InboundView {
   protocol: string;
   port: number;
   enable: boolean;
+  /** 这种协议的入站能不能挂客户端 */
+  accepts_clients: boolean;
   /** 传输 / 安全,如 tcp / reality */
   transport: string;
   clients: PanelClientView[];
@@ -60,6 +63,7 @@ export function buildPanelDetail(panel: Panel, raw: { inbounds: any[]; clients: 
       protocol: String(ib.protocol ?? ''),
       port: Number(ib.port),
       enable: ib.enable !== false,
+      accepts_clients: CLIENT_PROTOCOLS.has(String(ib.protocol)),
       transport: [stream.network, stream.security && stream.security !== 'none' ? stream.security : ''].filter(Boolean).join(' / '),
       clients: clients
         .filter((c) => c.inboundIds.includes(id))

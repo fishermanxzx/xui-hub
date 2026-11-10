@@ -6,27 +6,31 @@ import { createClient, type ClientAdmin } from '../clients/create';
 import { checkAllPanels, checkPanel, type PanelProbe } from '../panels/check';
 import { readPanelDetail, type PanelReader } from '../panels/inbounds';
 import { createPanel, deletePanel, getPanel, InputError, listPanels, toPanelView, updatePanel, type Panel } from '../panels/repo';
-import { createCustomer, deleteCustomer, getCustomer, getLine, listCustomers, resetSubToken, updateCustomer, deleteLine, zeroLineTraffic, type CustomerView } from '../customers/repo';
+import {
+  createCustomer,
+  deleteCustomer,
+  deleteLine,
+  getCustomer,
+  getLine,
+  lineByEmail,
+  linesOnPanel,
+  listCustomers,
+  resetSubToken,
+  updateCustomer,
+  zeroLineTraffic,
+  type CustomerView,
+  type Line,
+} from '../customers/repo';
 import { listSubFetches, subClientCounts } from '../subscription/fetchLog';
 import { enforceCustomers } from '../lines/enforce';
-import { openLine, removeLine, type LineAdmin } from '../lines/open';
+import { openLine, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
 import { checkSocks } from '../socks/check';
-import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, saveCheck, updateSocks } from '../socks/repo';
+import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, planSocksUpdate, saveCheck, updateSocks } from '../socks/repo';
+import { errorText, mapLimit, panelKey, serial, using } from '../util';
 import { XUIError } from '../xui/client';
-import {
-  LoginLimiter,
-  passwordMatches,
-  readCookie,
-  requireAuth,
-  SESSION_COOKIE,
-  SESSION_MAX_AGE_MS,
-  sessionCookie,
-  signSession,
-  verifySession,
-} from './auth';
+import { LoginLimiter, passwordMatches, readCookie, requireAuth, SESSION_COOKIE, SESSION_MAX_AGE_MS, sessionCookie, sessionKeys, signSession, verifySession } from './auth';
 
 export interface PanelClient extends ClientAdmin, PanelReader, PanelProbe, LineAdmin {
-  deleteClient(email: string): Promise<void>;
   setClientsEnabled(emails: string[], enable: boolean): Promise<void>;
   resetClientTraffic(email: string): Promise<void>;
   serverStatus(): Promise<{ panelVersion: string; xrayVersion: string; xrayState: string; xrayError: string }>;
@@ -39,7 +43,6 @@ export interface PanelClient extends ClientAdmin, PanelReader, PanelProbe, LineA
 
 export interface RouteDeps {
   db: DB;
-  sessionSecret: string;
   adminPassword: string;
   clientFor: (panel: Panel) => PanelClient;
   /** 新建 vless 入站后探测端口 */
@@ -72,8 +75,13 @@ function idParam(req: Request): number {
 export function apiRouter(deps: RouteDeps): Router {
   const { db } = deps;
   const authEnabled = deps.adminPassword !== '';
+  const keys = sessionKeys(db, deps.adminPassword);
   const limiter = new LoginLimiter();
   const r = Router();
+  const loggedIn = (req: Request) => !authEnabled || verifySession(keys.current(), readCookie(req, SESSION_COOKIE));
+  const withClient = <T>(panel: Panel, fn: (client: PanelClient) => Promise<T>): Promise<T> => using(deps.clientFor(panel), fn);
+  const view = (panel: Panel) => toPanelView(db, panel);
+  const lineLabel = (line: Line) => `${line.panel_name} 上的 ${line.email}`;
 
   const panelOf = (req: Request): Panel => {
     const panel = getPanel(db, idParam(req));
@@ -82,10 +90,7 @@ export function apiRouter(deps: RouteDeps): Router {
   };
 
   r.get('/session', (req, res) => {
-    res.json({
-      auth_required: authEnabled,
-      logged_in: !authEnabled || verifySession(deps.sessionSecret, readCookie(req, SESSION_COOKIE)),
-    });
+    res.json({ auth_required: authEnabled, logged_in: loggedIn(req) });
   });
 
   r.post('/login', (req, res) => {
@@ -97,41 +102,44 @@ export function apiRouter(deps: RouteDeps): Router {
       return res.status(401).json({ error: '密码错误' });
     }
     limiter.clear(ip);
-    res.setHeader('Set-Cookie', sessionCookie(req, signSession(deps.sessionSecret), SESSION_MAX_AGE_MS));
+    res.setHeader('Set-Cookie', sessionCookie(req, signSession(keys.current()), SESSION_MAX_AGE_MS));
     res.json({ ok: true });
   });
 
+  // 退出登录换掉签名密钥:这台和其他设备上的会话一起失效(拿着旧 cookie 的也进不来)
   r.post('/logout', (req, res) => {
+    if (authEnabled && loggedIn(req)) keys.rotate();
     res.setHeader('Set-Cookie', sessionCookie(req, '', 0));
     res.json({ ok: true });
   });
 
-  r.use(requireAuth(authEnabled, deps.sessionSecret));
+  r.use(requireAuth(authEnabled, keys.current));
 
   // ---------- 面板 ----------
-  r.get('/panels', wrap(() => listPanels(db).map(toPanelView)));
+  r.get('/panels', wrap(() => listPanels(db).map(view)));
   // 新建后立即检查一次连通性,保存失败的地址 / token 马上能看到
   r.post(
     '/panels',
     wrap(async (req) => {
       const panel = createPanel(db, req.body ?? {});
-      return toPanelView(await checkPanel(db, panel, deps.clientFor(panel)));
+      return view(await checkPanel(db, panel, deps.clientFor(panel)));
     }),
   );
   r.patch(
     '/panels/:id',
     wrap(async (req) => {
       const panel = updatePanel(db, idParam(req), req.body ?? {});
-      return toPanelView(await checkPanel(db, panel, deps.clientFor(panel)));
+      return view(await checkPanel(db, panel, deps.clientFor(panel)));
     }),
   );
-  r.delete('/panels/:id', wrap((req) => void deletePanel(db, idParam(req))));
-  r.post('/panels/check', wrap(async () => (await checkAllPanels(db, deps.clientFor)).map(toPanelView)));
+  // 面板上还有客户线路时要带 ?force=1(线路记录会跟着删掉)
+  r.delete('/panels/:id', wrap((req) => void deletePanel(db, idParam(req), req.query.force === '1')));
+  r.post('/panels/check', wrap(async () => (await checkAllPanels(db, deps.clientFor)).map(view)));
   r.post(
     '/panels/:id/check',
     wrap(async (req) => {
       const panel = panelOf(req);
-      return toPanelView(await checkPanel(db, panel, deps.clientFor(panel)));
+      return view(await checkPanel(db, panel, deps.clientFor(panel)));
     }),
   );
   // 面板详情:现取入站和 client(只读,不含密钥)
@@ -144,14 +152,6 @@ export function apiRouter(deps: RouteDeps): Router {
   );
 
   // ---------- 版本与升级 ----------
-  const withClient = async <T>(panel: Panel, fn: (client: PanelClient) => Promise<T>): Promise<T> => {
-    const client = deps.clientFor(panel);
-    try {
-      return await fn(client);
-    } finally {
-      await client.close?.().catch(() => {});
-    }
-  };
   // 面板版本、可升级信息、Xray 当前版本与可选版本(现从面板取)
   r.get(
     '/panels/:id/versions',
@@ -184,7 +184,7 @@ export function apiRouter(deps: RouteDeps): Router {
       const after = await checkPanel(db, panel, deps.clientFor(panel));
       if (after.xray_state !== 'running') throw new InputError(`Xray 没有回到运行状态(${after.xray_state ?? '未知'}),去面板上看日志`);
       if (after.xray_version !== version.replace(/^v/, '')) throw new InputError(`Xray 仍是 ${after.xray_version},切换没有生效`);
-      return toPanelView(after);
+      return view(after);
     }),
   );
   // 升级面板:面板自己在后台跑升级脚本,这里拿到 runId;前端轮询 update-status
@@ -208,30 +208,35 @@ export function apiRouter(deps: RouteDeps): Router {
     '/panels/:id/clients',
     wrap((req) => {
       const panel = panelOf(req);
-      return createClient(panel, deps.clientFor(panel), req.body ?? {}, { otherPanels: listPanels(db), adminFor: deps.clientFor, probe: deps.probe });
+      return serial(panelKey(panel.id), () =>
+        createClient(panel, deps.clientFor(panel), req.body ?? {}, {
+          otherPanels: listPanels(db),
+          adminFor: deps.clientFor,
+          probe: deps.probe,
+          taken: linesOnPanel(db, panel.id).map((l) => l.email),
+        }),
+      );
     }),
   );
   // 某个 client 的分享链接(现从面板取)
   r.get(
     '/panels/:id/clients/:email/links',
-    wrap(async (req) => {
-      const client = deps.clientFor(panelOf(req));
-      try {
-        return { links: await client.clientLinks(String(req.params.email)) };
-      } finally {
-        await client.close?.().catch(() => {});
-      }
-    }),
+    wrap((req) => withClient(panelOf(req), async (client) => ({ links: await client.clientLinks(String(req.params.email)) }))),
   );
+  // 删 client;它要是某位客户的线路,出口规则和线路记录一起删,不留下对不上的记录
   r.delete(
     '/panels/:id/clients/:email',
     wrap(async (req) => {
-      const client = deps.clientFor(panelOf(req));
-      try {
-        await client.deleteClient(String(req.params.email));
-      } finally {
-        await client.close?.().catch(() => {});
+      const panel = panelOf(req);
+      const email = String(req.params.email);
+      const line = lineByEmail(db, panel.id, email);
+      if (line) {
+        await removeLine(db, line, deps.clientFor);
+        deleteLine(db, line.id);
+      } else {
+        await serial(panelKey(panel.id), () => withClient(panel, (client) => client.deleteClient(email)));
       }
+      return { ok: true, line_removed: !!line };
     }),
   );
 
@@ -241,11 +246,12 @@ export function apiRouter(deps: RouteDeps): Router {
     const counts = subClientCounts(db, Date.now() - deps.subLogDays * 86_400_000);
     return customers.map((c) => ({ ...c, sub_url: deps.subBaseUrl ? `${deps.subBaseUrl}/sub/${c.sub_token}` : null, sub_clients: counts.get(c.id)?.clients ?? 0, sub_ips: counts.get(c.id)?.ips ?? 0 }));
   };
-  const customerOf = (id: number) => {
+  const plainCustomer = (id: number) => {
     const c = getCustomer(db, id);
     if (!c) throw new InputError('客户不存在');
-    return withSub([c])[0];
+    return c;
   };
+  const customerOf = (id: number) => withSub([plainCustomer(id)])[0];
   r.get('/customers', wrap(() => withSub(listCustomers(db))));
   // 重置订阅链接:换一个 token,客户手里的旧链接立即失效
   r.post(
@@ -262,7 +268,7 @@ export function apiRouter(deps: RouteDeps): Router {
     '/customers/:id',
     wrap(async (req) => {
       updateCustomer(db, idParam(req), req.body ?? {});
-      const ops = await enforceCustomers(db, deps.clientFor, Date.now(), idParam(req));
+      const ops = await enforceCustomers(db, deps.clientFor, idParam(req));
       return { ...customerOf(idParam(req)), ops };
     }),
   );
@@ -270,7 +276,7 @@ export function apiRouter(deps: RouteDeps): Router {
   r.post(
     '/customers/:id/reset-usage',
     wrap(async (req) => {
-      const c = customerOf(idParam(req));
+      const c = plainCustomer(idParam(req));
       const failed: { line: string; error: string }[] = [];
       for (const line of c.lines) {
         const panel = getPanel(db, line.panel_id);
@@ -279,10 +285,10 @@ export function apiRouter(deps: RouteDeps): Router {
           await withClient(panel, (client) => client.resetClientTraffic(line.email));
           zeroLineTraffic(db, line.id);
         } catch (e) {
-          failed.push({ line: `${line.panel_name} 上的 ${line.email}`, error: e instanceof Error ? e.message : String(e) });
+          failed.push({ line: lineLabel(line), error: errorText(e) });
         }
       }
-      const ops = await enforceCustomers(db, deps.clientFor, Date.now(), c.id);
+      const ops = await enforceCustomers(db, deps.clientFor, c.id);
       return { ...customerOf(c.id), failed, ops };
     }),
   );
@@ -294,19 +300,12 @@ export function apiRouter(deps: RouteDeps): Router {
       return { ops: await enforceCustomers(db, deps.clientFor) };
     }),
   );
-  // 删除客户:先删掉他在各面板上的 client,有删不掉的照样删记录,结果里列出来
+  // 删除客户:先删掉他在各面板上的 client 和出口规则(每块面板只连一次),有删不掉的照样删记录,结果里列出来
   r.delete(
     '/customers/:id',
     wrap(async (req) => {
-      const c = customerOf(idParam(req));
-      const failed: { line: string; error: string }[] = [];
-      for (const line of c.lines) {
-        try {
-          await removeLine(db, line, deps.clientFor);
-        } catch (e) {
-          failed.push({ line: `${line.panel_name} 上的 ${line.email}`, error: e instanceof Error ? e.message : String(e) });
-        }
-      }
+      const c = plainCustomer(idParam(req));
+      const failed = (await removeLines(db, c.lines, deps.clientFor)).map(({ line, error }) => ({ line: lineLabel(line), error: errorText(error) }));
       deleteCustomer(db, c.id);
       return { failed };
     }),
@@ -327,11 +326,14 @@ export function apiRouter(deps: RouteDeps): Router {
       return withClient(panel, async (client) => ({ links: await client.clientLinks(line.email) }));
     }),
   );
+  // 面板连不上 / 已经报废时删不掉面板上的 client,带 ?force=1 就只删这条记录
   r.delete(
     '/customers/:id/lines/:lid',
     wrap(async (req) => {
       const line = lineOf(req);
-      await removeLine(db, line, deps.clientFor);
+      await removeLine(db, line, deps.clientFor).catch((e) => {
+        if (req.query.force !== '1') throw e;
+      });
       deleteLine(db, line.id);
     }),
   );
@@ -344,11 +346,15 @@ export function apiRouter(deps: RouteDeps): Router {
   };
   r.get('/socks', wrap(() => listSocks(db)));
   r.post('/socks', wrap((req) => socksOne(createSocks(db, req.body ?? {}))));
+  // 换了地址 / 账号:先把在用它的中转改指到新地址,都改成了才保存
   r.patch(
     '/socks/:id',
-    wrap((req) => {
-      updateSocks(db, idParam(req), req.body ?? {});
-      return socksOne(idParam(req));
+    wrap(async (req) => {
+      const id = idParam(req);
+      const { endpoint } = planSocksUpdate(db, id, req.body ?? {});
+      if (endpoint) await repointSocksLines(db, id, endpoint, deps.clientFor);
+      updateSocks(db, id, req.body ?? {});
+      return socksOne(id);
     }),
   );
   r.delete('/socks/:id', wrap((req) => void deleteSocks(db, idParam(req))));
@@ -365,14 +371,7 @@ export function apiRouter(deps: RouteDeps): Router {
   r.post(
     '/socks-check-all',
     wrap(async () => {
-      const all = allSocks(db);
-      let i = 0;
-      await Promise.all(Array.from({ length: Math.min(4, all.length) }, async () => {
-        while (i < all.length) {
-          const s = all[i++];
-          saveCheck(db, s.id, await checkSocks(s));
-        }
-      }));
+      await mapLimit(allSocks(db), 4, async (s) => saveCheck(db, s.id, await checkSocks(s)));
       return listSocks(db);
     }),
   );

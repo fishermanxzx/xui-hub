@@ -7,6 +7,7 @@ const inbounds = [
   { id: 1, remark: 'vless-reality', protocol: 'vless', port: 100, enable: true, streamSettings: JSON.stringify({ network: 'tcp', security: 'reality', realitySettings: { privateKey: 'SECRET-KEY' } }) },
   { id: 2, remark: 'hy2', protocol: 'hysteria', port: 200, enable: true, streamSettings: JSON.stringify({ network: 'hysteria', security: 'tls' }) },
   { id: 3, remark: 'old', protocol: 'vless', port: 300, enable: false, streamSettings: '{"network":"tcp","security":"none"}' },
+  { id: 4, remark: 'relay-socks', protocol: 'mixed', port: 400, enable: true, streamSettings: '' },
 ];
 
 const clients = [
@@ -26,8 +27,11 @@ test('面板详情:入站、传输方式、client 归属,不含密钥', () => {
       ['vless-reality', 'vless', 100, true, 'tcp / reality', ['zhu']],
       ['hy2', 'hysteria', 200, true, 'hysteria / tls', []],
       ['old', 'vless', 300, false, 'tcp', ['x']],
+      ['relay-socks', 'mixed', 400, true, '', []],
     ],
   );
+  // socks / mixed 入站挂不了客户端
+  assert.deepEqual(d.inbounds.map((i) => i.accepts_clients), [true, true, true, false]);
   assert.deepEqual(d.inbounds[0].clients[0], { email: 'zhu', enable: true, up: 5, down: 10, total_bytes: 0, expiry_ms: 0, last_online: 1_700_000_000_000 });
   assert.deepEqual(d.inbounds[2].clients[0].enable, false);
   assert.deepEqual(d.unattached.map((c) => c.email), ['orphan']);

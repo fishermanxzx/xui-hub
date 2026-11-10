@@ -4,6 +4,7 @@
 import { listCustomers, markLineAuto, type CustomerView, type Line } from '../customers/repo';
 import type { DB } from '../db';
 import { getPanel, type Panel } from '../panels/repo';
+import { errorText, using } from '../util';
 
 export interface EnforceAdmin {
   setClientsEnabled(emails: string[], enable: boolean): Promise<void>;
@@ -25,13 +26,14 @@ export function plannedOps(c: CustomerView): { line: Line; action: 'disable' | '
   return c.lines.filter((l) => l.auto_disabled && !l.enable).map((line) => ({ line, action: 'enable' as const }));
 }
 
-export async function enforceCustomers(db: DB, adminFor: (panel: Panel) => EnforceAdmin, now = Date.now(), only?: number): Promise<EnforceResult[]> {
+/** only:只处理这一位客户 */
+export async function enforceCustomers(db: DB, adminFor: (panel: Panel) => EnforceAdmin, only?: number): Promise<EnforceResult[]> {
   const results: EnforceResult[] = [];
   // 按面板分组,一台面板一次请求
   const groups = new Map<number, { customer: CustomerView; line: Line; action: 'disable' | 'enable' }[]>();
   for (const c of listCustomers(db)) {
     if (only != null && c.id !== only) continue;
-    for (const op of plannedOps({ ...c, state: c.state })) {
+    for (const op of plannedOps(c)) {
       const list = groups.get(op.line.panel_id) ?? [];
       list.push({ customer: c, ...op });
       groups.set(op.line.panel_id, list);
@@ -40,8 +42,7 @@ export async function enforceCustomers(db: DB, adminFor: (panel: Panel) => Enfor
   for (const [panelId, ops] of groups) {
     const panel = getPanel(db, panelId);
     if (!panel) continue;
-    const admin = adminFor(panel);
-    try {
+    await using(adminFor(panel), async (admin) => {
       for (const action of ['disable', 'enable'] as const) {
         const batch = ops.filter((o) => o.action === action);
         if (!batch.length) continue;
@@ -52,14 +53,11 @@ export async function enforceCustomers(db: DB, adminFor: (panel: Panel) => Enfor
             results.push({ customer: o.customer.name, panel: panel.name, email: o.line.email, action, ok: true });
           }
         } catch (e) {
-          const error = e instanceof Error ? e.message : String(e);
+          const error = errorText(e);
           for (const o of batch) results.push({ customer: o.customer.name, panel: panel.name, email: o.line.email, action, ok: false, error });
         }
       }
-    } finally {
-      await admin.close?.().catch(() => {});
-    }
+    });
   }
-  void now;
   return results;
 }

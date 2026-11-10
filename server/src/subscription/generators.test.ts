@@ -12,6 +12,7 @@ test('解析 vless reality 与 hysteria2 链接', () => {
   assert.deepEqual(parseNode(VLESS), {
     type: 'vless', name: 'us-1.2.3.4', server: '1.2.3.4', port: 443, uuid: '11111111-2222-3333-4444-555555555555',
     flow: 'xtls-rprx-vision', network: 'tcp', security: 'reality', sni: 'www.sony.com', fingerprint: 'chrome', publicKey: 'PUBKEY', shortId: 'ab12',
+    alpn: [], insecure: false, path: undefined, host: undefined, serviceName: undefined,
   });
   assert.deepEqual(parseNode(HY2), {
     type: 'hysteria2', name: 'us-9.9.9.9', server: '9.9.9.9', port: 13344, password: 'p@ss', sni: 'bing.com', alpn: ['h3'],
@@ -109,4 +110,85 @@ test('trojan:sing-box、Quantumult X、Loon 输出', () => {
   const loon = buildLoon(nodes, { insecure: false }).split('\r\n');
   assert.equal(loon[0], 'us-trojan=trojan,test.example.org,443,"pass/word",transport=tcp,sni=test.example.org,skip-cert-verify=false');
   assert.equal(loon[1], 'ws-node=trojan,cdn.example.org,443,"pw",transport=ws,path=/ws,host=b.example.org,sni=a.example.org,skip-cert-verify=false');
+});
+
+const VLESS_WS = 'vless://u-ws@cdn.example.org:443?type=ws&encryption=none&path=%2Fray&host=h.example.org&security=tls&fp=chrome&alpn=h2%2Chttp%2F1.1&sni=s.example.org&allowInsecure=1#ws-tls';
+const VLESS_WS_PLAIN = 'vless://u-plain@5.5.5.5:8080?type=ws&encryption=none&path=%2Fp&security=none#ws-plain';
+const VLESS_GRPC = 'vless://u-grpc@6.6.6.6:2053?type=grpc&serviceName=svc&mode=gun&security=reality&pbk=PK&fp=chrome&sni=a.com&sid=ef#grpc';
+const VLESS_HTTPUPGRADE = 'vless://u-hu@7.7.7.7:80?type=httpupgrade&path=%2Fup&host=h.example.org&security=none#hu';
+const vmess = (obj: Record<string, unknown>) => 'vmess://' + Buffer.from(JSON.stringify({ v: '2', id: 'vm-uuid', ...obj })).toString('base64');
+const VMESS_WS = vmess({ ps: 'vm-ws', add: 'cdn.example.org', port: 443, net: 'ws', type: 'none', path: '/vm', host: 'h.example.org', tls: 'tls', sni: 's.example.org', fp: 'chrome', alpn: 'h2', scy: 'auto' });
+const VMESS_TCP = vmess({ ps: 'vm-tcp', add: '8.8.4.4', port: '10086', net: 'tcp', type: 'none', tls: 'none', scy: 'none', aid: 2 });
+const VMESS_GRPC = vmess({ ps: 'vm-grpc', add: '8.8.4.4', port: 2083, net: 'grpc', type: 'gun', path: 'svc', tls: 'tls', allowInsecure: true });
+
+test('vless:解析 ws / grpc / httpupgrade 的传输参数,写不出来的传输跳过', () => {
+  const pick = (link: string) => {
+    const { network, security, path, host, serviceName, sni, alpn, insecure } = parseNode(link) as any;
+    return { network, security, path, host, serviceName, sni, alpn, insecure };
+  };
+  assert.deepEqual(pick(VLESS_WS), { network: 'ws', security: 'tls', path: '/ray', host: 'h.example.org', serviceName: undefined, sni: 's.example.org', alpn: ['h2', 'http/1.1'], insecure: true });
+  assert.deepEqual(pick(VLESS_GRPC), { network: 'grpc', security: 'reality', path: undefined, host: undefined, serviceName: 'svc', sni: 'a.com', alpn: [], insecure: false });
+  assert.equal(pick(VLESS_HTTPUPGRADE).network, 'httpupgrade');
+  for (const bad of ['type=xhttp', 'type=kcp', 'type=tcp&headerType=http']) assert.equal(parseNode(VLESS_WS_PLAIN.replace('type=ws', bad)), null, bad);
+  assert.equal(parseNode(VLESS_WS.replace('security=tls', 'security=xtls')), null);
+});
+
+test('vmess:解析 base64 JSON,grpc 的服务名在 path 里,坏链接和写不出来的传输跳过', () => {
+  assert.deepEqual(parseNode(VMESS_WS), {
+    type: 'vmess', name: 'vm-ws', server: 'cdn.example.org', port: 443, uuid: 'vm-uuid', alterId: 0, cipher: 'auto', tls: true,
+    network: 'ws', path: '/vm', host: 'h.example.org', serviceName: undefined, sni: 's.example.org', alpn: ['h2'], fingerprint: 'chrome', insecure: false,
+  });
+  const tcp = parseNode(VMESS_TCP) as any;
+  assert.deepEqual([tcp.port, tcp.alterId, tcp.cipher, tcp.tls, tcp.network], [10086, 2, 'none', false, 'tcp']);
+  const grpc = parseNode(VMESS_GRPC) as any;
+  assert.deepEqual([grpc.network, grpc.serviceName, grpc.path, grpc.insecure], ['grpc', 'svc', undefined, true]);
+  assert.equal(parseNode(vmess({ add: '1.1.1.1', port: 443 }))!.name, '1.1.1.1:443');
+  assert.equal(parseNode('vmess://不是 base64'), null);
+  assert.equal(parseNode(vmess({ add: '1.1.1.1', port: 0 })), null);
+  assert.equal(parseNode(vmess({ add: '1.1.1.1', port: 443, id: '' })), null);
+  assert.equal(parseNode(vmess({ add: '1.1.1.1', port: 443, net: 'kcp' })), null);
+  assert.equal(parseNode(vmess({ add: '1.1.1.1', port: 443, net: 'tcp', type: 'http' })), null);
+});
+
+test('vless 传输与 vmess:sing-box 输出', () => {
+  const nodes = parseNodes([VLESS_WS, VLESS_WS_PLAIN, VLESS_GRPC, VLESS_HTTPUPGRADE, VMESS_WS, VMESS_TCP, VMESS_GRPC]);
+  const out = (insecure: boolean) => (buildSingbox(nodes, { legacyDns: false, insecure }).outbounds as any[]).slice(3);
+  const [ws, plain, grpc, hu, vmWs, vmTcp, vmGrpc] = out(false);
+  assert.deepEqual(ws, {
+    type: 'vless', tag: 'ws-tls', server: 'cdn.example.org', server_port: 443, uuid: 'u-ws', packet_encoding: 'xudp',
+    tls: { enabled: true, insecure: true, server_name: 's.example.org', alpn: ['h2', 'http/1.1'], utls: { enabled: true, fingerprint: 'chrome' } },
+    transport: { type: 'ws', path: '/ray', headers: { Host: 'h.example.org' } },
+  });
+  assert.deepEqual(plain, { type: 'vless', tag: 'ws-plain', server: '5.5.5.5', server_port: 8080, uuid: 'u-plain', packet_encoding: 'xudp', transport: { type: 'ws', path: '/p' } });
+  assert.deepEqual(grpc.transport, { type: 'grpc', service_name: 'svc' });
+  assert.deepEqual(grpc.tls.reality, { enabled: true, public_key: 'PK', short_id: 'ef' });
+  assert.deepEqual(hu.transport, { type: 'httpupgrade', path: '/up', host: 'h.example.org' });
+  assert.deepEqual(vmWs, {
+    type: 'vmess', tag: 'vm-ws', server: 'cdn.example.org', server_port: 443, uuid: 'vm-uuid', security: 'auto', alter_id: 0,
+    tls: { enabled: true, insecure: false, server_name: 's.example.org', alpn: ['h2'], utls: { enabled: true, fingerprint: 'chrome' } },
+    transport: { type: 'ws', path: '/vm', headers: { Host: 'h.example.org' } },
+  });
+  assert.deepEqual(vmTcp, { type: 'vmess', tag: 'vm-tcp', server: '8.8.4.4', server_port: 10086, uuid: 'vm-uuid', security: 'none', alter_id: 2 });
+  assert.deepEqual([vmGrpc.tls.insecure, vmGrpc.transport], [true, { type: 'grpc', service_name: 'svc' }]);
+  // 全局的跳过校验管 vmess,不管 vless(vless 只看链接自己带的)
+  const [, , grpcInsecure, , vmWsInsecure] = out(true);
+  assert.deepEqual([grpcInsecure.tls.insecure, vmWsInsecure.tls.insecure], [false, true]);
+});
+
+test('vless 传输与 vmess:Quantumult X、Loon 只写 tcp / ws,grpc 和 httpupgrade 跳过', () => {
+  const nodes = parseNodes([VLESS_WS, VLESS_WS_PLAIN, VLESS_GRPC, VLESS_HTTPUPGRADE, VMESS_WS, VMESS_TCP, VMESS_GRPC]);
+  assert.deepEqual(Buffer.from(buildQuantumultX(nodes), 'base64').toString('utf8').split('\r\n'), [
+    'vless=cdn.example.org:443,method=none,password=u-ws,obfs=wss,obfs-host=h.example.org,obfs-uri=/ray,tls-verification=false,fast-open=true,tag=ws-tls',
+    'vless=5.5.5.5:8080,method=none,password=u-plain,obfs=ws,obfs-host=5.5.5.5,obfs-uri=/p,fast-open=true,tag=ws-plain',
+    'vmess=cdn.example.org:443,method=aes-128-gcm,password=vm-uuid,obfs=wss,obfs-host=h.example.org,obfs-uri=/vm,tls-verification=true,fast-open=false,udp-relay=false,tag=vm-ws',
+    'vmess=8.8.4.4:10086,method=none,password=vm-uuid,aead=false,fast-open=false,udp-relay=false,tag=vm-tcp',
+    '',
+  ]);
+  assert.deepEqual(buildLoon(nodes, { insecure: false }).split('\r\n'), [
+    'ws-tls=VLESS,cdn.example.org,443,u-ws,alterId=0,over-tls=true,skip-cert-verify=true,sni=s.example.org,transport=ws,path=/ray,host=h.example.org',
+    'ws-plain=VLESS,5.5.5.5,8080,u-plain,alterId=0,transport=ws,path=/p,host=5.5.5.5',
+    'vm-ws=vmess,cdn.example.org,443,aes-128-gcm,"vm-uuid",transport=ws,path=/vm,host=h.example.org,alterId=0,over-tls=true,sni=s.example.org,skip-cert-verify=false',
+    'vm-tcp=vmess,8.8.4.4,10086,none,"vm-uuid",transport=tcp,alterId=2,over-tls=false',
+    '',
+  ]);
 });

@@ -27,6 +27,8 @@ function tlsFiles(): { cert: string; key: string } | null {
   return { cert, key };
 }
 
+const internalPort = positiveInt('INTERNAL_PORT', 8789);
+
 export const env = {
   host: process.env.HOST?.trim() || '127.0.0.1',
   port: positiveInt('PORT', 8788),
@@ -45,9 +47,9 @@ export const env = {
   subconverterUrl: process.env.SUBCONVERTER_URL?.trim() || '',
   /** 内部监听(纯 HTTP,只给 subconverter 回源取节点):默认 127.0.0.1:8789;Docker 里绑 0.0.0.0 让 subconverter 容器能连 */
   internalHost: process.env.INTERNAL_HOST?.trim() || '127.0.0.1',
-  internalPort: positiveInt('INTERNAL_PORT', 8789),
+  internalPort,
   /** subconverter 回源访问本服务取节点的地址(对应上面的内部监听) */
-  appInternalUrl: (process.env.APP_INTERNAL_URL?.trim() || `http://127.0.0.1:${positiveInt('INTERNAL_PORT', 8789)}`).replace(/\/+$/, ''),
+  appInternalUrl: (process.env.APP_INTERNAL_URL?.trim() || `http://127.0.0.1:${internalPort}`).replace(/\/+$/, ''),
   /** 订阅拉取记录保留天数 */
   subLogDays: positiveInt('SUB_LOG_DAYS', 7),
 };

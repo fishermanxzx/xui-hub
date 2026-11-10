@@ -28,7 +28,8 @@ export interface SocksCheck {
   error: string | null;
 }
 
-export type SocksView = Omit<SocksProxy, 'password'> & { has_password: boolean; check: SocksCheck | null };
+/** used_by:出口是它的中转线路数 */
+export type SocksView = Omit<SocksProxy, 'password'> & { has_password: boolean; check: SocksCheck | null; used_by: number };
 
 export interface SocksInput {
   name?: unknown;
@@ -99,16 +100,19 @@ function rowToView(row: any): SocksView {
   return {
     ...rest,
     has_password: password !== '',
+    used_by: row.used_by ?? 0,
     check: row.check_at == null ? null : { at: row.check_at, ok: row.check_ok === 1, ms: row.check_ms, ip: row.check_ip, loc: row.check_loc, error: row.check_error },
   };
 }
 
+const VIEW_SQL = 'SELECT s.*, (SELECT COUNT(*) FROM lines l WHERE l.exit_socks_id = s.id) AS used_by FROM socks_proxies s';
+
 export function listSocks(db: DB): SocksView[] {
-  return (db.prepare('SELECT * FROM socks_proxies ORDER BY name COLLATE NOCASE').all() as any[]).map(rowToView);
+  return (db.prepare(`${VIEW_SQL} ORDER BY s.name COLLATE NOCASE`).all() as any[]).map(rowToView);
 }
 
 export function getSocksView(db: DB, id: number): SocksView | undefined {
-  const row = db.prepare('SELECT * FROM socks_proxies WHERE id = ?').get(id);
+  const row = db.prepare(`${VIEW_SQL} WHERE s.id = ?`).get(id);
   return row ? rowToView(row) : undefined;
 }
 
@@ -136,22 +140,35 @@ export function createSocks(db: DB, input: SocksInput, now = Date.now()): number
   return Number(info.lastInsertRowid);
 }
 
-export function updateSocks(db: DB, id: number, input: SocksInput, now = Date.now()): void {
+/**
+ * 校验一次修改,算出要写的值,不落库。endpoint 非空 = 换了地址 / 账号:
+ * 在用它的中转要先跟着改(lines/open.ts 的 repointSocksLines),改成了再 updateSocks
+ */
+export function planSocksUpdate(db: DB, id: number, input: SocksInput): { cur: SocksProxy; name: string; remark: string; endpoint: SocksEndpoint | null } {
   const cur = getSocks(db, id);
   if (!cur) throw new InputError('SOCKS 不存在');
   const n = input.name === undefined ? cur.name : name(input.name);
   assertNameFree(db, n, id);
   const address = String(input.address ?? '').trim();
-  const ep = address ? parseSocksAddress(address) : cur;
-  const changedEndpoint = ep.host !== cur.host || ep.port !== cur.port || ep.username !== cur.username || ep.password !== cur.password;
-  db.prepare(
-    `UPDATE socks_proxies SET name = ?, host = ?, port = ?, username = ?, password = ?, remark = ?, updated_at = ?
-     ${changedEndpoint ? ', check_at = NULL, check_ok = NULL, check_ms = NULL, check_ip = NULL, check_loc = NULL, check_error = NULL' : ''}
-     WHERE id = ?`,
-  ).run(n, ep.host, ep.port, ep.username, ep.password, input.remark === undefined ? cur.remark : String(input.remark ?? '').trim(), now, id);
+  const ep = address ? parseSocksAddress(address) : null;
+  const changed = ep && (ep.host !== cur.host || ep.port !== cur.port || ep.username !== cur.username || ep.password !== cur.password);
+  return { cur, name: n, remark: input.remark === undefined ? cur.remark : String(input.remark ?? '').trim(), endpoint: changed ? ep : null };
 }
 
+export function updateSocks(db: DB, id: number, input: SocksInput, now = Date.now()): void {
+  const plan = planSocksUpdate(db, id, input);
+  const ep = plan.endpoint ?? plan.cur;
+  db.prepare(
+    `UPDATE socks_proxies SET name = ?, host = ?, port = ?, username = ?, password = ?, remark = ?, updated_at = ?
+     ${plan.endpoint ? ', check_at = NULL, check_ok = NULL, check_ms = NULL, check_ip = NULL, check_loc = NULL, check_error = NULL' : ''}
+     WHERE id = ?`,
+  ).run(plan.name, ep.host, ep.port, ep.username, ep.password, plan.remark, now, id);
+}
+
+/** 还有线路拿它当出口时不让删(删了那些线路在中转上的出站还指着它,记录却对不上了) */
 export function deleteSocks(db: DB, id: number): void {
+  const used = getSocksView(db, id)?.used_by ?? 0;
+  if (used) throw new InputError(`还有 ${used} 条线路在用这个 SOCKS,先删掉这些线路`);
   if (db.prepare('DELETE FROM socks_proxies WHERE id = ?').run(id).changes === 0) throw new InputError('SOCKS 不存在');
 }
 

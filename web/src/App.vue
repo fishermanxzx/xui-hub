@@ -54,7 +54,7 @@ onMounted(checkSession);
             <a v-for="t in TABS" :key="t.id" :href="'#' + t.id" :class="{ on: tab === t.id }" :aria-current="tab === t.id ? 'page' : undefined">{{ t.label }}</a>
           </nav>
           <span class="spacer" />
-          <button v-if="authRequired" class="link quiet" @click="logout">退出登录</button>
+          <button v-if="authRequired" class="link quiet" title="所有设备上的登录一起退出" @click="logout">退出登录</button>
         </div>
       </header>
       <main class="shell">

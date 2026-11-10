@@ -9,7 +9,6 @@ import { join, resolve } from 'node:path';
 import { tcpOpen } from './clients/create';
 import { openDb } from './db';
 import { env, isLoopbackHost, PROJECT_ROOT } from './env';
-import { loadSessionSecret } from './http/auth';
 import { apiRouter } from './http/routes';
 import { subscriptionRouter } from './http/subscription';
 import { subconverterClient } from './subscription/convert';
@@ -19,6 +18,7 @@ import { defaultFetcher } from './subscription/service';
 import { enforceCustomers } from './lines/enforce';
 import { checkAllPanels } from './panels/check';
 import type { Panel } from './panels/repo';
+import { noOverlap } from './util';
 import { XUIClient } from './xui/client';
 
 // 数据库含面板 token:新建文件只给当前用户读写
@@ -48,7 +48,7 @@ const subRouter = subscriptionRouter({
   mihomoTemplate: mihomoTemplateMatcher(env.mihomoTemplate),
 });
 app.use(subRouter);
-app.use('/api', apiRouter({ db, sessionSecret: loadSessionSecret(db), adminPassword: env.adminPassword, clientFor, probe: tcpOpen, subBaseUrl: env.subBaseUrl, subLogDays: env.subLogDays }));
+app.use('/api', apiRouter({ db, adminPassword: env.adminPassword, clientFor, probe: tcpOpen, subBaseUrl: env.subBaseUrl, subLogDays: env.subLogDays }));
 
 const dist = resolve(PROJECT_ROOT, 'web/dist');
 if (existsSync(dist)) {
@@ -69,15 +69,17 @@ internalApp.use(subRouter);
 const internalServer = createHttpServer(internalApp);
 internalServer.listen(env.internalPort, env.internalHost);
 
-// 定期:检查各面板(顺带同步各线路的客户端流量)→ 停用超额 / 到期客户的线路、恢复回到正常的
-const check = () =>
-  checkAllPanels(db, clientFor)
-    .then(() => enforceCustomers(db, clientFor))
-    .then((ops) => (pruneSubFetches(db, env.subLogDays), ops))
-    .then((ops) => {
-      for (const o of ops) console.log(`${o.action === 'disable' ? '停用' : '启用'} ${o.customer} 在 ${o.panel} 上的 ${o.email}:${o.ok ? '成功' : o.error}`);
-    })
-    .catch((e) => console.error('同步失败', e));
+// 定期:检查各面板(顺带同步各线路的客户端流量)→ 停用超额 / 到期客户的线路、恢复回到正常的。上一轮没跑完(面板超时)就跳过这一轮
+const check = noOverlap(async () => {
+  try {
+    await checkAllPanels(db, clientFor);
+    const ops = await enforceCustomers(db, clientFor);
+    pruneSubFetches(db, env.subLogDays);
+    for (const o of ops) console.log(`${o.action === 'disable' ? '停用' : '启用'} ${o.customer} 在 ${o.panel} 上的 ${o.email}:${o.ok ? '成功' : o.error}`);
+  } catch (e) {
+    console.error('同步失败', e);
+  }
+});
 void check();
 const timer = setInterval(check, env.checkIntervalSec * 1000);
 

@@ -41,13 +41,15 @@ function openForm(c: Customer | null) {
 
 /** 面板上启停操作的结果提示 */
 function opsNote(ops: EnforceOp[]): string {
-  if (!ops.length) return '';
+  const done = (action: EnforceOp['action']) => ops.filter((o) => o.ok && o.action === action).length;
   const bad = ops.filter((o) => !o.ok);
-  const did = ops.filter((o) => o.ok);
-  const parts = [];
-  if (did.length) parts.push(`已${did[0].action === 'disable' ? '停用' : '启用'} ${did.length} 个客户端`);
-  if (bad.length) parts.push(`${bad.length} 个操作失败:${bad.map((o) => `${o.panel} 上的 ${o.email}(${o.error})`).join('、')}`);
-  return parts.join(';');
+  return [
+    done('disable') ? `已停用 ${done('disable')} 个客户端` : '',
+    done('enable') ? `已启用 ${done('enable')} 个客户端` : '',
+    bad.length ? `${bad.length} 个操作失败:${bad.map((o) => `${o.panel} 上的 ${o.email}(${o.error})`).join('、')}` : '',
+  ]
+    .filter(Boolean)
+    .join(';');
 }
 
 async function submit() {
@@ -149,7 +151,9 @@ const lf = ref({
 const inboundsOf = ref<Record<number, PanelInbound[] | 'loading' | 'error'>>({});
 
 async function fetchInbounds(panelId: number) {
-  if (!panelId || inboundsOf.value[panelId]) return;
+  // 取过的不再取;上次没读到的再试一次
+  const cached = inboundsOf.value[panelId];
+  if (!panelId || (cached && cached !== 'error')) return;
   inboundsOf.value[panelId] = 'loading';
   try {
     inboundsOf.value[panelId] = (await api.panelInbounds(panelId)).inbounds;
@@ -158,12 +162,11 @@ async function fetchInbounds(panelId: number) {
   }
 }
 
-const CLIENT_PROTOCOLS = new Set(['vless', 'hysteria', 'trojan', 'vmess']);
 const list = (id: number) => {
   const v = inboundsOf.value[id];
   return Array.isArray(v) ? v : [];
 };
-const clientInbounds = computed(() => list(lf.value.panel_id).filter((i) => CLIENT_PROTOCOLS.has(i.protocol) && i.enable));
+const clientInbounds = computed(() => list(lf.value.panel_id).filter((i) => i.accepts_clients && i.enable));
 const socksInbounds = computed(() => list(lf.value.exit_panel_id).filter((i) => (i.protocol === 'mixed' || i.protocol === 'socks') && i.enable));
 const landingPanels = computed(() => panels.value.filter((p) => p.id !== lf.value.panel_id));
 
@@ -238,7 +241,14 @@ async function showLinks(line: Line) {
 async function removeLine(line: Line) {
   if (!confirm(`删除这条线路?会从 ${line.panel_name} 上删掉客户端 ${line.email},链接立即失效${line.kind === 'relay' ? ',并去掉他的出口规则(重启 Xray)' : ''}。入站不动。`)) return;
   try {
-    await api.deleteLine(line.customer_id, line.id);
+    try {
+      await api.deleteLine(line.customer_id, line.id);
+    } catch (e) {
+      // 面板连不上或已经不在了:可以只删这里的记录
+      const left = line.kind === 'relay' ? '客户端和出口规则' : '客户端';
+      if (!confirm(`面板上没删成:${e instanceof Error ? e.message : e}\n\n只删这里的线路记录?${line.panel_name} 上的${left}要是还在,得自己去面板上清理。`)) return;
+      await api.deleteLine(line.customer_id, line.id, true);
+    }
     toast('已删除');
     await load();
   } catch (e) {
@@ -366,7 +376,7 @@ function exitText(l: Line): string {
               <option value="hy2">hy2(hysteria2)</option>
             </select>
             <template v-if="inboundsOf[lf.panel_id] === 'loading'"><span class="muted small">正在读取入站…</span></template>
-            <template v-else-if="inboundsOf[lf.panel_id] === 'error'"><span class="text-err small">读不到这块面板的入站</span></template>
+            <template v-else-if="inboundsOf[lf.panel_id] === 'error'"><span class="text-err small">读不到这块面板的入站 <button type="button" class="link" @click="fetchInbounds(lf.panel_id)">重试</button></span></template>
             <template v-else-if="clientInbounds.length">
               <label v-for="i in clientInbounds" :key="i.id" class="row small">
                 <input v-model="lf.inbound" type="radio" :value="i.id" />{{ i.remark || '(无名称)' }} · {{ proto(i.protocol) }} {{ i.port }} · {{ i.clients.length }} 个客户端
@@ -395,8 +405,9 @@ function exitText(l: Line): string {
             <div class="field-block">
               <span class="label">落地上给中转用的 socks 入站</span>
               <div class="choices">
-                <label class="row small"><input v-model="lf.exit_inbound" type="radio" value="new" />新建一个(随机端口和账号)</label>
+                <label class="row small"><input v-model="lf.exit_inbound" type="radio" value="new" />自动:落地上有 xui-hub 建过的 socks 入站(relay-socks)就接着用,没有就新建</label>
                 <template v-if="inboundsOf[lf.exit_panel_id] === 'loading'"><span class="muted small">正在读取入站…</span></template>
+                <template v-else-if="inboundsOf[lf.exit_panel_id] === 'error'"><span class="text-err small">读不到落地面板的入站 <button type="button" class="link" @click="fetchInbounds(lf.exit_panel_id)">重试</button></span></template>
                 <template v-else-if="socksInbounds.length">
                   <label v-for="i in socksInbounds" :key="i.id" class="row small"><input v-model="lf.exit_inbound" type="radio" :value="i.id" />{{ i.remark || '(无名称)' }} · {{ i.protocol }} {{ i.port }}</label>
                 </template>

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { addLine, createCustomer } from '../customers/repo';
 import { addPanel, memoryDb } from '../testUtil';
-import { collectLinks, encodeSubscription, linkName, mergeLinks, userinfoHeader, type LinkFetcher } from './service';
+import { collectLinks, encodeSubscription, mergeLinks, userinfoHeader, type LinkFetcher } from './service';
 
 function setup() {
   const db = memoryDb();
@@ -52,6 +52,4 @@ test('编码与用户信息头', () => {
   assert.equal(Buffer.from(encodeSubscription(['a://1', 'b://2']), 'base64').toString(), 'a://1\r\nb://2\r\n');
   assert.equal(encodeSubscription([]), '');
   assert.equal(userinfoHeader({ used_up: 1, used_down: 2, quota_bytes: 3, expire_at: 4_000 }), 'upload=1; download=2; total=3; expire=4');
-  assert.equal(linkName('vless://u@h:1?x=1#us-%E7%BE%8E%E5%9B%BD'), 'us-美国');
-  assert.equal(linkName('vmess://' + Buffer.from(JSON.stringify({ ps: 'hk' })).toString('base64')), 'hk');
 });

@@ -67,6 +67,12 @@ const details = {
   ] },
 };
 
+// 面板 / SOCKS 上的线路数、入站能不能挂客户端,从上面的数据算出来
+const lines = customers.flatMap((x) => x.lines);
+for (const x of panels) Object.assign(x, { line_count: lines.filter((l) => l.panel_id === x.id).length, exit_line_count: lines.filter((l) => l.exit_panel_id === x.id).length });
+for (const x of socks) x.used_by = lines.filter((l) => l.exit_socks_id === x.id).length;
+for (const d of Object.values(details)) for (const i of d.inbounds) i.accepts_clients = i.protocol !== 'mixed';
+
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.svg': 'image/svg+xml' };
 createServer((req, res) => {
   const url = new URL(req.url, 'http://x');

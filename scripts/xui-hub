@@ -20,9 +20,18 @@ warn() { echo -e "${yellow}$*${plain}"; }
 err() { echo -e "${red}$*${plain}" >&2; }
 need_root() { [ "$(id -u)" = 0 ] || { err "请用 root 执行"; exit 1; }; }
 rand() { head -c 256 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | cut -c1-"${1:-16}"; }
-env_get() { grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-; }
+# .env 里的值:带特殊字符的用单引号包起来(systemd 的 EnvironmentFile 和 docker 的 env_file 都把单引号里的内容原样读);读的时候去掉引号
+env_quote() { case "$1" in *[!A-Za-z0-9_./:@%+=,-]*) printf "'%s'" "$1" ;; *) printf '%s' "$1" ;; esac; }
+env_get() {
+  local v
+  v="$(grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-)" || true
+  case "$v" in \'*\') v="${v#\'}"; v="${v%\'}" ;; \"*\") v="${v#\"}"; v="${v%\"}" ;; esac
+  printf '%s\n' "$v"
+}
+# 单引号包不住单引号自己,密码里不能有
+pw_ok() { case "$1" in *\'*) return 1 ;; esac; }
 env_set() {
-  { grep -vE "^$1=" "$ENV_FILE" 2>/dev/null || true; printf '%s=%s\n' "$1" "$2"; } >"$ENV_FILE.tmp"
+  { grep -vE "^$1=" "$ENV_FILE" 2>/dev/null || true; printf '%s=%s\n' "$1" "$(env_quote "$2")"; } >"$ENV_FILE.tmp"
   mv "$ENV_FILE.tmp" "$ENV_FILE"
   chown root:"$RUN_USER" "$ENV_FILE" 2>/dev/null
   chmod 640 "$ENV_FILE"
@@ -70,10 +79,11 @@ password() {
   need_root; check_install || return 1
   local pw
   read -r -s -p "新的后台密码(直接回车随机生成):" pw; echo
-  [ -n "$pw" ] || pw="$(rand 16)"
-  env_set ADMIN_PASSWORD "$pw"
+  pw_ok "$pw" || { err "密码里不能有单引号"; return 1; }
+  env_set ADMIN_PASSWORD "${pw:-$(rand 16)}"
   systemctl restart "$SERVICE"
-  ok "密码已更新:$pw"
+  # 自己输的不回显;随机生成的打出来(之前登录着的设备都要重新登录)
+  if [ -n "$pw" ]; then ok "密码已更新"; else ok "密码已更新:$(env_get ADMIN_PASSWORD)"; fi
 }
 
 set_port() {

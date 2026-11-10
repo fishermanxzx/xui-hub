@@ -120,16 +120,11 @@ export class XUIClient {
     return ((await this.req<string[]>('GET', '/server/getXrayVersion')) ?? []).map(String);
   }
 
-  /** 面板升级信息;面板查 GitHub 失败时返回 null */
+  /** 面板升级信息;拿不到(面板查 GitHub 失败、旧版面板没有这个接口)返回 null,不影响看当前版本 */
   async panelUpdateInfo(): Promise<{ channel: string; current: string; latest: string; available: boolean } | null> {
-    try {
-      const o = await this.req<any>('GET', '/server/getPanelUpdateInfo');
-      if (!o) return null;
-      return { channel: String(o.channel ?? ''), current: String(o.currentVersion ?? ''), latest: String(o.latestVersion ?? ''), available: o.updateAvailable === true };
-    } catch (e) {
-      if (e instanceof XUIError && /success=false/.test(e.message)) return null;
-      throw e;
-    }
+    const o = await this.req<any>('GET', '/server/getPanelUpdateInfo').catch(() => null);
+    if (!o) return null;
+    return { channel: String(o.channel ?? ''), current: String(o.currentVersion ?? ''), latest: String(o.latestVersion ?? ''), available: o.updateAvailable === true };
   }
 
   /** 切换 Xray 内核版本(面板下载并重启 Xray) */

@@ -2,7 +2,7 @@
 // 两个组(节点选择 / 自动选择),国内域名与 IP 直连、广告拦截,规则集从 SagerNet / Loyalsoldier 远程下载。
 // sing-box 1.12 起 DNS 服务器换了新写法(旧写法 1.14 删除),按客户端版本输出对应写法。
 
-import type { ProxyNode } from './nodes';
+import type { ProxyNode, Transport } from './nodes';
 
 const SELECT = '节点选择';
 const AUTO = '自动选择';
@@ -20,64 +20,58 @@ const RULE_SETS = [
   ['category-ads-all', 'https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs'],
 ].map(([tag, url]) => ({ tag, type: 'remote', format: 'binary', url, download_detour: SELECT }));
 
-function outbound(node: ProxyNode, insecure: boolean): Record<string, unknown> {
-  if (node.type === 'vless') {
-    const tls: Record<string, unknown> = { enabled: node.security === 'tls' || node.security === 'reality', insecure: false };
-    if (node.fingerprint) tls.utls = { enabled: true, fingerprint: node.fingerprint };
-    if (node.sni) tls.server_name = node.sni;
-    if (node.security === 'reality') tls.reality = { enabled: true, public_key: node.publicKey ?? '', short_id: node.shortId ?? '' };
-    return {
-      type: 'vless',
-      tag: node.name,
-      server: node.server,
-      server_port: node.port,
-      uuid: node.uuid,
-      packet_encoding: 'xudp',
-      ...(node.flow ? { flow: node.flow } : {}),
-      ...(node.security === 'none' ? {} : { tls }),
-    };
-  }
-  if (node.type === 'trojan') {
-    const transport =
-      node.network === 'ws'
-        ? { type: 'ws', path: node.path ?? '/', ...(node.host ? { headers: { Host: node.host } } : {}) }
-        : node.network === 'grpc'
-          ? { type: 'grpc', service_name: node.serviceName ?? '' }
-          : null;
-    return {
-      type: 'trojan',
-      tag: node.name,
-      server: node.server,
-      server_port: node.port,
-      password: node.password,
-      tls: {
-        enabled: true,
-        insecure: insecure || node.insecure,
-        ...(node.sni ? { server_name: node.sni } : {}),
-        ...(node.alpn.length ? { alpn: node.alpn } : {}),
-        ...(node.fingerprint ? { utls: { enabled: true, fingerprint: node.fingerprint } } : {}),
-      },
-      ...(transport ? { transport } : {}),
-    };
-  }
+function tls(node: { sni?: string; alpn: string[]; fingerprint?: string }, insecure: boolean): Record<string, unknown> {
   return {
-    type: 'hysteria2',
-    tag: node.name,
-    server: node.server,
-    server_port: node.port,
-    password: node.password,
-    ...(node.obfs ? { obfs: { type: node.obfs, password: node.obfsPassword ?? '' } } : {}),
-    tls: {
-      enabled: true,
-      insecure: insecure || node.insecure,
-      ...(node.sni ? { server_name: node.sni } : {}),
-      ...(node.alpn.length ? { alpn: node.alpn } : {}),
-    },
+    enabled: true,
+    insecure,
+    ...(node.sni ? { server_name: node.sni } : {}),
+    ...(node.alpn.length ? { alpn: node.alpn } : {}),
+    ...(node.fingerprint ? { utls: { enabled: true, fingerprint: node.fingerprint } } : {}),
+  };
+}
+
+/** tcp 不用写 transport */
+function transport(node: Transport): { transport?: Record<string, unknown> } {
+  if (node.network === 'ws') return { transport: { type: 'ws', path: node.path ?? '/', ...(node.host ? { headers: { Host: node.host } } : {}) } };
+  if (node.network === 'grpc') return { transport: { type: 'grpc', service_name: node.serviceName ?? '' } };
+  if (node.network === 'httpupgrade') return { transport: { type: 'httpupgrade', path: node.path ?? '/', ...(node.host ? { host: node.host } : {}) } };
+  return {};
+}
+
+function outbound(node: ProxyNode, insecure: boolean): Record<string, unknown> {
+  const base = { type: node.type, tag: node.name, server: node.server, server_port: node.port };
+  if (node.type === 'hysteria2') {
+    return {
+      ...base,
+      password: node.password,
+      ...(node.obfs ? { obfs: { type: node.obfs, password: node.obfsPassword ?? '' } } : {}),
+      tls: tls(node, insecure || node.insecure),
+    };
+  }
+  if (node.type === 'trojan') return { ...base, password: node.password, tls: tls(node, insecure || node.insecure), ...transport(node) };
+  if (node.type === 'vmess') {
+    return {
+      ...base,
+      uuid: node.uuid,
+      security: node.cipher,
+      alter_id: node.alterId,
+      ...(node.tls ? { tls: tls(node, insecure || node.insecure) } : {}),
+      ...transport(node),
+    };
+  }
+  const reality = node.security === 'reality' ? { reality: { enabled: true, public_key: node.publicKey ?? '', short_id: node.shortId ?? '' } } : {};
+  return {
+    ...base,
+    uuid: node.uuid,
+    packet_encoding: 'xudp',
+    ...(node.flow ? { flow: node.flow } : {}),
+    ...(node.security === 'none' ? {} : { tls: { ...tls(node, node.insecure), ...reality } }),
+    ...transport(node),
   };
 }
 
 /**
- * @param insecure hysteria2 / trojan 是否跳过证书校验(与 subconverter 的 scv 参数一致;reality 不涉及证书)
+ * @param insecure hysteria2 / trojan / vmess 是否跳过证书校验(与 subconverter 的 scv 参数一致);vless 只看链接自己带的 allowInsecure,reality 不涉及证书
  */
 export function buildSingbox(nodes: ProxyNode[], opts: { legacyDns: boolean; insecure: boolean }): Record<string, unknown> {
   const tags = nodes.map((n) => n.name);

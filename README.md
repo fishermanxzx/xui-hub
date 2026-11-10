@@ -87,6 +87,8 @@ echo "ADMIN_PASSWORD=换成你的密码" > .env
 docker compose up -d
 ```
 
+密码里有 `$`、`#`、空格这类字符时用单引号包起来:`ADMIN_PASSWORD='p@ss $word'`。
+
 更新:
 
 ```bash

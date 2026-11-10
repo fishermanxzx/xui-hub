@@ -7,6 +7,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { connect } from 'node:net';
 import { InputError, type Panel } from '../panels/repo';
+import { using } from '../util';
 import { decodeJson } from '../xui/json';
 import { builtinHysteria2, builtinVlessReality, cloneInbound, freshHysteria, freshReality, isReality, isTemplate, type ClientProtocol } from './templates';
 
@@ -45,7 +46,8 @@ export interface CreateOptions {
   adminFor?: (panel: Panel) => ClientAdmin;
   /** 新建 vless 入站后探测端口是否在监听 */
   probe?: (host: string, port: number) => Promise<boolean>;
-  now?: number;
+  /** 起名时另外要避开的 email(本地记着的客户线路) */
+  taken?: Iterable<string>;
 }
 
 export function protocolOf(value: unknown): ClientProtocol {
@@ -139,17 +141,11 @@ async function templateFor(protocol: ClientProtocol, panel: Panel, admin: Client
   const host = new URL(panel.base_url).hostname;
   for (const other of opts.otherPanels ?? []) {
     if (other.id === panel.id || !opts.adminFor) continue;
-    const client = opts.adminFor(other);
-    try {
-      const ib = (await client.listInbounds()).find(isTemplate(protocol));
-      if (!ib) continue;
-      const from = `${other.name} 的 ${ib.remark || ib.port}`;
-      return protocol === 'vless' ? { body: freshReality(ib), from } : { body: freshHysteria(ib, cert!, host), from };
-    } catch {
-      // 别的面板读不到就跳过
-    } finally {
-      await client.close?.().catch(() => {});
-    }
+    // 别的面板读不到就跳过
+    const ib = await using(opts.adminFor(other), async (client) => (await client.listInbounds()).find(isTemplate(protocol))).catch(() => undefined);
+    if (!ib) continue;
+    const from = `${other.name} 的 ${ib.remark || ib.port}`;
+    return protocol === 'vless' ? { body: freshReality(ib), from } : { body: freshHysteria(ib, cert!, host), from };
   }
   return protocol === 'vless' ? { body: builtinVlessReality(), from: '内置模板' } : { body: builtinHysteria2(cert!, host), from: '内置模板' };
 }
@@ -189,27 +185,25 @@ export async function ensureInbound(
   return { inbound: await createInbound(protocol, panel, admin, inbounds, opts), created: true, protocol };
 }
 
-/** 面板上还没用过的 email:由名称生成,重名加后缀 */
-export async function freeEmail(admin: ClientAdmin, name: unknown): Promise<string> {
-  return emailFor(name, new Set((await admin.listClients()).map((c) => String(c.email))));
+/** 面板上还没用过的 email:由名称生成,重名加后缀;taken 是另外要避开的(本地记着、面板上却已被删的线路) */
+export async function freeEmail(admin: ClientAdmin, name: unknown, taken: Iterable<string> = []): Promise<string> {
+  return emailFor(name, new Set([...(await admin.listClients()).map((c) => String(c.email)), ...taken]));
 }
 
-/** 在入站上新建一个客户端(email 不传就由名称生成、面板内唯一),读回核对,返回分享链接。不关闭 admin */
-export async function addClientTo(admin: ClientAdmin, inbound: any, name: unknown, fixedEmail?: string): Promise<{ email: string; links: string[] }> {
-  const email = fixedEmail ?? (await freeEmail(admin, name));
+/** 在入站上新建一个客户端(email 用 freeEmail 挑好的),读回核对,返回分享链接。不关闭 admin */
+export async function addClientTo(admin: ClientAdmin, inbound: any, email: string): Promise<string[]> {
   const inboundId = Number(inbound.id);
   await admin.addClient(newClient(email, inbound), [inboundId]);
   const back = (await admin.listClients()).find((c) => c.email === email);
   if (!back || !(back.inboundIds ?? []).map(Number).includes(inboundId)) throw new Error('client 建好后读回没找到,或没挂到入站上');
-  return { email, links: await admin.clientLinks(email) };
+  return admin.clientLinks(email);
 }
 
-export async function createClient(panel: Panel, admin: ClientAdmin, input: CreateClientInput, opts: CreateOptions = {}): Promise<CreatedClient> {
-  try {
+export function createClient(panel: Panel, admin: ClientAdmin, input: CreateClientInput, opts: CreateOptions = {}): Promise<CreatedClient> {
+  return using(admin, async () => {
     const { inbound, created, protocol } = await ensureInbound(panel, admin, input, opts);
-    const { email, links } = await addClientTo(admin, inbound, input.name);
+    const email = await freeEmail(admin, input.name, opts.taken);
+    const links = await addClientTo(admin, inbound, email);
     return { email, protocol: protocol as ClientProtocol, inbound: { id: Number(inbound.id), remark: String(inbound.remark ?? ''), port: Number(inbound.port), created }, links };
-  } finally {
-    await admin.close?.().catch(() => {});
-  }
+  });
 }

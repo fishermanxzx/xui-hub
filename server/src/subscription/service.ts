@@ -64,21 +64,3 @@ export function encodeSubscription(links: string[]): string {
 export function userinfoHeader(c: { used_up: number; used_down: number; quota_bytes: number; expire_at: number }): string {
   return `upload=${c.used_up}; download=${c.used_down}; total=${c.quota_bytes}; expire=${Math.floor(c.expire_at / 1000)}`;
 }
-
-/** 节点名:链接 # 后的备注;vmess 取 base64 JSON 里的 ps */
-export function linkName(link: string): string {
-  if (link.startsWith('vmess://')) {
-    try {
-      return String(JSON.parse(Buffer.from(link.slice(8), 'base64').toString('utf8')).ps ?? '');
-    } catch {
-      return '';
-    }
-  }
-  const hash = link.indexOf('#');
-  if (hash < 0) return '';
-  try {
-    return decodeURIComponent(link.slice(hash + 1));
-  } catch {
-    return link.slice(hash + 1);
-  }
-}

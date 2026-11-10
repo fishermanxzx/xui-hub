@@ -20,7 +20,8 @@ export interface Panel {
   xray_state: string | null;
 }
 
-export type PanelView = Omit<Panel, 'token'>;
+/** line_count:挂在这块面板上的客户线路数;exit_line_count:以它为落地的中转线路数 */
+export type PanelView = Omit<Panel, 'token'> & { line_count: number; exit_line_count: number };
 
 export interface PanelInput {
   name?: string;
@@ -30,9 +31,15 @@ export interface PanelInput {
 
 export class InputError extends Error {}
 
-export function toPanelView(panel: Panel): PanelView {
+export function panelUsage(db: DB, id: number): { line_count: number; exit_line_count: number } {
+  return db
+    .prepare('SELECT (SELECT COUNT(*) FROM lines WHERE panel_id = @id) AS line_count, (SELECT COUNT(*) FROM lines WHERE exit_panel_id = @id) AS exit_line_count')
+    .get({ id }) as { line_count: number; exit_line_count: number };
+}
+
+export function toPanelView(db: DB, panel: Panel): PanelView {
   const { token: _token, ...view } = panel;
-  return view;
+  return { ...view, ...panelUsage(db, panel.id) };
 }
 
 export function normalizeBaseUrl(value: string): string {
@@ -83,7 +90,10 @@ export function updatePanel(db: DB, id: number, patch: PanelInput): Panel {
   return getPanel(db, id)!;
 }
 
-export function deletePanel(db: DB, id: number): void {
+/** 删面板(只是不再接入,面板上的东西不动)。挂在它上面的客户线路记录会跟着删掉,所以有线路时要 force 才删 */
+export function deletePanel(db: DB, id: number, force = false): void {
+  const { line_count } = panelUsage(db, id);
+  if (line_count && !force) throw new InputError(`这块面板上还有 ${line_count} 条客户线路,删面板会把这些线路记录一并删掉;先删线路,或确认后强制删除`);
   if (!db.prepare('DELETE FROM panels WHERE id = ?').run(id).changes) throw new InputError('面板不存在');
 }
 

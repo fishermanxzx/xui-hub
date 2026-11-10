@@ -15,6 +15,9 @@ export interface Panel {
   panel_version: string | null;
   xray_version: string | null;
   xray_state: string | null;
+  /** 记在这块面板上的客户线路数;拿它当落地出口的中转线路数 */
+  line_count: number;
+  exit_line_count: number;
 }
 
 /** 现从面板取的版本信息 */
@@ -51,6 +54,8 @@ export interface PanelInbound {
   protocol: string;
   port: number;
   enable: boolean;
+  /** 这种协议的入站能不能挂客户端 */
+  accepts_clients: boolean;
   transport: string;
   clients: PanelClient[];
 }
@@ -82,6 +87,8 @@ export interface Socks {
   created_at: number;
   updated_at: number;
   check: SocksCheck | null;
+  /** 拿它当出口的线路数 */
+  used_by: number;
 }
 
 export interface SocksInput {

@@ -181,10 +181,10 @@ async function showLinks(c: PanelClient) {
 }
 
 async function removeClient(c: PanelClient) {
-  if (!confirm(`删除客户端「${c.email}」?会从面板上删掉这个 client,它的链接立即失效。`)) return;
+  if (!confirm(`删除客户端「${c.email}」?会从面板上删掉这个 client,它的链接立即失效;它要是某位客户的线路,线路也一并删掉。`)) return;
   try {
-    await api.deleteClient(props.panel.id, c.email);
-    toast('已删除');
+    const { line_removed } = await api.deleteClient(props.panel.id, c.email);
+    toast(line_removed ? '已删除,客户名下的这条线路也一并删了' : '已删除');
     emit('changed');
     await load();
   } catch (e) {
