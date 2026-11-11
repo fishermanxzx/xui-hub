@@ -12,7 +12,7 @@ RUN cd web && npm run build \
 
 FROM node:22-bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/fishermanxzx/xui-hub" \
-      org.opencontainers.image.description="多面板 3x-ui 客户端管理:接入面板,创建 vless / hy2 客户端" \
+      org.opencontainers.image.description="把多台 3x-ui 面板接到一个后台,按客户统一管理线路、额度、到期和订阅" \
       org.opencontainers.image.licenses="MIT"
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8788 DATA_DIR=/data INTERNAL_HOST=0.0.0.0 INTERNAL_PORT=8789
 WORKDIR /app

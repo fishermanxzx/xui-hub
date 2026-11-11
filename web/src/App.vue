@@ -5,13 +5,15 @@ import { toasts } from './toast';
 import Login from './views/Login.vue';
 import Customers from './views/Customers.vue';
 import Panels from './views/Panels.vue';
+import SettingsView from './views/Settings.vue';
 import SocksView from './views/Socks.vue';
 
-type Tab = 'customers' | 'panels' | 'socks';
+type Tab = 'customers' | 'panels' | 'socks' | 'settings';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'customers', label: '客户' },
   { id: 'panels', label: '面板' },
   { id: 'socks', label: 'SOCKS' },
+  { id: 'settings', label: '设置' },
 ];
 function tabFromHash(): Tab {
   const id = location.hash.slice(1);
@@ -60,7 +62,8 @@ onMounted(checkSession);
       <main class="shell">
         <Customers v-if="tab === 'customers'" />
         <Panels v-else-if="tab === 'panels'" />
-        <SocksView v-else />
+        <SocksView v-else-if="tab === 'socks'" />
+        <SettingsView v-else />
       </main>
     </template>
   </template>

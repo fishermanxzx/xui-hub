@@ -112,6 +112,35 @@ settings() {
 
 svc() { need_root; systemctl "$1" "$SERVICE-subconverter" 2>/dev/null; systemctl "$1" "$SERVICE" && show_status; }
 
+# ======================= 备份 / 恢复 =======================
+# 备份用 SQLite 在线备份(服务不用停,WAL 里的也带上);恢复先停服务再换文件,旧库留一份 .bak
+backup() {
+  need_root; check_install || return 1
+  local dest="${1:-$ETC/backup}" file
+  mkdir -p "$dest"
+  file="$dest/xui-hub-$(date +%Y%m%d-%H%M).db"
+  (cd "$DIR/server" && "$DIR/bin/node" -e "require('better-sqlite3')(process.argv[1],{readonly:true}).backup(process.argv[2]).then(()=>process.exit(0),e=>{console.error(e.message);process.exit(1)})" "$ETC/hub.db" "$file") || { err "备份失败"; return 1; }
+  chmod 600 "$file"
+  ok "已备份到 $file($(du -h "$file" | cut -f1))"
+  # 最多留 30 份
+  ls -1t "$dest"/xui-hub-*.db 2>/dev/null | tail -n +31 | xargs -r rm -f
+}
+
+restore() {
+  need_root; check_install || return 1
+  local file="${1:-}"
+  [ -n "$file" ] || { echo "用法:xui-hub restore <备份文件.db>"; ls -1t "$ETC/backup"/xui-hub-*.db 2>/dev/null | head -n 10 | sed 's/^/  /'; return 1; }
+  [ -f "$file" ] || { err "文件不存在:$file"; return 1; }
+  [ "$(head -c 15 "$file")" = "SQLite format 3" ] || { err "这不是 SQLite 数据库文件"; return 1; }
+  confirm "用 $file 替换当前数据库?现在的面板、客户、线路都会变成备份里的内容(旧库留在 $ETC/hub.db.bak-*)" || return 0
+  systemctl stop "$SERVICE"
+  [ -f "$ETC/hub.db" ] && mv "$ETC/hub.db" "$ETC/hub.db.bak-$(date +%Y%m%d-%H%M%S)"
+  rm -f "$ETC/hub.db-wal" "$ETC/hub.db-shm"
+  cp "$file" "$ETC/hub.db"; chown "$RUN_USER:$RUN_USER" "$ETC/hub.db"; chmod 600 "$ETC/hub.db"
+  systemctl start "$SERVICE"; sleep 2
+  if systemctl is-active -q "$SERVICE"; then ok "已恢复,服务已重启(登录状态会失效,重新登录即可)"; else err "服务没起来:xui-hub log"; fi
+}
+
 # ======================= SSL 证书(照 x-ui 的做法:acme.sh + Let's Encrypt) =======================
 CERT_DIR="$ETC/cert"
 ACME="$HOME/.acme.sh/acme.sh"
@@ -382,11 +411,12 @@ show_menu() {
 ║  ${green}12.${plain} 开机自启     ${green}13.${plain} 取消自启            ║
 ║──────────────────────────────────────────║
 ║  ${green}14.${plain} SSL 证书管理(HTTPS)                   ║
+║  ${green}15.${plain} 备份数据库   ${green}16.${plain} 恢复备份            ║
 ╚══════════════════════════════════════════╝"
   show_status
   echo
   local num
-  read -r -p "请选择 [0-14]:" num
+  read -r -p "请选择 [0-16]:" num
   case "$num" in
     0) exit 0 ;;
     1) install ;;
@@ -403,6 +433,8 @@ show_menu() {
     12) svc enable ;;
     13) svc disable ;;
     14) ssl_menu ;;
+    15) backup ;;
+    16) local f; read -r -p "备份文件路径:" f; restore "$f" ;;
     *) err "没有这个选项" ;;
   esac
 }
@@ -416,6 +448,8 @@ case "${1:-}" in
   port) set_port ;;
   settings) settings ;;
   ssl) shift; ssl_cmd "$@" ;;
+  backup) backup "${2:-}" ;;
+  restore) restore "${2:-}" ;;
   start | stop | restart | enable | disable) svc "$1" ;;
   status) systemctl status "$SERVICE" --no-pager ;;
   log | logs) journalctl -u "$SERVICE" -f -n 100 ;;

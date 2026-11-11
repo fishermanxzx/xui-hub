@@ -31,12 +31,18 @@ const proto = (p: string) => PROTOCOL[p] ?? p;
 const editing = ref<Customer | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', remark: '', quotaGb: '', expire: '' });
+const form = ref({ name: '', remark: '', quotaGb: '', expire: '', resetDay: '' });
 
 function openForm(c: Customer | null) {
   editing.value = c;
-  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '' };
+  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', resetDay: c?.reset_day ? String(c.reset_day) : '' };
   showForm.value = true;
+}
+
+/** 续期:在到期日(已过期或不限期则从今天)基础上加 N 天 */
+function extend(days: number) {
+  const base = Math.max(dateInputToMs(form.value.expire), Date.now());
+  form.value.expire = msToDateInput(base + days * 86_400_000);
 }
 
 /** 面板上启停操作的结果提示 */
@@ -54,7 +60,7 @@ function opsNote(ops: EnforceOp[]): string {
 
 async function submit() {
   saving.value = true;
-  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire) };
+  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.resetDay === '' ? 0 : Number(form.value.resetDay) };
   try {
     const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
     showForm.value = false;
@@ -291,6 +297,7 @@ function exitText(l: Line): string {
           <span class="small" :class="{ 'text-warn': dueLevel(c.expire_at) === 'warn', 'text-err': dueLevel(c.expire_at) === 'err', muted: !c.expire_at }" :title="fmtDate(c.expire_at)">
             {{ fmtDue(c.expire_at) }}
           </span>
+          <span v-if="c.reset_day" class="muted small" :title="c.last_reset_at ? `上次清零 ${fmtDateTime(c.last_reset_at)}` : '还没清过'">每月 {{ c.reset_day }} 号清零</span>
         </div>
         <div class="ops">
           <button class="primary small-btn" :disabled="!panels.length" @click="openLineFor(c)">开线路</button>
@@ -330,7 +337,7 @@ function exitText(l: Line): string {
           </span>
         </li>
       </ul>
-      <p v-else class="muted small none">还没有线路,点「开线路」。</p>
+      <p v-else class="muted small none">还没有线路,点「开线路」;面板上已有的客户端可以在「面板」页点「归入客户」。</p>
     </article>
   </div>
   <div v-if="!customers.length" class="empty sheet">还没有客户。点「新建客户」,建好后给他开线路。</div>
@@ -341,9 +348,18 @@ function exitText(l: Line): string {
       <label class="field">备注<input v-model="form.remark" /></label>
       <div class="two">
         <label class="field">总额度(GB,空 = 不限)<input v-model="form.quotaGb" type="number" min="0" step="1" /></label>
-        <label class="field">到期日(空 = 不限期)<input v-model="form.expire" type="date" /></label>
+        <label class="field">每月清零日(1-28,空 = 不清零)<input v-model="form.resetDay" type="number" min="1" max="28" step="1" placeholder="如 1" /></label>
       </div>
-      <p class="muted small hint">流量按客户所有线路加总,每分钟从面板同步一次;超额或到期后自动停用他的全部客户端,改大额度、延后到期或清零流量会自动恢复。</p>
+      <label class="field">到期日(空 = 不限期)<input v-model="form.expire" type="date" /></label>
+      <div class="row extend">
+        <span class="muted small">续期</span>
+        <button type="button" class="link" @click="extend(30)">+30 天</button>
+        <button type="button" class="link" @click="extend(90)">+90 天</button>
+        <button type="button" class="link" @click="extend(180)">+180 天</button>
+        <button type="button" class="link" @click="extend(365)">+1 年</button>
+        <span class="muted small">(从到期日起算,已到期的从今天起算)</span>
+      </div>
+      <p class="muted small hint">流量按客户所有线路加总,每分钟从面板同步一次;超额或到期后自动停用他的全部客户端,改大额度、延后到期或清零流量会自动恢复。设了清零日,每月这天 0 点自动把他的流量清零。</p>
     </form>
     <template #footer>
       <span class="spacer" />
@@ -629,6 +645,10 @@ h2 {
 }
 .hint {
   margin: 6px 0 0;
+}
+.extend {
+  gap: 4px 10px;
+  margin-top: -6px;
 }
 @media (max-width: 720px) {
   .line {

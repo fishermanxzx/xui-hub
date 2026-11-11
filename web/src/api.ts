@@ -1,4 +1,4 @@
-import type { ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Socks, SocksInput, SubFetch, UpdateStatus } from './types';
+import type { BackupInfo, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubFetch, UpdateStatus } from './types';
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -7,10 +7,11 @@ export function setUnauthorizedHandler(fn: () => void): void {
 }
 
 async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const rawBody = body instanceof Blob;
   const res = await fetch(url, {
     method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    headers: body !== undefined ? { 'Content-Type': rawBody ? 'application/octet-stream' : 'application/json' } : undefined,
+    body: body === undefined ? undefined : rawBody ? body : JSON.stringify(body),
   });
   const text = await res.text();
   let data: any = null;
@@ -67,6 +68,16 @@ export const api = {
   lineLinks: (id: number, lineId: number) => call<{ links: string[] }>('GET', `/api/customers/${id}/lines/${lineId}/links`),
   /** force:面板上删不掉(连不上、已经不在了)也把这里的线路记录删掉 */
   deleteLine: (id: number, lineId: number, force = false) => call('DELETE', `/api/customers/${id}/lines/${lineId}${force ? '?force=1' : ''}`),
+  /** 把面板上已有的客户端归到客户名下(成为直连线路),面板上不改 */
+  importClients: (id: number, panelId: number, emails: string[]) => call<ImportResult>('POST', `/api/customers/${id}/lines/import`, { panel_id: panelId, emails }),
+
+  settings: () => call<Settings>('GET', '/api/settings'),
+  updateSettings: (body: Partial<Settings>) => call<Settings>('PATCH', '/api/settings', body),
+  testNotify: () => call<{ results: { channel: string; ok: boolean; error?: string }[] }>('POST', '/api/settings/test'),
+  /** 下载备份直接用这个地址 */
+  backupUrl: '/api/backup',
+  /** 上传一份 hub.db 整个换掉;成功后服务会重启 */
+  restore: (file: Blob) => call<BackupInfo>('POST', '/api/restore', file),
 
   socks: () => call<Socks[]>('GET', '/api/socks'),
   createSocks: (body: SocksInput) => call<Socks>('POST', '/api/socks', body),

@@ -6,7 +6,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { join, resolve } from 'node:path';
+import { applyPendingRestore, backupBuffer, backupName } from './backup';
 import { tcpOpen } from './clients/create';
+import { listCustomers } from './customers/repo';
 import { openDb } from './db';
 import { env, isLoopbackHost, PROJECT_ROOT } from './env';
 import { apiRouter } from './http/routes';
@@ -16,8 +18,12 @@ import { pruneSubFetches } from './subscription/fetchLog';
 import { mihomoTemplateMatcher } from './subscription/mihomo';
 import { defaultFetcher } from './subscription/service';
 import { enforceCustomers } from './lines/enforce';
+import { runMonthlyResets } from './lines/reset';
+import { alreadyNotified, enforceEvents, markNotified, panelEvents, resetEvent, thresholdEvents } from './notify/events';
+import { broadcast, channelsFor, type Message } from './notify/send';
 import { checkAllPanels } from './panels/check';
-import type { Panel } from './panels/repo';
+import { listPanels, type Panel } from './panels/repo';
+import { getSettings } from './settings';
 import { noOverlap } from './util';
 import { XUIClient } from './xui/client';
 
@@ -29,6 +35,8 @@ if (!isLoopbackHost(env.host) && !env.adminPassword) {
   process.exit(1);
 }
 
+// 后台里上传了备份:启动时换上去(旧库留作 hub.db.bak-*)
+if (applyPendingRestore(env.dataDir)) console.log('已恢复上传的备份,原数据库改名保留在数据目录');
 const db = openDb(join(env.dataDir, 'hub.db'));
 const clientFor = (panel: Panel) => new XUIClient(panel, { timeoutMs: 15000 });
 
@@ -46,9 +54,26 @@ const subRouter = subscriptionRouter({
   internalBaseUrl: env.appInternalUrl,
   internalSecret: randomBytes(18).toString('base64url'),
   mihomoTemplate: mihomoTemplateMatcher(env.mihomoTemplate),
+  subBaseUrl: env.subBaseUrl,
 });
 app.use(subRouter);
-app.use('/api', apiRouter({ db, adminPassword: env.adminPassword, clientFor, probe: tcpOpen, subBaseUrl: env.subBaseUrl, subLogDays: env.subLogDays }));
+app.use(
+  '/api',
+  apiRouter({
+    db,
+    adminPassword: env.adminPassword,
+    clientFor,
+    probe: tcpOpen,
+    subBaseUrl: env.subBaseUrl,
+    subLogDays: env.subLogDays,
+    dataDir: env.dataDir,
+    // 恢复备份:退出让 systemd / Docker 拉起,起来时换库
+    onRestore: () => {
+      console.log('恢复备份:重启服务');
+      shutdown();
+    },
+  }),
+);
 
 const dist = resolve(PROJECT_ROOT, 'web/dist');
 if (existsSync(dist)) {
@@ -69,13 +94,52 @@ internalApp.use(subRouter);
 const internalServer = createHttpServer(internalApp);
 internalServer.listen(env.internalPort, env.internalHost);
 
-// 定期:检查各面板(顺带同步各线路的客户端流量)→ 停用超额 / 到期客户的线路、恢复回到正常的。上一轮没跑完(面板超时)就跳过这一轮
+/** 发通知;没配渠道就只打日志 */
+async function notify(messages: Message[]): Promise<void> {
+  if (!messages.length) return;
+  const channels = channelsFor(getSettings(db));
+  for (const m of messages) {
+    console.log(`通知:${m.title}${m.text ? ' — ' + m.text.replace(/\n/g, ' ') : ''}`);
+    for (const r of await broadcast(channels, m)) if (!r.ok) console.error(`通知经 ${r.channel} 发送失败:${r.error}`);
+  }
+}
+
+/** 每天一次把数据库发到 Telegram(开了「每日备份」且配了 Telegram 才做) */
+async function dailyBackup(now: number): Promise<void> {
+  const s = getSettings(db);
+  if (!s.backup.daily || !s.telegram.token || !s.telegram.chat_id) return;
+  const key = `backup:${backupName(now).slice(8, 16)}`;
+  if (alreadyNotified(db, key)) return;
+  const [channel] = channelsFor({ telegram: s.telegram, webhook: { url: '' } });
+  try {
+    await channel.sendFile!(backupName(now), await backupBuffer(db), `xui-hub 每日备份,${listPanels(db).length} 块面板、${listCustomers(db).length} 位客户`);
+    markNotified(db, key, now);
+  } catch (e) {
+    console.error('每日备份发送失败', e);
+  }
+}
+
+// 定期:检查各面板(顺带同步各线路的客户端流量)→ 按月清零到期的 → 停用超额 / 到期客户的线路、恢复回到正常的 → 发通知。
+// 上一轮没跑完(面板超时)就跳过这一轮
 const check = noOverlap(async () => {
   try {
-    await checkAllPanels(db, clientFor);
+    const now = Date.now();
+    const settings = getSettings(db).notify;
+    const before = listPanels(db);
+    const after = await checkAllPanels(db, clientFor);
+    const messages: Message[] = settings.panel_down ? panelEvents(before, after, now) : [];
+    for (const r of await runMonthlyResets(db, clientFor, now)) {
+      console.log(`按月清零 ${r.customer.name}${r.failed.length ? `,${r.failed.length} 个客户端没清成` : ''}`);
+      if (settings.monthly_reset) messages.push(resetEvent(r.customer, r.failed.length, now));
+    }
     const ops = await enforceCustomers(db, clientFor);
-    pruneSubFetches(db, env.subLogDays);
     for (const o of ops) console.log(`${o.action === 'disable' ? '停用' : '启用'} ${o.customer} 在 ${o.panel} 上的 ${o.email}:${o.ok ? '成功' : o.error}`);
+    const customers = listCustomers(db);
+    if (settings.customer_disabled) messages.push(...enforceEvents(ops, customers, now));
+    messages.push(...thresholdEvents(db, settings, now, customers));
+    await notify(messages);
+    await dailyBackup(now);
+    pruneSubFetches(db, env.subLogDays);
   } catch (e) {
     console.error('同步失败', e);
   }

@@ -1,6 +1,7 @@
 // /api 路由。
 
-import { Router, type NextFunction, type Request, type Response } from 'express';
+import { Router, raw, type NextFunction, type Request, type Response } from 'express';
+import { backupBuffer, backupName, inspectBackup, stageRestore } from '../backup';
 import type { DB } from '../db';
 import { createClient, type ClientAdmin } from '../clients/create';
 import { checkAllPanels, checkPanel, type PanelProbe } from '../panels/check';
@@ -17,10 +18,13 @@ import {
   listCustomers,
   resetSubToken,
   updateCustomer,
-  zeroLineTraffic,
   type CustomerView,
   type Line,
 } from '../customers/repo';
+import { importClients } from '../lines/import';
+import { resetCustomerUsage } from '../lines/reset';
+import { broadcast, channelsFor } from '../notify/send';
+import { getSettings, updateSettings } from '../settings';
 import { listSubFetches, subClientCounts } from '../subscription/fetchLog';
 import { enforceCustomers } from '../lines/enforce';
 import { openLine, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
@@ -51,6 +55,10 @@ export interface RouteDeps {
   subBaseUrl: string;
   /** 订阅拉取记录保留天数 */
   subLogDays: number;
+  /** 数据目录(恢复备份时把文件放这里) */
+  dataDir?: string;
+  /** 恢复文件放好后调用:退出进程让 systemd / Docker 重启 */
+  onRestore?: () => void;
 }
 
 type Handler = (req: Request, res: Response) => unknown;
@@ -142,12 +150,19 @@ export function apiRouter(deps: RouteDeps): Router {
       return view(await checkPanel(db, panel, deps.clientFor(panel)));
     }),
   );
-  // 面板详情:现取入站和 client(只读,不含密钥)
+  // 面板详情:现取入站和 client(只读,不含密钥);每个 client 标上它是哪位客户的线路
   r.get(
     '/panels/:id/inbounds',
-    wrap((req) => {
+    wrap(async (req) => {
       const panel = panelOf(req);
-      return readPanelDetail(panel, deps.clientFor(panel));
+      const detail = await readPanelDetail(panel, deps.clientFor(panel));
+      const owners = new Map(linesOnPanel(db, panel.id).map((l) => [l.email, l.customer_id]));
+      const names = new Map(listCustomers(db).map((c) => [c.id, c.name]));
+      const tag = (c: { email: string }) => {
+        const id = owners.get(c.email);
+        return { ...c, customer: id == null ? null : { id, name: names.get(id) ?? '?' } };
+      };
+      return { ...detail, inbounds: detail.inbounds.map((ib) => ({ ...ib, clients: ib.clients.map(tag) })), unattached: detail.unattached.map(tag) };
     }),
   );
 
@@ -277,19 +292,17 @@ export function apiRouter(deps: RouteDeps): Router {
     '/customers/:id/reset-usage',
     wrap(async (req) => {
       const c = plainCustomer(idParam(req));
-      const failed: { line: string; error: string }[] = [];
-      for (const line of c.lines) {
-        const panel = getPanel(db, line.panel_id);
-        if (!panel) continue;
-        try {
-          await withClient(panel, (client) => client.resetClientTraffic(line.email));
-          zeroLineTraffic(db, line.id);
-        } catch (e) {
-          failed.push({ line: lineLabel(line), error: errorText(e) });
-        }
-      }
+      const failed = await resetCustomerUsage(db, c, deps.clientFor);
       const ops = await enforceCustomers(db, deps.clientFor, c.id);
       return { ...customerOf(c.id), failed, ops };
+    }),
+  );
+  // 把面板上已有的客户端归到这位客户名下(成为直连线路),面板上不改任何东西
+  r.post(
+    '/customers/:id/lines/import',
+    wrap(async (req) => {
+      const r = await importClients(db, idParam(req), req.body ?? {}, deps.clientFor);
+      return { ...r, customer: customerOf(idParam(req)) };
     }),
   );
   // 立即同步全部面板并执行额度 / 到期
@@ -373,6 +386,43 @@ export function apiRouter(deps: RouteDeps): Router {
     wrap(async () => {
       await mapLimit(allSocks(db), 4, async (s) => saveCheck(db, s.id, await checkSocks(s)));
       return listSocks(db);
+    }),
+  );
+
+  // ---------- 设置:通知渠道、提醒项、备份 ----------
+  r.get('/settings', wrap(() => getSettings(db)));
+  r.patch('/settings', wrap((req) => updateSettings(db, req.body ?? {})));
+  // 用保存好的渠道发一条测试消息
+  r.post(
+    '/settings/test',
+    wrap(async () => {
+      const channels = channelsFor(getSettings(db));
+      if (!channels.length) throw new InputError('还没配置任何通知渠道');
+      return { results: await broadcast(channels, { event: 'test', title: 'xui-hub 测试通知', text: '收到这条说明通知渠道配置正确。', at: Date.now() }) };
+    }),
+  );
+
+  // ---------- 备份 / 恢复 ----------
+  r.get(
+    '/backup',
+    wrap(async (_req, res) => {
+      const data = await backupBuffer(db);
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${backupName()}"`);
+      res.send(data);
+    }),
+  );
+  // 上传一份 hub.db 整个换掉:先核对是 xui-hub 的库,放到待恢复位置,响应后退出进程,重启时换上去
+  r.post(
+    '/restore',
+    raw({ type: () => true, limit: '256mb' }),
+    wrap((req, res) => {
+      if (!deps.dataDir) throw new InputError('这个部署不支持在线恢复');
+      const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      const info = inspectBackup(data);
+      stageRestore(deps.dataDir, data);
+      res.json({ ...info, restarting: !!deps.onRestore });
+      if (deps.onRestore) setTimeout(deps.onRestore, 500);
     }),
   );
 

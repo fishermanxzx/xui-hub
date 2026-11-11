@@ -118,6 +118,17 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX sub_fetches_customer ON sub_fetches(customer_id, at);
   CREATE INDEX sub_fetches_at ON sub_fetches(at);
   `,
+  `
+  -- 按月清零:每月 reset_day 号(1-28,0 = 不清零)把客户各线路的流量清零;last_reset_at 是上次清零的时间
+  ALTER TABLE customers ADD COLUMN reset_day INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE customers ADD COLUMN last_reset_at INTEGER NOT NULL DEFAULT 0;
+
+  -- 通知去重:某件事(如「客户 3 天内到期」)只提醒一次,记下提醒过的 key
+  CREATE TABLE notified (
+    key TEXT PRIMARY KEY,
+    at  INTEGER NOT NULL
+  );
+  `,
 ];
 
 export function openDb(file: string): DB {

@@ -35,17 +35,28 @@
 - 中转线路:选中转面板和出口。出口可以是落地面板上的 socks 入站(没有就自动新建),也可以是 SOCKS 页登记的代理。路由按客户端区分,同一入站上的客户端可以走不同出口。
 - 额度和到期按客户计算,流量是各线路之和,每分钟同步一次。超额或到期自动停用他的全部客户端,调整额度、续期或清零流量后自动恢复。
 - 每位客户一条订阅链接,包含他的全部线路,按客户端自动给出格式:Clash / Mihomo / Stash / Shadowrocket、sing-box / Hiddify、Surge、Quantumult X、Loon、v2rayN(base64),也可用 `?target=` 指定。链接可重置,可查看拉取记录。
+- 可设每月清零日,到日子自动把他的流量清零;编辑时可一键续期 30 / 90 / 180 / 365 天。
+- 客户用浏览器打开订阅链接是一个自助页:剩余流量、到期日、二维码和各客户端的一键导入按钮。
 - 每条线路可看分享链接和二维码,每位客户可看网络拓扑图。
 
 **面板**
 
 - 填面板地址和 API token 接入,每分钟同步一次状态。
 - 卡片显示面板版本、Xray 内核版本、入站和客户端,可直接创建或删除客户端。
+- 面板上已有的客户端可「归入客户」,成为该客户的线路,面板上不改任何东西。
 - 可切换 Xray 内核版本、升级面板。
 
 **SOCKS**
 
 - 登记 SOCKS5 代理,测试连通性、出口 IP、地区和延迟,供中转线路当出口。
+
+**通知**
+
+- Telegram Bot 或 Webhook:面板掉线 / 恢复、客户超额或到期被停用 / 恢复、客户快到期、流量用到额度的某个百分比、按月清零完成。「设置」页配置。
+
+**备份**
+
+- 「设置」页下载数据库备份、上传备份恢复(恢复后服务自动重启);可每天自动把备份发到 Telegram。一键脚本另有 `xui-hub backup` / `xui-hub restore`。
 
 说明:新建 hy2 入站要用面板自己配置的证书,面板没配证书就建不了。xui-hub 只在开线路、删线路、自动停用与恢复、清零流量、切换内核、升级面板时改动面板,其余操作只读。
 
@@ -73,6 +84,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/in
 | `xui-hub update` | 更新到最新版 |
 | `xui-hub password` / `port` / `settings` | 改密码 / 改端口 / 查看设置 |
 | `xui-hub ssl` | 申请和管理 HTTPS 证书 |
+| `xui-hub backup` / `restore <文件>` | 备份到 `/etc/xui-hub/backup`(最多留 30 份)/ 从备份恢复 |
 | `xui-hub uninstall` | 卸载 |
 
 程序在 `/usr/local/xui-hub`,数据和配置在 `/etc/xui-hub`。
@@ -101,7 +113,7 @@ docker compose pull && docker compose up -d
 2. 「面板」页添加 3x-ui 面板,填地址和 API token。
 3. 「客户」页新建客户,再给他开线路。
 
-备份只需要数据库文件 `hub.db`:一键脚本在 `/etc/xui-hub`,Docker 在 `data` 目录。
+数据都在数据库文件 `hub.db` 里(一键脚本在 `/etc/xui-hub`,Docker 在 `data` 目录),「设置」页可以下载和恢复。
 
 ### HTTPS
 

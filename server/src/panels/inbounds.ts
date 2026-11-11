@@ -19,6 +19,8 @@ export interface PanelClientView {
   total_bytes: number;
   expiry_ms: number;
   last_online: number;
+  /** 是哪位客户的线路(路由层填);null = 还没归到任何客户 */
+  customer?: { id: number; name: string } | null;
 }
 
 export interface InboundView {

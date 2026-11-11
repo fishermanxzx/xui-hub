@@ -4,7 +4,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
 import { dueLevel, fmtAgo, fmtBytes, fmtDue, hostOf } from '../format';
 import { toast, toastError } from '../toast';
-import type { ClientProtocol, CreatedClient, Panel, PanelClient, PanelDetail, PanelInbound, PanelVersions } from '../types';
+import type { ClientProtocol, CreatedClient, Customer, Panel, PanelClient, PanelDetail, PanelInbound, PanelVersions } from '../types';
 import ClientLinks from './ClientLinks.vue';
 import Modal from './Modal.vue';
 
@@ -165,6 +165,43 @@ async function create() {
   }
 }
 
+// ---------- 归入客户:面板上已有的客户端记成某位客户的直连线路 ----------
+const assignFor = ref<PanelClient | null>(null);
+const customers = ref<Customer[]>([]);
+const assignTo = ref<number | 'new'>('new');
+const newName = ref('');
+const assigning = ref(false);
+
+async function openAssign(c: PanelClient) {
+  assignFor.value = c;
+  newName.value = c.email;
+  try {
+    customers.value = await api.customers();
+    // 名字和客户端一样的客户大概率就是他
+    assignTo.value = customers.value.find((x) => x.name === c.email)?.id ?? customers.value[0]?.id ?? 'new';
+  } catch (e) {
+    toastError(e);
+  }
+}
+
+async function assign() {
+  if (!assignFor.value) return;
+  assigning.value = true;
+  try {
+    const id = assignTo.value === 'new' ? (await api.createCustomer({ name: newName.value })).id : assignTo.value;
+    const r = await api.importClients(id, props.panel.id, [assignFor.value.email]);
+    if (r.failed.length) throw new Error(r.failed[0].error);
+    toast(`已归入客户「${r.customer.name}」`);
+    assignFor.value = null;
+    emit('changed');
+    await load();
+  } catch (e) {
+    toastError(e);
+  } finally {
+    assigning.value = false;
+  }
+}
+
 // ---------- 链接 / 删除 ----------
 const linksFor = ref<{ email: string; links: string[] } | null>(null);
 const loadingLinks = ref('');
@@ -260,7 +297,7 @@ async function removeClient(c: PanelClient) {
           </header>
           <ul v-if="g.clients.length" class="clients">
             <li v-for="c in g.clients" :key="c.email" class="client">
-              <span class="email">{{ c.email }}<span v-if="!c.enable" class="badge err">停用</span></span>
+              <span class="email">{{ c.email }}<span v-if="!c.enable" class="badge err">停用</span><span v-if="c.customer" class="chip owner" :title="`客户「${c.customer.name}」的线路`">{{ c.customer.name }}</span></span>
               <span class="stats small">
                 <span class="muted">已用 {{ fmtBytes(c.up + c.down) }}<template v-if="c.total_bytes"> / {{ fmtBytes(c.total_bytes) }}</template></span>
                 <span :class="{ 'text-warn': dueLevel(c.expiry_ms) === 'warn', 'text-err': dueLevel(c.expiry_ms) === 'err', muted: !c.expiry_ms }">{{ fmtDue(c.expiry_ms) }}</span>
@@ -268,6 +305,7 @@ async function removeClient(c: PanelClient) {
               </span>
               <span class="c-ops">
                 <button class="link" :disabled="loadingLinks === c.email" @click="showLinks(c)">{{ loadingLinks === c.email ? '读取中…' : '链接' }}</button>
+                <button v-if="!c.customer && g.inbound?.accepts_clients" class="link" title="记成某位客户的线路,面板上不改" @click="openAssign(c)">归入客户</button>
                 <button class="link danger" @click="removeClient(c)">删除</button>
               </span>
             </li>
@@ -330,6 +368,25 @@ async function removeClient(c: PanelClient) {
       <span class="spacer" />
       <button @click="showXray = false">取消</button>
       <button class="primary" :disabled="!versions || switching || !xrayPick || xrayPick.replace(/^v/, '') === versions.xray.current" @click="switchXray">{{ switching ? '切换中…' : '切换' }}</button>
+    </template>
+  </Modal>
+
+  <Modal v-if="assignFor" :title="`把「${assignFor.email}」归入客户`" @close="assignFor = null">
+    <form id="assign-form" class="form" @submit.prevent="assign">
+      <p class="muted small">面板上不会改任何东西,只是把这个客户端记成该客户的一条直连线路:之后它的流量计入客户额度,超额 / 到期会被停用,订阅里也会带上它。</p>
+      <label class="field">
+        客户
+        <select v-model="assignTo">
+          <option v-for="x in customers" :key="x.id" :value="x.id">{{ x.name }}{{ x.remark ? ` · ${x.remark}` : '' }}</option>
+          <option value="new">新建客户…</option>
+        </select>
+      </label>
+      <label v-if="assignTo === 'new'" class="field">新客户名称<input v-model="newName" required /></label>
+    </form>
+    <template #footer>
+      <span class="spacer" />
+      <button @click="assignFor = null">取消</button>
+      <button class="primary" form="assign-form" :disabled="assigning">{{ assigning ? '处理中…' : '归入' }}</button>
     </template>
   </Modal>
 
@@ -456,6 +513,11 @@ async function removeClient(c: PanelClient) {
 .email {
   overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
+}
+.chip.owner {
+  margin-left: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 .email .badge {
   margin-left: 6px;

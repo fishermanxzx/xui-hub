@@ -13,6 +13,7 @@ import { parseNodes } from '../subscription/nodes';
 import { buildSingbox, singboxLegacyDns } from '../subscription/singbox';
 import { clientIp, recordSubFetch } from '../subscription/fetchLog';
 import { collectLinks, encodeSubscription, mergeLinks, userinfoHeader, type LinkFetcher } from '../subscription/service';
+import { renderSubPage } from './subPage';
 
 export interface SubscriptionDeps {
   db: DB;
@@ -25,6 +26,8 @@ export interface SubscriptionDeps {
   internalSecret: string;
   /** 该客户的 Clash 输出是否套用 Mihomo 基础模板(dns / tcp-concurrent / unified-delay) */
   mihomoTemplate: (customerName: string) => boolean;
+  /** 订阅链接的地址前缀(SUB_BASE_URL);空 = 按这次请求的地址拼 */
+  subBaseUrl?: string;
 }
 
 /** 客户端自动更新间隔(小时) */
@@ -135,6 +138,13 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
         return;
       }
       const ua = req.get('user-agent');
+      // 浏览器直接打开(没指定格式):给客户看的自助页。?target=base64 仍然拿节点
+      if (req.query.target === undefined && isBrowserUA(ua) && (req.get('accept') ?? '').includes('text/html')) {
+        const base = deps.subBaseUrl || `${req.protocol}://${req.get('host')}`;
+        res.set({ 'Cache-Control': 'no-store', 'Content-Type': 'text/html; charset=utf-8' });
+        res.send(renderSubPage({ customer, url: `${base}/sub/${customer.sub_token}` }));
+        return;
+      }
       const target = requestedTarget(req);
       // token 有效的请求都记一条拉取记录(响应发完后记,带上最终状态码)
       res.on('finish', () => recordSubFetch(db, { at: Date.now(), customer_id: customer.id, target, status: res.statusCode, ua: ua ?? '', ip: clientIp(req) }));

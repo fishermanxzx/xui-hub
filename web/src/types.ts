@@ -46,6 +46,8 @@ export interface PanelClient {
   total_bytes: number;
   expiry_ms: number;
   last_online: number;
+  /** 是哪位客户的线路;null = 还没归到任何客户 */
+  customer: { id: number; name: string } | null;
 }
 
 export interface PanelInbound {
@@ -138,6 +140,9 @@ export interface Customer {
   quota_bytes: number;
   /** 到期时间(毫秒),0 = 不限期 */
   expire_at: number;
+  /** 每月几号清零流量(1-28),0 = 不清零 */
+  reset_day: number;
+  last_reset_at: number;
   /** 订阅链接 /sub/<token> 里的 token */
   sub_token: string;
   /** 订阅链接;未配置 SUB_BASE_URL 时为 null,前端用当前地址拼 */
@@ -170,6 +175,37 @@ export interface CustomerInput {
   remark?: string;
   quota_bytes?: number;
   expire_at?: number;
+  reset_day?: number;
+}
+
+/** 把面板上已有的客户端归到客户名下 */
+export interface ImportResult {
+  lines: Line[];
+  failed: { email: string; error: string }[];
+  customer: Customer;
+}
+
+export interface Settings {
+  telegram: { token: string; chat_id: string };
+  webhook: { url: string };
+  notify: {
+    panel_down: boolean;
+    customer_disabled: boolean;
+    expiring: boolean;
+    expiring_days: number;
+    quota_warn: boolean;
+    quota_warn_pct: number;
+    monthly_reset: boolean;
+  };
+  backup: { daily: boolean };
+}
+
+export interface BackupInfo {
+  version: number;
+  panels: number;
+  customers: number;
+  lines: number;
+  restarting: boolean;
 }
 
 export interface EnforceOp {

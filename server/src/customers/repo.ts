@@ -42,6 +42,10 @@ export interface Customer {
   quota_bytes: number;
   /** 到期时间(毫秒),0 = 不限期 */
   expire_at: number;
+  /** 每月几号清零流量(1-28),0 = 不清零 */
+  reset_day: number;
+  /** 上次按月清零的时间 */
+  last_reset_at: number;
   /** 订阅链接 /sub/<token> 里的 token,每个客户一个;重置后旧链接失效 */
   sub_token: string;
   /** 上次拉取订阅的时间和客户端(User-Agent) */
@@ -64,6 +68,7 @@ export interface CustomerInput {
   remark?: unknown;
   quota_bytes?: unknown;
   expire_at?: unknown;
+  reset_day?: unknown;
 }
 
 /** 客户状态:到期 > 超额 > 正常 */
@@ -77,6 +82,13 @@ function nonNegativeInt(value: unknown, label: string): number {
   if (value == null || value === '') return 0;
   const n = Number(value);
   if (!Number.isSafeInteger(n) || n < 0) throw new InputError(`${label}必须是大于等于 0 的整数`);
+  return n;
+}
+
+function validResetDay(value: unknown): number {
+  if (value == null || value === '') return 0;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > 28) throw new InputError('每月清零日只能是 1 到 28,留空 = 不清零');
   return n;
 }
 
@@ -158,8 +170,8 @@ const newSubToken = () => randomBytes(18).toString('base64url');
 
 export function createCustomer(db: DB, input: CustomerInput, now = Date.now()): number {
   const info = db
-    .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, sub_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), newSubToken(), now, now);
+    .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, newSubToken(), now, now);
   return Number(info.lastInsertRowid);
 }
 
@@ -179,14 +191,38 @@ export function touchSubFetch(db: DB, id: number, ua: string, now = Date.now()):
 export function updateCustomer(db: DB, id: number, input: CustomerInput, now = Date.now()): void {
   const cur = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as any;
   if (!cur) throw new InputError('客户不存在');
-  db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, updated_at = ? WHERE id = ?').run(
+  const resetDay = input.reset_day === undefined ? cur.reset_day : validResetDay(input.reset_day);
+  db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, reset_day = ?, last_reset_at = ?, updated_at = ? WHERE id = ?').run(
     input.name === undefined ? cur.name : validName(input.name),
     input.remark === undefined ? cur.remark : String(input.remark ?? '').trim(),
     input.quota_bytes === undefined ? cur.quota_bytes : nonNegativeInt(input.quota_bytes, '额度'),
     input.expire_at === undefined ? cur.expire_at : nonNegativeInt(input.expire_at, '到期时间'),
+    resetDay,
+    // 刚设上 / 改了清零日:从现在起算,下一个清零日才清,不会设完马上把这期清掉
+    resetDay !== cur.reset_day ? now : cur.last_reset_at,
     now,
     id,
   );
+}
+
+export function markReset(db: DB, id: number, now = Date.now()): void {
+  db.prepare('UPDATE customers SET last_reset_at = ? WHERE id = ?').run(now, id);
+}
+
+/**
+ * 本期的起点:now 之前(含当天)最近一个 reset_day 号的 0 点(本机时区)。
+ * 上次清零早于它就该清零了。服务停了几天再起来也只清一次,不会把中间漏掉的几期各清一遍
+ */
+export function periodStart(resetDay: number, now = Date.now()): number {
+  const d = new Date(now);
+  const start = new Date(d.getFullYear(), d.getMonth(), resetDay);
+  if (start.getTime() > now) start.setMonth(start.getMonth() - 1);
+  return start.getTime();
+}
+
+/** 到了清零日还没清的客户 */
+export function customersDueReset(db: DB, now = Date.now()): CustomerView[] {
+  return listCustomers(db).filter((c) => c.reset_day > 0 && c.last_reset_at < periodStart(c.reset_day, now));
 }
 
 /** 同步到的客户端状态写回线路(面板上没有这个客户端时 present = false,流量保持上次的值) */
