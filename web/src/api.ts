@@ -1,4 +1,4 @@
-import type { BackupInfo, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubFetch, UpdateStatus } from './types';
+import type { BackupInfo, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubFetch, SubTemplate, UpdateStatus } from './types';
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -70,6 +70,8 @@ export const api = {
   deleteLine: (id: number, lineId: number, force = false) => call('DELETE', `/api/customers/${id}/lines/${lineId}${force ? '?force=1' : ''}`),
   /** 把面板上已有的客户端归到客户名下(成为直连线路),面板上不改 */
   importClients: (id: number, panelId: number, emails: string[]) => call<ImportResult>('POST', `/api/customers/${id}/lines/import`, { panel_id: panelId, emails }),
+
+  subTemplates: () => call<{ default: string; templates: SubTemplate[] }>('GET', '/api/sub-templates'),
 
   settings: () => call<Settings>('GET', '/api/settings'),
   updateSettings: (body: Partial<Settings>) => call<Settings>('PATCH', '/api/settings', body),

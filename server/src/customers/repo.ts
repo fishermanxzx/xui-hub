@@ -3,6 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import type { DB } from '../db';
 import { InputError } from '../panels/repo';
+import { validTemplate } from '../subscription/templates';
 
 export type LineKind = 'direct' | 'relay';
 export type CustomerState = 'active' | 'expired' | 'over_quota';
@@ -46,6 +47,8 @@ export interface Customer {
   reset_day: number;
   /** 上次按月清零的时间 */
   last_reset_at: number;
+  /** Clash 订阅模板:'' = 默认,内置模板 id,或自定义 https 地址 */
+  sub_template: string;
   /** 订阅链接 /sub/<token> 里的 token,每个客户一个;重置后旧链接失效 */
   sub_token: string;
   /** 上次拉取订阅的时间和客户端(User-Agent) */
@@ -69,6 +72,7 @@ export interface CustomerInput {
   quota_bytes?: unknown;
   expire_at?: unknown;
   reset_day?: unknown;
+  sub_template?: unknown;
 }
 
 /** 客户状态:到期 > 超额 > 正常 */
@@ -170,8 +174,8 @@ const newSubToken = () => randomBytes(18).toString('base64url');
 
 export function createCustomer(db: DB, input: CustomerInput, now = Date.now()): number {
   const info = db
-    .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, newSubToken(), now, now);
+    .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_template, sub_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, validTemplate(input.sub_template), newSubToken(), now, now);
   return Number(info.lastInsertRowid);
 }
 
@@ -192,7 +196,7 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
   const cur = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as any;
   if (!cur) throw new InputError('客户不存在');
   const resetDay = input.reset_day === undefined ? cur.reset_day : validResetDay(input.reset_day);
-  db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, reset_day = ?, last_reset_at = ?, updated_at = ? WHERE id = ?').run(
+  db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, reset_day = ?, last_reset_at = ?, sub_template = ?, updated_at = ? WHERE id = ?').run(
     input.name === undefined ? cur.name : validName(input.name),
     input.remark === undefined ? cur.remark : String(input.remark ?? '').trim(),
     input.quota_bytes === undefined ? cur.quota_bytes : nonNegativeInt(input.quota_bytes, '额度'),
@@ -200,6 +204,7 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
     resetDay,
     // 刚设上 / 改了清零日:从现在起算,下一个清零日才清,不会设完马上把这期清掉
     resetDay !== cur.reset_day ? now : cur.last_reset_at,
+    input.sub_template === undefined ? cur.sub_template : validTemplate(input.sub_template),
     now,
     id,
   );

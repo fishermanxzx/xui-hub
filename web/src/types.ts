@@ -143,6 +143,8 @@ export interface Customer {
   /** 每月几号清零流量(1-28),0 = 不清零 */
   reset_day: number;
   last_reset_at: number;
+  /** Clash 订阅模板:'' = 默认,内置模板 id,或自定义 https 地址 */
+  sub_template: string;
   /** 订阅链接 /sub/<token> 里的 token */
   sub_token: string;
   /** 订阅链接;未配置 SUB_BASE_URL 时为 null,前端用当前地址拼 */
@@ -176,6 +178,13 @@ export interface CustomerInput {
   quota_bytes?: number;
   expire_at?: number;
   reset_day?: number;
+  sub_template?: string;
+}
+
+export interface SubTemplate {
+  id: string;
+  name: string;
+  desc: string;
 }
 
 /** 把面板上已有的客户端归到客户名下 */

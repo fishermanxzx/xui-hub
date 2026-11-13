@@ -14,6 +14,7 @@ import { buildSingbox, singboxLegacyDns } from '../subscription/singbox';
 import { clientIp, recordSubFetch } from '../subscription/fetchLog';
 import { collectLinks, encodeSubscription, mergeLinks, userinfoHeader, type LinkFetcher } from '../subscription/service';
 import { renderSubPage } from './subPage';
+import { templateUrl } from '../subscription/templates';
 
 export interface SubscriptionDeps {
   db: DB;
@@ -167,7 +168,7 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
         return;
       }
       const source = `${deps.internalBaseUrl}/internal/nodes/${customer.id}?key=${encodeURIComponent(deps.internalSecret)}`;
-      res.send(withTemplate(req, target, customer.name, (await deps.convert(target, source, DEFAULT_CONVERT_OPTIONS)).body));
+      res.send(withTemplate(req, target, customer.name, (await deps.convert(target, source, { ...DEFAULT_CONVERT_OPTIONS, config: templateUrl(customer.sub_template) })).body));
     }),
   );
 

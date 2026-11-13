@@ -129,6 +129,10 @@ export const MIGRATIONS: string[] = [
     at  INTEGER NOT NULL
   );
   `,
+  `
+  -- 客户自己的 Clash 订阅模板:'' = 默认(ACL4SSR_Online_Mini),内置模板的 id,或自定义的 https 地址
+  ALTER TABLE customers ADD COLUMN sub_template TEXT NOT NULL DEFAULT '';
+  `,
 ];
 
 export function openDb(file: string): DB {

@@ -9,12 +9,13 @@ import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, region, shortUa, STATE_LABEL, subUrl } from '../format';
 import { toast, toastError } from '../toast';
-import type { ClientProtocol, Customer, EnforceOp, Line, LineKind, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubFetch } from '../types';
+import type { ClientProtocol, Customer, EnforceOp, Line, LineKind, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubFetch, SubTemplate } from '../types';
 
 const customers = ref<Customer[]>([]);
 const panels = ref<Panel[]>([]);
 const socksList = ref<Socks[]>([]);
 
+const templateDefault = ref('');
 async function load() {
   try {
     [customers.value, panels.value, socksList.value] = await Promise.all([api.customers(), api.panels(), api.socks()]);
@@ -22,7 +23,16 @@ async function load() {
     toastError(e);
   }
 }
-onMounted(load);
+onMounted(async () => {
+  await load();
+  try {
+    const t = await api.subTemplates();
+    templates.value = t.templates;
+    templateDefault.value = t.default;
+  } catch (e) {
+    toastError(e);
+  }
+});
 
 const PROTOCOL: Record<string, string> = { hysteria: 'hy2' };
 const proto = (p: string) => PROTOCOL[p] ?? p;
@@ -31,11 +41,16 @@ const proto = (p: string) => PROTOCOL[p] ?? p;
 const editing = ref<Customer | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', remark: '', quotaGb: '', expire: '', resetDay: '' });
+const form = ref({ name: '', remark: '', quotaGb: '', expire: '', resetDay: '', template: '', customTemplate: '' });
+/** 内置的 Clash 订阅模板;第一次打开表单时取 */
+const templates = ref<SubTemplate[]>([]);
+const templateName = (v: string) => templates.value.find((t) => t.id === v)?.name ?? (v ? '自定义模板' : '');
 
 function openForm(c: Customer | null) {
   editing.value = c;
-  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', resetDay: c?.reset_day ? String(c.reset_day) : '' };
+  const tpl = c?.sub_template ?? '';
+  const custom = /^https:/.test(tpl);
+  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', resetDay: c?.reset_day ? String(c.reset_day) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '' };
   showForm.value = true;
 }
 
@@ -60,7 +75,7 @@ function opsNote(ops: EnforceOp[]): string {
 
 async function submit() {
   saving.value = true;
-  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.resetDay === '' ? 0 : Number(form.value.resetDay) };
+  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.resetDay === '' ? 0 : Number(form.value.resetDay), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template };
   try {
     const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
     showForm.value = false;
@@ -297,6 +312,7 @@ function exitText(l: Line): string {
           <span class="small" :class="{ 'text-warn': dueLevel(c.expire_at) === 'warn', 'text-err': dueLevel(c.expire_at) === 'err', muted: !c.expire_at }" :title="fmtDate(c.expire_at)">
             {{ fmtDue(c.expire_at) }}
           </span>
+          <span v-if="c.sub_template" class="muted small" :title="c.sub_template">模板:{{ templateName(c.sub_template) }}</span>
           <span v-if="c.reset_day" class="muted small" :title="c.last_reset_at ? `上次清零 ${fmtDateTime(c.last_reset_at)}` : '还没清过'">每月 {{ c.reset_day }} 号清零</span>
         </div>
         <div class="ops">
@@ -359,6 +375,14 @@ function exitText(l: Line): string {
         <button type="button" class="link" @click="extend(365)">+1 年</button>
         <span class="muted small">(从到期日起算,已到期的从今天起算)</span>
       </div>
+      <label class="field">
+        订阅模板(Clash / Mihomo / Stash / Shadowrocket 的分组和规则)
+        <select v-model="form.template">
+          <option v-for="t in templates" :key="t.id" :value="t.id === templateDefault ? '' : t.id">{{ t.name }} — {{ t.desc }}</option>
+          <option value="custom">自定义模板地址…</option>
+        </select>
+      </label>
+      <label v-if="form.template === 'custom'" class="field">模板地址<input v-model="form.customTemplate" required placeholder="https://… subconverter 的 ini 模板" /></label>
       <p class="muted small hint">流量按客户所有线路加总,每分钟从面板同步一次;超额或到期后自动停用他的全部客户端,改大额度、延后到期或清零流量会自动恢复。设了清零日,每月这天 0 点自动把他的流量清零。</p>
     </form>
     <template #footer>

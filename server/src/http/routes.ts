@@ -25,6 +25,7 @@ import { importClients } from '../lines/import';
 import { resetCustomerUsage } from '../lines/reset';
 import { broadcast, channelsFor } from '../notify/send';
 import { getSettings, updateSettings } from '../settings';
+import { DEFAULT_TEMPLATE, TEMPLATES } from '../subscription/templates';
 import { listSubFetches, subClientCounts } from '../subscription/fetchLog';
 import { enforceCustomers } from '../lines/enforce';
 import { openLine, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
@@ -268,6 +269,8 @@ export function apiRouter(deps: RouteDeps): Router {
   };
   const customerOf = (id: number) => withSub([plainCustomer(id)])[0];
   r.get('/customers', wrap(() => withSub(listCustomers(db))));
+  // 可选的 Clash 订阅模板(内置的);客户也可以填自定义地址
+  r.get('/sub-templates', wrap(() => ({ default: DEFAULT_TEMPLATE, templates: TEMPLATES.map(({ id, name, desc }) => ({ id, name, desc })) })));
   // 重置订阅链接:换一个 token,客户手里的旧链接立即失效
   r.post(
     '/customers/:id/sub-token',
