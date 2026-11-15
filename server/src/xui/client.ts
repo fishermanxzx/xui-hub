@@ -169,6 +169,18 @@ export class XUIClient {
     if (state !== 'running') throw new XUIError(`Xray 没有恢复运行(${state || '读不到状态'}),看面板日志`);
   }
 
+  /** 重启面板(3x-ui 自己的网页服务)并等它重新应答(最多约 40 秒);没回来就抛错 */
+  async restartPanel(): Promise<void> {
+    await this.req('POST', '/setting/restartPanel');
+    // 面板回完这个请求过两三秒才真的重启,先等它停下再开始探
+    await new Promise((r) => setTimeout(r, 4000));
+    for (let i = 0; i < 24; i++) {
+      if (await this.req('GET', '/server/status').then(() => true, () => false)) return;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    throw new XUIError('面板重启后没有恢复应答,去服务器上看一下(x-ui status)');
+  }
+
   /** 面板设置里面板自己用的证书路径(新建 hy2 入站用这份证书) */
   async panelCert(): Promise<{ certFile: string; keyFile: string }> {
     const s = await this.req<any>('POST', '/setting/all');

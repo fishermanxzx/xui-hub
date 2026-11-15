@@ -101,6 +101,23 @@ async function switchXray() {
   }
 }
 
+// ---------- 重启面板和内核 ----------
+const restarting = ref(false);
+async function restart() {
+  if (!confirm(`重启「${props.panel.name}」的面板和 Xray 内核?上面所有客户端会断流几秒,面板后台也会短暂打不开。`)) return;
+  restarting.value = true;
+  try {
+    await api.restartPanel(props.panel.id);
+    toast('面板和内核已重启');
+    emit('changed');
+  } catch (e) {
+    toastError(e);
+    emit('changed');
+  } finally {
+    restarting.value = false;
+  }
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function upgradePanel() {
@@ -254,6 +271,7 @@ async function removeClient(c: PanelClient) {
         <button class="primary small-btn" @click="openCreate">创建客户端</button>
         <button class="link" :disabled="checking" @click="check">{{ checking ? '检查中…' : '检查' }}</button>
         <button class="link" :disabled="!!panel.check_error" @click="openXray">内核版本</button>
+        <button class="link" :disabled="restarting" title="重启面板和 Xray 内核" @click="restart">{{ restarting ? '重启中…' : '重启' }}</button>
         <a class="link" :href="panel.base_url" target="_blank" rel="noopener noreferrer" title="需要用面板的账号密码登录">打开面板</a>
         <button class="link" @click="emit('edit')">编辑</button>
         <button class="link danger" @click="emit('remove')">删除</button>

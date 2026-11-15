@@ -46,6 +46,7 @@ export interface PanelClient extends ClientAdmin, PanelReader, PanelProbe, LineA
   xrayVersions(): Promise<string[]>;
   panelUpdateInfo(): Promise<{ channel: string; current: string; latest: string; available: boolean } | null>;
   installXray(version: string): Promise<void>;
+  restartPanel(): Promise<void>;
   updatePanel(): Promise<string>;
   updateStatus(): Promise<{ runId: string; state: string; exitCode: number }>;
 }
@@ -222,6 +223,21 @@ export function apiRouter(deps: RouteDeps): Router {
       if (after.xray_state !== 'running') throw new InputError(`Xray 没有回到运行状态(${after.xray_state ?? '未知'}),去面板上看日志`);
       if (after.xray_version !== version.replace(/^v/, '')) throw new InputError(`Xray 仍是 ${after.xray_version},切换没有生效`);
       return view(after);
+    }),
+  );
+  // 重启面板和 Xray 内核:先重启面板、等它回来,再重启 Xray、等它回到 running(上面所有客户端断流几秒)
+  r.post(
+    '/panels/:id/restart',
+    wrap(async (req) => {
+      const panel = panelOf(req);
+      // 和改这块面板 Xray 配置的操作排队,不在别人改到一半时重启
+      await serial(panelKey(panel.id), () =>
+        withClient(panel, async (client) => {
+          await client.restartPanel();
+          await client.restartXray();
+        }),
+      );
+      return view(await checkPanel(db, panel, deps.clientFor(panel)));
     }),
   );
   // 升级面板:面板自己在后台跑升级脚本,这里拿到 runId;前端轮询 update-status

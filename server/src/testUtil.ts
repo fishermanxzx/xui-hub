@@ -27,6 +27,7 @@ export type FakePanel = {
   xray: any;
   cert?: string;
   restarts: number;
+  panelRestarts?: number;
   fail?: Partial<Record<keyof PanelClient, string | Error>>;
   slow?: number;
   update?: { channel: string; current: string; latest: string; available: boolean } | null;
@@ -58,6 +59,9 @@ export function fakePanels(data: Record<string, FakePanel>) {
       xrayVersions: async () => ['v25.1.1'],
       panelUpdateInfo: async () => d.update ?? null,
       installXray: async () => {},
+      restartPanel: async () => {
+        d.panelRestarts = (d.panelRestarts ?? 0) + 1;
+      },
       updatePanel: async () => 'run-1',
       updateStatus: async () => ({ runId: 'run-1', state: 'success', exitCode: 0 }),
     };

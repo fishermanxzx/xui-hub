@@ -79,6 +79,7 @@ Authorization: Bearer xh_……
 |---|---|---|
 | GET | `/panels` | 面板列表(拿 `panel_id`) |
 | GET | `/panels/:id/inbounds` | 面板上的入站和客户端 |
+| POST | `/panels/:id/restart` | 重启面板和 Xray 内核,等两个都恢复才返回(一般十几秒);上面所有客户端会断流几秒 |
 | GET | `/socks` | SOCKS 代理列表 |
 | GET | `/sub-templates` | 内置的订阅模板 |
 | POST | `/sync` | 立即同步全部面板的流量并执行额度 / 到期 |

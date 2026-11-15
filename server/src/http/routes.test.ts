@@ -408,6 +408,13 @@ test('版本信息:面板不报可升级信息、取不到 Xray 版本列表时�
     assert.equal(getPanel(db, a.id)!.panel_version, null);
     assert.deepEqual((await call('GET', `/panels/${a.id}/update-status`)).body, { runId: 'run-1', state: 'success', exitCode: 0 });
     assert.equal(getPanel(db, a.id)!.panel_version, '3.0.0');
+
+    // 重启:面板和 Xray 各重启一次,回来的是检查后的面板;面板重启报错就不往下重启 Xray
+    const restarted = await call('POST', `/panels/${a.id}/restart`);
+    assert.deepEqual([restarted.status, restarted.body.xray_state, data.a.panelRestarts, data.a.restarts], [200, 'running', 1, 1]);
+    data.a.fail = { ...data.a.fail, restartPanel: '面板重启后没有恢复应答' };
+    const stuck = await call('POST', `/panels/${a.id}/restart`);
+    assert.deepEqual([stuck.status, /没有恢复应答/.test(stuck.body.error), data.a.restarts], [500, true, 1]);
   } finally {
     await close();
   }

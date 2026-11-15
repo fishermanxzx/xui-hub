@@ -40,6 +40,8 @@ export const api = {
   panelInbounds: (id: number) => call<PanelDetail>('GET', `/api/panels/${id}/inbounds`),
   panelVersions: (id: number) => call<PanelVersions>('GET', `/api/panels/${id}/versions`),
   /** 切换 Xray 内核版本,面板会重启 Xray */
+  /** 重启面板和 Xray 内核,等两个都恢复才返回 */
+  restartPanel: (id: number) => call<Panel>('POST', `/api/panels/${id}/restart`),
   installXray: (id: number, version: string) => call<Panel>('POST', `/api/panels/${id}/xray/${encodeURIComponent(version)}`),
   /** 让面板升级自己;之后轮询 updateStatus */
   upgradePanel: (id: number) => call<{ run_id: string }>('POST', `/api/panels/${id}/update`),
