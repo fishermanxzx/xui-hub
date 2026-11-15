@@ -37,12 +37,15 @@ async function recheck() {
   }
 }
 
+/** 从源码直接跑的没有版本号,不写成「vdev」 */
+const label = (v: string) => (/^\d/.test(v) ? `v${v}` : '开发版');
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function update() {
   const i = info.value;
   if (!i?.latest) return;
-  if (!confirm(`把 xui-hub 从 v${i.current} 更新到 v${i.latest}?更新时后台会重启,大约一分钟打不开;客户的节点不受影响,订阅链接在重启的几秒里拉不到。`)) return;
+  if (!confirm(`把 xui-hub 从 ${label(i.current)} 更新到 v${i.latest}?更新时后台会重启,大约一分钟打不开;客户的节点不受影响,订阅链接在重启的几秒里拉不到。`)) return;
   const from = i.current;
   waiting.value = true;
   waitNote.value = '已开始更新,正在下载新版本…';
@@ -92,13 +95,13 @@ onUnmounted(() => {
 
 <template>
   <button v-if="info" class="version" :class="{ fresh: info.update_available }" :title="info.update_available ? `有新版本 v${info.latest},点开更新` : '当前版本,点开检查更新'" @click="open = true">
-    v{{ info.current }}<span v-if="info.update_available" class="new">有新版本 v{{ info.latest }}</span>
+    {{ label(info.current) }}<span v-if="info.update_available" class="new">有新版本 v{{ info.latest }}</span>
   </button>
 
   <Modal v-if="open && info" title="xui-hub 版本" @close="open = false">
     <dl class="facts">
       <dt>当前版本</dt>
-      <dd>v{{ info.current }}</dd>
+      <dd>{{ label(info.current) }}</dd>
       <dt>最新版本</dt>
       <dd>
         <template v-if="info.latest">v{{ info.latest }}<span v-if="!info.update_available" class="muted">(已是最新)</span></template>
