@@ -18,6 +18,11 @@ function x25519() {
   return { privateKey: privateKey.export({ format: 'jwk' }).d!, publicKey: publicKey.export({ format: 'jwk' }).x! };
 }
 
+/** 内置 reality 入站伪装成的站点 */
+const REALITY_SITE = 'www.sony.com';
+/** 0.12.2 及更早的内置模板用的站点:伪装成它的入站在一些内核版本上握手必定失败(节点全部超时),照这种入站复制时换掉 */
+const BROKEN_SITE = 'www.microsoft.com';
+
 const shortIds = () => [2, 4, 6, 8, 10, 12, 14, 16].map((n) => randomBytes(n / 2).toString('hex'));
 
 const withStream = (template: any, stream: any) => ({
@@ -34,6 +39,10 @@ export function freshReality(template: any): any {
   reality.privateKey = keys.privateKey;
   reality.shortIds = shortIds();
   reality.mldsa65Seed = '';
+  if (String(reality.target ?? '') === `${BROKEN_SITE}:443`) {
+    reality.target = `${REALITY_SITE}:443`;
+    reality.serverNames = [REALITY_SITE];
+  }
   reality.settings = { ...(reality.settings ?? {}), publicKey: keys.publicKey, spiderX: `/${randomBytes(12).toString('base64url')}`, mldsa65Verify: '' };
   stream.realitySettings = reality;
   return withStream(template, stream);
@@ -53,7 +62,7 @@ export function freshHysteria(template: any, cert: { certFile: string; keyFile: 
   return withStream(template, stream);
 }
 
-/** 内置的 vless + tcp + reality 入站(伪装 www.microsoft.com),面板上一个入站都没有时用 */
+/** 内置的 vless + tcp + reality 入站(伪装 www.sony.com),面板上一个入站都没有时用 */
 export function builtinVlessReality(): any {
   const keys = x25519();
   return {
@@ -74,8 +83,8 @@ export function builtinVlessReality(): any {
       realitySettings: {
         show: false,
         xver: 0,
-        target: 'www.microsoft.com:443',
-        serverNames: ['www.microsoft.com'],
+        target: `${REALITY_SITE}:443`,
+        serverNames: [REALITY_SITE],
         privateKey: keys.privateKey,
         minClientVer: '',
         maxClientVer: '',

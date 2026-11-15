@@ -4,6 +4,7 @@ import type { Panel } from '../panels/repo';
 import { decodeJson } from '../xui/json';
 import { addPanel, memoryDb } from '../testUtil';
 import { createClient, emailFor, protocolOf, type ClientAdmin } from './create';
+import { freshReality } from './templates';
 
 const reality = (key: string) => ({
   network: 'tcp',
@@ -103,7 +104,7 @@ test('没有入站时新建:照其他面板的 reality 入站复制并换密钥,
   data.c = { inbounds: [], clients: [] };
   const builtin = await createClient(c, adminFor(c), { name: 'w' }, { otherPanels: [c], adminFor });
   assert.equal(builtin.inbound.created, true);
-  assert.equal(decodeJson(data.c.inbounds[0].streamSettings).realitySettings.serverNames[0], 'www.microsoft.com');
+  assert.equal(decodeJson(data.c.inbounds[0].streamSettings).realitySettings.serverNames[0], 'www.sony.com');
 
   // 端口探测失败:删掉刚建的入站并报错
   const d = addPanel(db, 'd');
@@ -150,4 +151,10 @@ test('hy2:照其他面板的 hy2 入站建,证书换成本面板的、混淆密�
   data.nocert = { inbounds: [], clients: [] };
   await assert.rejects(createClient(noCert, adminFor(noCert), { name: 'x', protocol: 'hy2' }, { otherPanels: [noCert, b], adminFor }), /证书/);
   await assert.rejects(createClient(noCert, adminFor(noCert), { name: 'x', protocol: 'hy2' }, { otherPanels: [noCert], adminFor }), /证书/);
+});
+
+test('照旧内置模板(伪装 www.microsoft.com)建的入站复制时,伪装换成 www.sony.com;别的伪装原样沿用', () => {
+  const made = (site: string) => decodeJson(freshReality({ protocol: 'vless', streamSettings: JSON.stringify({ network: 'tcp', security: 'reality', realitySettings: { target: `${site}:443`, serverNames: [site] } }) }).streamSettings).realitySettings;
+  assert.deepEqual([made('www.microsoft.com').target, made('www.microsoft.com').serverNames], ['www.sony.com:443', ['www.sony.com']]);
+  assert.deepEqual([made('www.example.com').target, made('www.example.com').serverNames], ['www.example.com:443', ['www.example.com']]);
 });
