@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 节点链接二维码:在浏览器里生成,不经过第三方服务。客户端(Shadowrocket、v2rayN、Hiddify 等)扫码即可添加节点。
 // 颜色固定为深色模块 + 白底(不跟随深色模式),否则不少扫码器认不出。
+import { t } from '../i18n';
 import qrcode from 'qrcode-generator';
 import { computed } from 'vue';
 
@@ -53,13 +54,13 @@ function save() {
 
 <template>
   <figure class="qr">
-    <svg :viewBox="`0 0 ${svg.size} ${svg.size}`" role="img" :aria-label="`${name} 的二维码`" shape-rendering="crispEdges">
+    <svg :viewBox="`0 0 ${svg.size} ${svg.size}`" role="img" :aria-label="t('qr.aria', { name })" shape-rendering="crispEdges">
       <rect :width="svg.size" :height="svg.size" fill="#ffffff" />
       <path :d="svg.d" :fill="DARK" />
     </svg>
     <figcaption>
-      <p>用客户端的扫码功能扫描，直接添加节点。</p>
-      <button type="button" @click="save">保存图片</button>
+      <p>{{ t('qr.hint') }}</p>
+      <button type="button" @click="save">{{ t('qr.save') }}</button>
     </figcaption>
   </figure>
 </template>

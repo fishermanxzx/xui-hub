@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // 一块面板一张卡片:头部是名称、地址、连接状态和操作;展开后现取入站和 client,可在卡片里创建客户端、看链接、删 client。
+import { t } from '../i18n';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
 import { dueLevel, fmtAgo, fmtBytes, fmtDue, hostOf } from '../format';
@@ -37,7 +38,7 @@ async function check() {
   checking.value = true;
   try {
     const p = await api.checkPanel(props.panel.id);
-    toast(p.check_error ? `连不上:${p.check_error}` : '连接正常', p.check_error ? 'err' : 'ok');
+    toast(p.check_error ? t('card.down', { error: p.check_error }) : t('card.ok'), p.check_error ? 'err' : 'ok');
     emit('changed');
     if (props.open) await load();
   } catch (e) {
@@ -86,11 +87,11 @@ async function openXray() {
 async function switchXray() {
   const v = xrayPick.value;
   if (!v) return;
-  if (!confirm(`把「${props.panel.name}」的 Xray 内核切换到 ${v}?面板会下载对应版本并重启 Xray,上面所有客户端会断流几秒。`)) return;
+  if (!confirm(t('card.confirmXray', { name: props.panel.name, v }))) return;
   switching.value = true;
   try {
     await api.installXray(props.panel.id, v);
-    toast(`内核已切换到 ${v}`);
+    toast(t('card.xraySwitched', { v }));
     showXray.value = false;
     versions.value = null;
     emit('changed');
@@ -104,11 +105,11 @@ async function switchXray() {
 // ---------- 重启面板和内核 ----------
 const restarting = ref(false);
 async function restart() {
-  if (!confirm(`重启「${props.panel.name}」的面板和 Xray 内核?上面所有客户端会断流几秒,面板后台也会短暂打不开。`)) return;
+  if (!confirm(t('card.confirmRestart', { name: props.panel.name }))) return;
   restarting.value = true;
   try {
     await api.restartPanel(props.panel.id);
-    toast('面板和内核已重启');
+    toast(t('card.restarted'));
     emit('changed');
   } catch (e) {
     toastError(e);
@@ -122,9 +123,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function upgradePanel() {
   const latest = versions.value?.panel.latest;
-  if (!confirm(`升级面板「${props.panel.name}」${latest ? `到 ${latest}` : ''}?面板会自己下载新版本并重启,期间短暂不可用。`)) return;
+  if (!confirm(latest ? t('card.confirmUpgradeTo', { name: props.panel.name, v: latest }) : t('card.confirmUpgrade', { name: props.panel.name }))) return;
   upgrading.value = true;
-  upgradeNote.value = '已通知面板开始升级…';
+  upgradeNote.value = t('card.upgradeNotified');
   try {
     const { run_id } = await api.upgradePanel(props.panel.id);
     // 面板在后台跑升级脚本,这里每 5 秒问一次结果,最多等 5 分钟
@@ -134,20 +135,20 @@ async function upgradePanel() {
       try {
         st = await api.updateStatus(props.panel.id);
       } catch {
-        upgradeNote.value = '面板正在重启,等它回来…';
+        upgradeNote.value = t('card.upgradeRestarting');
         continue;
       }
       if (st.runId === run_id && st.state === 'success') {
-        toast('面板升级完成');
+        toast(t('card.upgradeDone'));
         upgradeNote.value = '';
         versions.value = null;
         emit('changed');
         return;
       }
-      if (st.runId === run_id && st.state === 'failed') throw new Error(`面板升级失败(退出码 ${st.exitCode}),去面板日志里看原因`);
-      upgradeNote.value = `升级中…(${(i + 1) * 5} 秒)`;
+      if (st.runId === run_id && st.state === 'failed') throw new Error(t('card.upgradeFailed', { code: st.exitCode }));
+      upgradeNote.value = t('card.upgradeProgress', { n: (i + 1) * 5 });
     }
-    throw new Error('等了 5 分钟面板还没报告结果,去面板上确认');
+    throw new Error(t('card.upgradeTimeout'));
   } catch (e) {
     toastError(e);
     upgradeNote.value = '';
@@ -172,7 +173,7 @@ async function create() {
   creating.value = true;
   try {
     created.value = await api.createClient(props.panel.id, form.value.name, form.value.protocol);
-    toast(created.value.inbound.created ? `已创建,并新建了入站 ${created.value.inbound.remark}(端口 ${created.value.inbound.port})` : '已创建');
+    toast(created.value.inbound.created ? t('card.createdWithInbound', { remark: created.value.inbound.remark, port: created.value.inbound.port }) : t('card.created'));
     emit('changed');
     void load();
   } catch (e) {
@@ -208,7 +209,7 @@ async function assign() {
     const id = assignTo.value === 'new' ? (await api.createCustomer({ name: newName.value })).id : assignTo.value;
     const r = await api.importClients(id, props.panel.id, [assignFor.value.email]);
     if (r.failed.length) throw new Error(r.failed[0].error);
-    toast(`已归入客户「${r.customer.name}」`);
+    toast(t('card.assigned', { name: r.customer.name }));
     assignFor.value = null;
     emit('changed');
     await load();
@@ -235,10 +236,10 @@ async function showLinks(c: PanelClient) {
 }
 
 async function removeClient(c: PanelClient) {
-  if (!confirm(`删除客户端「${c.email}」?会从面板上删掉这个 client,它的链接立即失效;它要是某位客户的线路,线路也一并删掉。`)) return;
+  if (!confirm(t('card.confirmDeleteClient', { email: c.email }))) return;
   try {
     const { line_removed } = await api.deleteClient(props.panel.id, c.email);
-    toast(line_removed ? '已删除,客户名下的这条线路也一并删了' : '已删除');
+    toast(line_removed ? t('card.deletedWithLine') : t('card.deleted'));
     emit('changed');
     await load();
   } catch (e) {
@@ -256,159 +257,159 @@ async function removeClient(c: PanelClient) {
         <span class="muted small host">{{ hostOf(panel.base_url) }}</span>
       </button>
       <div class="facts small">
-        <span v-if="panel.check_error" class="text-err" :title="panel.check_error">连不上:{{ panel.check_error.slice(0, 36) }}</span>
+        <span v-if="panel.check_error" class="text-err" :title="panel.check_error">{{ t('card.down', { error: panel.check_error.slice(0, 36) }) }}</span>
         <template v-else-if="panel.check_ok_at">
-          <span class="text-ok">正常</span>
-          <span class="muted">{{ panel.inbound_count ?? 0 }} 入站 · {{ panel.client_count ?? 0 }} 客户端 · {{ fmtAgo(panel.check_ok_at) }}检查</span>
-          <span v-if="panel.panel_version" class="muted">面板 {{ panel.panel_version }}</span>
+          <span class="text-ok">{{ t('card.statusOk') }}</span>
+          <span class="muted">{{ t('card.summary', { inbounds: panel.inbound_count ?? 0, clients: panel.client_count ?? 0, ago: fmtAgo(panel.check_ok_at) }) }}</span>
+          <span v-if="panel.panel_version" class="muted">{{ t('card.panelVersion', { v: panel.panel_version }) }}</span>
           <span v-if="panel.xray_version" :class="panel.xray_state === 'running' ? 'muted' : 'text-err'" :title="panel.xray_state ?? ''">
-            内核 {{ panel.xray_version }}<template v-if="panel.xray_state && panel.xray_state !== 'running'">({{ panel.xray_state }})</template>
+            {{ t('card.xrayVersion', { v: panel.xray_version }) }}<template v-if="panel.xray_state && panel.xray_state !== 'running'">({{ panel.xray_state }})</template>
           </span>
         </template>
-        <span v-else class="muted">还没检查</span>
+        <span v-else class="muted">{{ t('card.notChecked') }}</span>
       </div>
       <div class="ops">
-        <button class="primary small-btn" @click="openCreate">创建客户端</button>
-        <button class="link" :disabled="checking" @click="check">{{ checking ? '检查中…' : '检查' }}</button>
-        <button class="link" :disabled="!!panel.check_error" @click="openXray">内核版本</button>
-        <button class="link" :disabled="restarting" title="重启面板和 Xray 内核" @click="restart">{{ restarting ? '重启中…' : '重启' }}</button>
-        <a class="link" :href="panel.base_url" target="_blank" rel="noopener noreferrer" title="需要用面板的账号密码登录">打开面板</a>
-        <button class="link" @click="emit('edit')">编辑</button>
-        <button class="link danger" @click="emit('remove')">删除</button>
+        <button class="primary small-btn" @click="openCreate">{{ t('card.createClient') }}</button>
+        <button class="link" :disabled="checking" @click="check">{{ checking ? t('card.checking') : t('card.check') }}</button>
+        <button class="link" :disabled="!!panel.check_error" @click="openXray">{{ t('card.xray') }}</button>
+        <button class="link" :disabled="restarting" :title="t('card.restartHint')" @click="restart">{{ restarting ? t('card.restarting') : t('card.restart') }}</button>
+        <a class="link" :href="panel.base_url" target="_blank" rel="noopener noreferrer" :title="t('card.openPanelHint')">{{ t('card.openPanel') }}</a>
+        <button class="link" @click="emit('edit')">{{ t('common.edit') }}</button>
+        <button class="link danger" @click="emit('remove')">{{ t('common.delete') }}</button>
       </div>
     </header>
 
     <div v-if="open" class="body">
       <div v-if="error" class="notice small">
-        读取面板失败:{{ error }}
-        <button class="link" :disabled="loading" @click="load">重试</button>
+        {{ t('card.loadFailed', { error }) }}
+        <button class="link" :disabled="loading" @click="load">{{ t('card.retry') }}</button>
       </div>
-      <p v-else-if="!detail" class="muted small loading">正在读取入站和 client…</p>
+      <p v-else-if="!detail" class="muted small loading">{{ t('card.loadingDetail') }}</p>
       <template v-else>
         <div class="meta small">
-          <span class="muted">读取于 {{ fmtAgo(detail.fetched_at) }}</span>
-          <button class="link" :disabled="loading" @click="load">{{ loading ? '读取中…' : '刷新' }}</button>
+          <span class="muted">{{ t('card.fetchedAt', { ago: fmtAgo(detail.fetched_at) }) }}</span>
+          <button class="link" :disabled="loading" @click="load">{{ loading ? t('common.loading') : t('common.refresh') }}</button>
           <span class="spacer" />
           <template v-if="versions">
-            <span class="muted">面板 {{ versions.panel.current }}</span>
+            <span class="muted">{{ t('card.panelVersion', { v: versions.panel.current }) }}</span>
             <template v-if="versions.panel.update_available">
-              <span class="text-warn">可升级到 {{ versions.panel.latest }}</span>
-              <button class="link" :disabled="upgrading" @click="upgradePanel">{{ upgrading ? '升级中…' : '升级面板' }}</button>
+              <span class="text-warn">{{ t('card.canUpgrade', { v: versions.panel.latest }) }}</span>
+              <button class="link" :disabled="upgrading" @click="upgradePanel">{{ upgrading ? t('card.upgrading') : t('card.upgrade') }}</button>
             </template>
-            <span v-else-if="versions.panel.latest" class="muted">已是最新</span>
-            <span v-else class="muted">(查不到最新版本)</span>
+            <span v-else-if="versions.panel.latest" class="muted">{{ t('card.isLatest') }}</span>
+            <span v-else class="muted">{{ t('card.latestUnknown') }}</span>
             <span v-if="upgradeNote" class="muted">{{ upgradeNote }}</span>
           </template>
-          <button v-else class="link" :disabled="loadingVersions" @click="loadVersions">{{ loadingVersions ? '查询中…' : '检查面板更新' }}</button>
+          <button v-else class="link" :disabled="loadingVersions" @click="loadVersions">{{ loadingVersions ? t('card.querying') : t('card.checkPanelUpdate') }}</button>
         </div>
         <section v-for="g in groups" :key="g.key" class="inbound" :class="{ off: g.inbound && !g.inbound.enable }">
           <header class="ib-head">
             <template v-if="g.inbound">
-              <strong>{{ g.inbound.remark || '(无名称)' }}</strong>
+              <strong>{{ g.inbound.remark || t('card.unnamed') }}</strong>
               <span class="chip">{{ PROTOCOL[g.inbound.protocol] ?? g.inbound.protocol }} {{ g.inbound.port }}</span>
               <span v-if="g.inbound.transport" class="muted small">{{ g.inbound.transport }}</span>
-              <span v-if="!g.inbound.enable" class="badge warn">已停用</span>
+              <span v-if="!g.inbound.enable" class="badge warn">{{ t('card.inboundOff') }}</span>
             </template>
-            <strong v-else>没挂在任何入站上</strong>
+            <strong v-else>{{ t('card.unattached') }}</strong>
             <span class="spacer" />
-            <span class="muted small">{{ g.clients.length }} 个客户端</span>
+            <span class="muted small">{{ t('card.clientCount', { n: g.clients.length }, g.clients.length) }}</span>
           </header>
           <ul v-if="g.clients.length" class="clients">
             <li v-for="c in g.clients" :key="c.email" class="client">
-              <span class="email">{{ c.email }}<span v-if="!c.enable" class="badge err">停用</span><span v-if="c.customer" class="chip owner" :title="`客户「${c.customer.name}」的线路`">{{ c.customer.name }}</span></span>
+              <span class="email">{{ c.email }}<span v-if="!c.enable" class="badge err">{{ t('card.clientOff') }}</span><span v-if="c.customer" class="chip owner" :title="t('card.ownerHint', { name: c.customer.name })">{{ c.customer.name }}</span></span>
               <span class="stats small">
-                <span class="muted">已用 {{ fmtBytes(c.up + c.down) }}<template v-if="c.total_bytes"> / {{ fmtBytes(c.total_bytes) }}</template></span>
+                <span class="muted">{{ t('card.used', { used: fmtBytes(c.up + c.down) }) }}<template v-if="c.total_bytes"> / {{ fmtBytes(c.total_bytes) }}</template></span>
                 <span :class="{ 'text-warn': dueLevel(c.expiry_ms) === 'warn', 'text-err': dueLevel(c.expiry_ms) === 'err', muted: !c.expiry_ms }">{{ fmtDue(c.expiry_ms) }}</span>
-                <span class="muted">在线 {{ fmtAgo(c.last_online, '—') }}</span>
+                <span class="muted">{{ t('card.online', { ago: fmtAgo(c.last_online, '—') }) }}</span>
               </span>
               <span class="c-ops">
-                <button class="link" :disabled="loadingLinks === c.email" @click="showLinks(c)">{{ loadingLinks === c.email ? '读取中…' : '链接' }}</button>
-                <button v-if="!c.customer && g.inbound?.accepts_clients" class="link" title="记成某位客户的线路,面板上不改" @click="openAssign(c)">归入客户</button>
-                <button class="link danger" @click="removeClient(c)">删除</button>
+                <button class="link" :disabled="loadingLinks === c.email" @click="showLinks(c)">{{ loadingLinks === c.email ? t('common.loading') : t('card.links') }}</button>
+                <button v-if="!c.customer && g.inbound?.accepts_clients" class="link" :title="t('card.assignHint')" @click="openAssign(c)">{{ t('card.assign') }}</button>
+                <button class="link danger" @click="removeClient(c)">{{ t('common.delete') }}</button>
               </span>
             </li>
           </ul>
-          <p v-else class="muted small none">没有客户端</p>
+          <p v-else class="muted small none">{{ t('card.noClients') }}</p>
         </section>
-        <p v-if="!groups.length" class="empty small">面板上还没有入站。点「创建客户端」,会自动建一个。</p>
+        <p v-if="!groups.length" class="empty small">{{ t('card.noInbounds') }}</p>
       </template>
     </div>
   </article>
 
-  <Modal v-if="showCreate" :title="created ? `客户端「${created.email}」已创建` : `在「${panel.name}」上创建客户端`" @close="showCreate = false">
+  <Modal v-if="showCreate" :title="created ? t('card.createdTitle', { email: created.email }) : t('card.createTitle', { name: panel.name })" @close="showCreate = false">
     <form v-if="!created" id="client-form" class="form" @submit.prevent="create">
-      <label class="field">名称<input v-model="form.name" required placeholder="如 zhangsan,作为面板上 client 的 email" /></label>
+      <label class="field">{{ t('card.name') }}<input v-model="form.name" required :placeholder="t('card.namePlaceholder')" /></label>
       <div class="protocol-field">
-        <span class="label">协议</span>
+        <span class="label">{{ t('card.protocol') }}</span>
         <div class="protocols">
-          <label class="row small"><input v-model="form.protocol" type="radio" value="vless" />vless(reality,TCP)</label>
-          <label class="row small"><input v-model="form.protocol" type="radio" value="hy2" />hy2(hysteria2,UDP)</label>
+          <label class="row small"><input v-model="form.protocol" type="radio" value="vless" />{{ t('card.protoVless') }}</label>
+          <label class="row small"><input v-model="form.protocol" type="radio" value="hy2" />{{ t('card.protoHy2') }}</label>
         </div>
       </div>
-      <p class="muted small hint">面板上已有这个协议的入站就直接挂上去;没有就自动新建一个(hy2 需要面板已配置证书)。</p>
+      <p class="muted small hint">{{ t('card.createHint') }}</p>
     </form>
     <template v-else>
       <p class="muted small">
-        挂在入站 {{ created.inbound.remark || created.inbound.port }}(端口 {{ created.inbound.port }})<template v-if="created.inbound.created">,这个入站是刚新建的</template>。把下面的链接或二维码发给使用者。
+        {{ t(created.inbound.created ? 'card.createdOnNew' : 'card.createdOn', { inbound: created.inbound.remark || created.inbound.port, port: created.inbound.port }) }}
       </p>
       <ClientLinks :links="created.links" :name="created.email" />
     </template>
     <template #footer>
       <span class="spacer" />
       <template v-if="!created">
-        <button @click="showCreate = false">取消</button>
-        <button class="primary" form="client-form" :disabled="creating">{{ creating ? '创建中…' : '创建' }}</button>
+        <button @click="showCreate = false">{{ t('common.cancel') }}</button>
+        <button class="primary" form="client-form" :disabled="creating">{{ creating ? t('card.creating') : t('card.create') }}</button>
       </template>
       <template v-else>
-        <button @click="created = null">再创建一个</button>
-        <button class="primary" @click="showCreate = false">完成</button>
+        <button @click="created = null">{{ t('card.another') }}</button>
+        <button class="primary" @click="showCreate = false">{{ t('card.done') }}</button>
       </template>
     </template>
   </Modal>
 
-  <Modal v-if="showXray" :title="`「${panel.name}」的 Xray 内核`" @close="showXray = false">
-    <p v-if="!versions" class="muted small">{{ loadingVersions ? '正在从面板读取版本…' : '读取失败,关掉重试' }}</p>
+  <Modal v-if="showXray" :title="t('card.xrayTitle', { name: panel.name })" @close="showXray = false">
+    <p v-if="!versions" class="muted small">{{ loadingVersions ? t('card.readingVersions') : t('card.readFailed') }}</p>
     <template v-else>
       <p class="small">
-        当前 <strong>{{ versions.xray.current || '未知' }}</strong>
-        <span :class="versions.xray.state === 'running' ? 'text-ok' : 'text-err'">{{ versions.xray.state === 'running' ? '运行中' : versions.xray.state || '状态未知' }}</span>
+        {{ t('card.current') }} <strong>{{ versions.xray.current || t('card.unknown') }}</strong>
+        <span :class="versions.xray.state === 'running' ? 'text-ok' : 'text-err'">{{ versions.xray.state === 'running' ? t('card.running') : versions.xray.state || t('card.stateUnknown') }}</span>
         <span v-if="versions.xray.error" class="text-err">{{ versions.xray.error }}</span>
       </p>
       <label class="field">
-        切换到
+        {{ t('card.switchTo') }}
         <select v-model="xrayPick">
-          <option v-for="v in versions.xray.available" :key="v" :value="v">{{ v }}{{ v.replace(/^v/, '') === versions.xray.current ? '(当前)' : '' }}</option>
+          <option v-for="v in versions.xray.available" :key="v" :value="v">{{ v }}{{ v.replace(/^v/, '') === versions.xray.current ? t('card.currentMark') : '' }}</option>
         </select>
       </label>
-      <p class="muted small hint">版本列表由面板从 GitHub 读取。切换时面板下载对应版本并重启 Xray,上面所有客户端断流几秒;切到更老的版本可能不支持现有入站的配置。</p>
+      <p class="muted small hint">{{ t('card.xrayHint') }}</p>
     </template>
     <template #footer>
       <span class="spacer" />
-      <button @click="showXray = false">取消</button>
-      <button class="primary" :disabled="!versions || switching || !xrayPick || xrayPick.replace(/^v/, '') === versions.xray.current" @click="switchXray">{{ switching ? '切换中…' : '切换' }}</button>
+      <button @click="showXray = false">{{ t('common.cancel') }}</button>
+      <button class="primary" :disabled="!versions || switching || !xrayPick || xrayPick.replace(/^v/, '') === versions.xray.current" @click="switchXray">{{ switching ? t('card.switching') : t('card.switch') }}</button>
     </template>
   </Modal>
 
-  <Modal v-if="assignFor" :title="`把「${assignFor.email}」归入客户`" @close="assignFor = null">
+  <Modal v-if="assignFor" :title="t('card.assignTitle', { email: assignFor.email })" @close="assignFor = null">
     <form id="assign-form" class="form" @submit.prevent="assign">
-      <p class="muted small">面板上不会改任何东西,只是把这个客户端记成该客户的一条直连线路:之后它的流量计入客户额度,超额 / 到期会被停用,订阅里也会带上它。</p>
+      <p class="muted small">{{ t('card.assignIntro') }}</p>
       <label class="field">
-        客户
+        {{ t('card.customer') }}
         <select v-model="assignTo">
           <option v-for="x in customers" :key="x.id" :value="x.id">{{ x.name }}{{ x.remark ? ` · ${x.remark}` : '' }}</option>
-          <option value="new">新建客户…</option>
+          <option value="new">{{ t('card.newCustomer') }}</option>
         </select>
       </label>
-      <label v-if="assignTo === 'new'" class="field">新客户名称<input v-model="newName" required /></label>
+      <label v-if="assignTo === 'new'" class="field">{{ t('card.newCustomerName') }}<input v-model="newName" required /></label>
     </form>
     <template #footer>
       <span class="spacer" />
-      <button @click="assignFor = null">取消</button>
-      <button class="primary" form="assign-form" :disabled="assigning">{{ assigning ? '处理中…' : '归入' }}</button>
+      <button @click="assignFor = null">{{ t('common.cancel') }}</button>
+      <button class="primary" form="assign-form" :disabled="assigning">{{ assigning ? t('card.working') : t('card.assignDo') }}</button>
     </template>
   </Modal>
 
-  <Modal v-if="linksFor" :title="`「${linksFor.email}」的链接`" @close="linksFor = null">
+  <Modal v-if="linksFor" :title="t('card.linksTitle', { email: linksFor.email })" @close="linksFor = null">
     <ClientLinks :links="linksFor.links" :name="linksFor.email" />
   </Modal>
 </template>

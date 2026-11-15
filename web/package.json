@@ -12,7 +12,8 @@
     "@fontsource/inter": "^5.2.8",
     "cytoscape": "^3.34.4",
     "qrcode-generator": "^2.0.4",
-    "vue": "^3.5.13"
+    "vue": "^3.5.13",
+    "vue-i18n": "^11.4.20"
   },
   "devDependencies": {
     "@types/cytoscape": "^3.21.9",

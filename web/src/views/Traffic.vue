@@ -1,16 +1,13 @@
 <script setup lang="ts">
+import { t } from '../i18n';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
 import { fmtBytes } from '../format';
 import { toastError } from '../toast';
 import type { TrafficBy, TrafficReport, TrafficRow } from '../types';
 
-const RANGES = [
-  { days: 1, label: '今天' },
-  { days: 7, label: '7 天' },
-  { days: 30, label: '30 天' },
-  { days: 90, label: '90 天' },
-];
+const RANGES = [1, 7, 30, 90];
+const rangeLabel = (n: number) => (n === 1 ? t('traffic.today') : t('traffic.days', { n }));
 
 const by = ref<TrafficBy>('customer');
 const days = ref(30);
@@ -43,7 +40,13 @@ const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
 const totalUp = computed(() => sum(report.value?.total.up ?? []));
 const totalDown = computed(() => sum(report.value?.total.down ?? []));
 const total = computed(() => totalUp.value + totalDown.value);
-const noun = computed(() => (by.value === 'customer' ? '客户' : '面板'));
+const noun = computed(() => (by.value === 'customer' ? t('traffic.customer') : t('traffic.panel')));
+/** 行的名字:服务端给的「已删除 / 没归入」是中文占位,这里按界面语言重写;展开后的行(面板 · 客户端)原样显示 */
+function rowName(r: TrafficRow): string {
+  if (focus.value) return r.name;
+  if (r.deleted) return by.value === 'customer' ? t('traffic.deletedCustomer', { id: r.id }) : t('traffic.deletedPanel', { id: r.id });
+  return by.value === 'customer' && r.id === 0 ? t('traffic.unassigned') : r.name;
+}
 
 /** 纵轴上限:取到 1 / 2 / 5 × 1024 的幂,刻度读起来是整数 */
 function niceMax(v: number): number {
@@ -77,31 +80,31 @@ const maxRow = computed(() => Math.max(1, ...(report.value?.rows ?? []).map((r) 
 const share = (r: TrafficRow) => (total.value ? `${(((r.up + r.down) / total.value) * 100).toFixed(1)}%` : '—');
 const canOpen = (r: TrafficRow) => !focus.value;
 function open(r: TrafficRow) {
-  if (canOpen(r)) focus.value = { id: r.id, name: r.name };
+  if (canOpen(r)) focus.value = { id: r.id, name: rowName(r) };
 }
 </script>
 
 <template>
   <div class="toolbar">
     <div>
-      <h2>流量</h2>
-      <p class="muted small">每分钟同步面板时记下各客户端用的流量,按天汇总(从接入面板、升级到这个版本那一刻开始记,之前的没有)。面板上的客户端都算,没归入客户的单独一行。保留一年。</p>
+      <h2>{{ t('traffic.title') }}</h2>
+      <p class="muted small">{{ t('traffic.intro') }}</p>
     </div>
   </div>
 
   <div class="filters">
-    <div class="seg" role="group" aria-label="统计方式">
-      <button :class="{ on: by === 'customer' }" :aria-pressed="by === 'customer'" @click="setBy('customer')">按客户</button>
-      <button :class="{ on: by === 'panel' }" :aria-pressed="by === 'panel'" @click="setBy('panel')">按面板</button>
+    <div class="seg" role="group" :aria-label="t('traffic.byLabel')">
+      <button :class="{ on: by === 'customer' }" :aria-pressed="by === 'customer'" @click="setBy('customer')">{{ t('traffic.byCustomer') }}</button>
+      <button :class="{ on: by === 'panel' }" :aria-pressed="by === 'panel'" @click="setBy('panel')">{{ t('traffic.byPanel') }}</button>
     </div>
-    <div class="seg" role="group" aria-label="时间范围">
-      <button v-for="r in RANGES" :key="r.days" :class="{ on: days === r.days }" :aria-pressed="days === r.days" @click="days = r.days">{{ r.label }}</button>
+    <div class="seg" role="group" :aria-label="t('traffic.rangeLabel')">
+      <button v-for="n in RANGES" :key="n" :class="{ on: days === n }" :aria-pressed="days === n" @click="days = n">{{ rangeLabel(n) }}</button>
     </div>
-    <span v-if="loading" class="muted small">读取中…</span>
+    <span v-if="loading" class="muted small">{{ t('common.loading') }}</span>
   </div>
 
   <p v-if="focus" class="crumb small">
-    <button class="link" @click="focus = null">全部{{ noun }}</button>
+    <button class="link" @click="focus = null">{{ by === 'customer' ? t('traffic.allCustomers') : t('traffic.allPanels') }}</button>
     <span class="muted">/</span>
     <strong>{{ focus.name }}</strong>
   </p>
@@ -109,23 +112,23 @@ function open(r: TrafficRow) {
   <template v-if="report">
     <section class="tiles">
       <div class="tile sheet">
-        <span class="muted small">合计</span><strong>{{ fmtBytes(total) }}</strong>
+        <span class="muted small">{{ t('traffic.total') }}</span><strong>{{ fmtBytes(total) }}</strong>
       </div>
       <div class="tile sheet">
-        <span class="muted small"><i class="dot down" />下行</span><strong>{{ fmtBytes(totalDown) }}</strong>
+        <span class="muted small"><i class="dot down" />{{ t('traffic.down') }}</span><strong>{{ fmtBytes(totalDown) }}</strong>
       </div>
       <div class="tile sheet">
-        <span class="muted small"><i class="dot up" />上行</span><strong>{{ fmtBytes(totalUp) }}</strong>
+        <span class="muted small"><i class="dot up" />{{ t('traffic.up') }}</span><strong>{{ fmtBytes(totalUp) }}</strong>
       </div>
       <div v-if="report.days.length > 1" class="tile sheet">
-        <span class="muted small">日均</span><strong>{{ fmtBytes(Math.round(total / report.days.length)) }}</strong>
+        <span class="muted small">{{ t('traffic.dailyAvg') }}</span><strong>{{ fmtBytes(Math.round(total / report.days.length)) }}</strong>
       </div>
     </section>
 
     <section v-if="report.days.length > 1" class="sheet chart-card">
       <header class="chart-head">
-        <strong>每天的流量</strong>
-        <span class="legend small muted"><span><i class="dot down" />下行</span><span><i class="dot up" />上行</span></span>
+        <strong>{{ t('traffic.perDay') }}</strong>
+        <span class="legend small muted"><span><i class="dot down" />{{ t('traffic.down') }}</span><span><i class="dot up" />{{ t('traffic.up') }}</span></span>
       </header>
       <div class="chart" @mouseleave="hover = null">
         <div class="yaxis small muted" aria-hidden="true">
@@ -139,7 +142,7 @@ function open(r: TrafficRow) {
             class="col"
             :class="{ on: hover === i }"
             tabindex="0"
-            :aria-label="`${b.day} 下行 ${fmtBytes(b.down)},上行 ${fmtBytes(b.up)}`"
+            :aria-label="t('traffic.barAria', { day: b.day, down: fmtBytes(b.down), up: fmtBytes(b.up) })"
             @mouseenter="hover = i"
             @focus="hover = i"
             @blur="hover = null"
@@ -151,9 +154,9 @@ function open(r: TrafficRow) {
           </div>
           <div v-if="hover != null && bars[hover]" class="tip sheet small" :style="tipStyle">
             <strong>{{ bars[hover].day }}</strong>
-            <span><i class="dot down" />下行<b>{{ fmtBytes(bars[hover].down) }}</b></span>
-            <span><i class="dot up" />上行<b>{{ fmtBytes(bars[hover].up) }}</b></span>
-            <span class="sum">合计<b>{{ fmtBytes(bars[hover].up + bars[hover].down) }}</b></span>
+            <span><i class="dot down" />{{ t('traffic.down') }}<b>{{ fmtBytes(bars[hover].down) }}</b></span>
+            <span><i class="dot up" />{{ t('traffic.up') }}<b>{{ fmtBytes(bars[hover].up) }}</b></span>
+            <span class="sum">{{ t('traffic.total') }}<b>{{ fmtBytes(bars[hover].up + bars[hover].down) }}</b></span>
           </div>
         </div>
         <div class="xaxis small muted" aria-hidden="true">
@@ -167,20 +170,20 @@ function open(r: TrafficRow) {
         <table>
           <thead>
             <tr>
-              <th>{{ focus ? '客户端' : noun }}</th>
-              <th class="wide">用量</th>
-              <th class="num">合计</th>
-              <th class="num">占比</th>
-              <th class="num">下行</th>
-              <th class="num">上行</th>
+              <th>{{ focus ? t('traffic.client') : noun }}</th>
+              <th class="wide">{{ t('traffic.usage') }}</th>
+              <th class="num">{{ t('traffic.total') }}</th>
+              <th class="num">{{ t('traffic.share') }}</th>
+              <th class="num">{{ t('traffic.down') }}</th>
+              <th class="num">{{ t('traffic.up') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="r in report.rows" :key="`${r.id}-${r.name}`">
               <td>
-                <button v-if="canOpen(r)" class="link name" :title="`看「${r.name}」名下各客户端的流量`" @click="open(r)">{{ r.name }}</button>
-                <span v-else class="name">{{ r.name }}</span>
-                <span v-if="r.deleted" class="badge warn">已删除</span>
+                <button v-if="canOpen(r)" class="link name" :title="t('traffic.openHint', { name: rowName(r) })" @click="open(r)">{{ rowName(r) }}</button>
+                <span v-else class="name">{{ rowName(r) }}</span>
+                <span v-if="r.deleted" class="badge warn">{{ t('traffic.deleted') }}</span>
               </td>
               <td class="wide">
                 <span class="meter"><i :style="{ width: `${((r.up + r.down) / maxRow) * 100}%` }" /></span>
@@ -191,7 +194,7 @@ function open(r: TrafficRow) {
               <td class="num">{{ fmtBytes(r.up) }}</td>
             </tr>
             <tr v-if="!report.rows.length">
-              <td colspan="6" class="muted empty">这段时间还没有流量记录。</td>
+              <td colspan="6" class="muted empty">{{ t('traffic.empty') }}</td>
             </tr>
           </tbody>
         </table>

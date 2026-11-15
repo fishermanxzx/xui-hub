@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { api, setUnauthorizedHandler } from './api';
+import { LOCALES, locale, setLocale, t, type Locale } from './i18n';
 import { toasts } from './toast';
 import VersionBadge from './components/VersionBadge.vue';
 import Login from './views/Login.vue';
@@ -11,16 +12,10 @@ import SocksView from './views/Socks.vue';
 import Traffic from './views/Traffic.vue';
 
 type Tab = 'customers' | 'panels' | 'traffic' | 'socks' | 'settings';
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'customers', label: '客户' },
-  { id: 'panels', label: '面板' },
-  { id: 'traffic', label: '流量' },
-  { id: 'socks', label: 'SOCKS' },
-  { id: 'settings', label: '设置' },
-];
+const TABS: Tab[] = ['customers', 'panels', 'traffic', 'socks', 'settings'];
 function tabFromHash(): Tab {
   const id = location.hash.slice(1);
-  return TABS.some((t) => t.id === id) ? (id as Tab) : 'panels';
+  return TABS.includes(id as Tab) ? (id as Tab) : 'panels';
 }
 const tab = ref<Tab>(tabFromHash());
 window.addEventListener('hashchange', () => (tab.value = tabFromHash()));
@@ -55,12 +50,15 @@ onMounted(checkSession);
       <header class="topbar">
         <div class="topbar-inner">
           <span class="mark"><span class="logo" aria-hidden="true" />xui-hub</span>
-          <nav aria-label="页面">
-            <a v-for="t in TABS" :key="t.id" :href="'#' + t.id" :class="{ on: tab === t.id }" :aria-current="tab === t.id ? 'page' : undefined">{{ t.label }}</a>
+          <nav :aria-label="t('nav.label')">
+            <a v-for="id in TABS" :key="id" :href="'#' + id" :class="{ on: tab === id }" :aria-current="tab === id ? 'page' : undefined">{{ t(`nav.${id}`) }}</a>
           </nav>
           <span class="spacer" />
           <VersionBadge />
-          <button v-if="authRequired" class="link quiet" title="所有设备上的登录一起退出" @click="logout">退出登录</button>
+          <select class="lang" :value="locale" :aria-label="t('common.language')" @change="setLocale(($event.target as HTMLSelectElement).value as Locale)">
+            <option v-for="l in LOCALES" :key="l.id" :value="l.id">{{ l.label }}</option>
+          </select>
+          <button v-if="authRequired" class="link quiet" :title="t('nav.logoutHint')" @click="logout">{{ t('nav.logout') }}</button>
         </div>
       </header>
       <main class="shell">
@@ -175,5 +173,19 @@ nav a.on {
   .shell {
     padding: 16px 12px 32px;
   }
+}
+.lang {
+  width: auto;
+  padding: 2px 22px 2px 8px;
+  min-height: 0;
+  height: 28px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  border-color: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+.lang:hover {
+  border-color: var(--rule);
 }
 </style>

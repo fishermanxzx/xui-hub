@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // 客户页:每位客户一张卡片,列出线路(直连 / 中转 → 出口);新建客户后开线路,线路可看链接、删除。
+import { t, te } from '../i18n';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
 import ClientLinks from '../components/ClientLinks.vue';
@@ -7,7 +8,7 @@ import TopologyGraph from '../components/TopologyGraph.vue';
 import Modal from '../components/Modal.vue';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
-import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, STATE_LABEL, subUrl } from '../format';
+import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl } from '../format';
 import { toast, toastError } from '../toast';
 import type { ClientProtocol, Customer, EnforceOp, Line, LineKind, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
 
@@ -26,9 +27,9 @@ async function load() {
 onMounted(async () => {
   await load();
   try {
-    const t = await api.subTemplates();
-    templates.value = t.templates;
-    templateDefault.value = t.default;
+    const tpl = await api.subTemplates();
+    templates.value = tpl.templates;
+    templateDefault.value = tpl.default;
   } catch (e) {
     toastError(e);
   }
@@ -44,7 +45,12 @@ const saving = ref(false);
 const form = ref({ name: '', remark: '', quotaGb: '', expire: '', monthlyReset: false, resetDay: '', limitDevices: '', template: '', customTemplate: '' });
 /** 内置的 Clash 订阅模板;第一次打开表单时取 */
 const templates = ref<SubTemplate[]>([]);
-const templateName = (v: string) => templates.value.find((t) => t.id === v)?.name ?? (v ? '自定义模板' : '');
+/** 内置模板的名字和说明按界面语言给(按模板 id 查文案);语言文件里没有的新模板用服务端给的 */
+const tplText = (x: SubTemplate, field: 'name' | 'desc') => (te(`subTemplates.${x.id}.${field}`) ? t(`subTemplates.${x.id}.${field}` as 'subTemplates.ACL4SSR_Online.name') : x[field]);
+const templateName = (v: string) => {
+  const found = templates.value.find((x) => x.id === v);
+  return found ? tplText(found, 'name') : v ? t('customers.customTemplate') : '';
+};
 
 function openForm(c: Customer | null) {
   editing.value = c;
@@ -65,12 +71,12 @@ function opsNote(ops: EnforceOp[]): string {
   const done = (action: EnforceOp['action']) => ops.filter((o) => o.ok && o.action === action).length;
   const bad = ops.filter((o) => !o.ok);
   return [
-    done('disable') ? `已停用 ${done('disable')} 个客户端` : '',
-    done('enable') ? `已启用 ${done('enable')} 个客户端` : '',
-    bad.length ? `${bad.length} 个操作失败:${bad.map((o) => `${o.panel} 上的 ${o.email}(${o.error})`).join('、')}` : '',
+    done('disable') ? t('customers.opsDisabled', { n: done('disable') }) : '',
+    done('enable') ? t('customers.opsEnabled', { n: done('enable') }) : '',
+    bad.length ? t('customers.opsFailed', { n: bad.length, list: bad.map((o) => t('customers.opsFailedItem', { panel: o.panel, email: o.email, error: o.error })).join(', ') }) : '',
   ]
     .filter(Boolean)
-    .join(';');
+    .join('; ');
 }
 
 async function submit() {
@@ -79,8 +85,9 @@ async function submit() {
   try {
     const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
     showForm.value = false;
-    const note = opsNote((saved as { ops?: EnforceOp[] }).ops ?? []);
-    toast(note ? `已保存,${note}` : '已保存', note.includes('失败') ? 'err' : 'ok');
+    const ops = (saved as { ops?: EnforceOp[] }).ops ?? [];
+    const note = opsNote(ops);
+    toast(note ? t('customers.savedNote', { note }) : t('customers.saved'), ops.some((o) => !o.ok) ? 'err' : 'ok');
     await load();
     // 新建完直接进开线路
     if (!editing.value) openLineFor(customers.value.find((c) => c.id === saved.id) ?? saved);
@@ -97,11 +104,11 @@ function onMonthlyReset() {
 }
 
 async function resetUsage(c: Customer) {
-  if (!confirm(`把「${c.name}」的已用流量清零?会把他 ${c.lines.length} 个客户端在面板上的流量都清零,超额停掉的会恢复。`)) return;
+  if (!confirm(t('customers.confirmReset', { name: c.name, n: c.lines.length }))) return;
   try {
     const r = await api.resetUsage(c.id);
-    const note = [r.failed.length ? `${r.failed.length} 个客户端没清成:${r.failed.map((f) => f.line).join('、')}` : '', opsNote(r.ops)].filter(Boolean).join(';');
-    toast(note ? `已清零,${note}` : '已清零', r.failed.length ? 'err' : 'ok');
+    const note = [r.failed.length ? t('customers.resetNotCleared', { n: r.failed.length, list: r.failed.map((f) => f.line).join(', ') }) : '', opsNote(r.ops)].filter(Boolean).join('; ');
+    toast(note ? t('customers.resetDoneNote', { note }) : t('customers.resetDone'), r.failed.length ? 'err' : 'ok');
     await load();
   } catch (e) {
     toastError(e);
@@ -113,7 +120,7 @@ async function syncNow() {
   syncing.value = true;
   try {
     const { ops } = await api.syncNow();
-    toast(opsNote(ops) || '已同步,没有需要启停的客户端');
+    toast(opsNote(ops) || t('customers.synced'));
     await load();
   } catch (e) {
     toastError(e);
@@ -140,10 +147,10 @@ onMounted(async () => {
 });
 
 async function resetLink(c: Customer) {
-  if (!confirm(`重置「${c.name}」的订阅链接?客户手里的旧链接立即失效,需要把新链接发给他。`)) return;
+  if (!confirm(t('customers.confirmResetLink', { name: c.name }))) return;
   try {
     await api.resetSubToken(c.id);
-    toast('订阅链接已重置');
+    toast(t('customers.linkReset'));
     await load();
   } catch (e) {
     toastError(e);
@@ -152,7 +159,7 @@ async function resetLink(c: Customer) {
 
 async function removeDevice(d: SubDevice) {
   const f = fetchesFor.value;
-  if (!f || !confirm(`移除「${shortUa(d.ua) || '(空 UA)'}」?它再拉订阅会重新占一个名额,名额满了就拉不到。`)) return;
+  if (!f || !confirm(t('customers.confirmRemoveDevice', { name: shortUa(d.ua) || t('customers.emptyUa') }))) return;
   try {
     await api.deleteDevice(f.customer.id, d.id);
     f.devices = f.devices.filter((x) => x.id !== d.id);
@@ -172,10 +179,10 @@ async function showFetches(c: Customer) {
 }
 
 async function remove(c: Customer) {
-  if (!confirm(`删除客户「${c.name}」?会先删掉他在各面板上的 ${c.lines.length} 个客户端,链接立即失效。`)) return;
+  if (!confirm(t('customers.confirmDelete', { name: c.name, n: c.lines.length }))) return;
   try {
     const { failed } = await api.deleteCustomer(c.id);
-    toast(failed.length ? `已删除,但 ${failed.length} 个客户端没从面板上删掉:${failed.map((f) => f.line).join('、')}` : '已删除', failed.length ? 'err' : 'ok');
+    toast(failed.length ? t('customers.deletedPartly', { n: failed.length, list: failed.map((f) => f.line).join(', ') }) : t('customers.deleted'), failed.length ? 'err' : 'ok');
     await load();
   } catch (e) {
     toastError(e);
@@ -256,12 +263,12 @@ async function open() {
   const f = lf.value;
   const body: OpenLineInput = { kind: f.kind, panel_id: f.panel_id, inbound: f.inbound === 'new' ? { protocol: f.protocol } : { id: f.inbound } };
   if (f.kind === 'relay') body.exit = f.exit_kind === 'socks' ? { kind: 'socks', socks_id: f.socks_id } : { kind: 'panel', panel_id: f.exit_panel_id, inbound_id: f.exit_inbound === 'new' ? null : f.exit_inbound };
-  if (f.kind === 'relay' && !confirm('开中转线路会给中转面板加一条路由规则并重启 Xray,中转上所有客户端会断流几秒。继续?')) return;
+  if (f.kind === 'relay' && !confirm(t('customers.confirmRelay'))) return;
   opening.value = true;
   try {
     opened.value = await api.openLine(lineFor.value.id, body);
-    const notes = [opened.value.created.inbound ? `中转 / 面板上新建了入站 ${opened.value.created.inbound}` : '', opened.value.created.exit_inbound ? `落地上新建了 socks 入站 ${opened.value.created.exit_inbound}` : ''].filter(Boolean);
-    toast(notes.length ? `线路已开通,${notes.join(',')}` : '线路已开通');
+    const notes = [opened.value.created.inbound ? t('customers.openedInbound', { name: opened.value.created.inbound }) : '', opened.value.created.exit_inbound ? t('customers.openedExitInbound', { name: opened.value.created.exit_inbound }) : ''].filter(Boolean);
+    toast(notes.length ? t('customers.lineOpenedNote', { note: notes.join(', ') }) : t('customers.lineOpened'));
     // 入站变了:缓存清掉,表单正用着的两块马上重取(「再开一条」接着用这张表单)
     inboundsOf.value = {};
     void fetchInbounds(f.panel_id);
@@ -290,17 +297,16 @@ async function showLinks(line: Line) {
 }
 
 async function removeLine(line: Line) {
-  if (!confirm(`删除这条线路?会从 ${line.panel_name} 上删掉客户端 ${line.email},链接立即失效${line.kind === 'relay' ? ',并去掉他的出口规则(重启 Xray)' : ''}。入站不动。`)) return;
+  if (!confirm(t(line.kind === 'relay' ? 'customers.confirmDeleteRelayLine' : 'customers.confirmDeleteLine', { panel: line.panel_name, email: line.email }))) return;
   try {
     try {
       await api.deleteLine(line.customer_id, line.id);
     } catch (e) {
       // 面板连不上或已经不在了:可以只删这里的记录
-      const left = line.kind === 'relay' ? '客户端和出口规则' : '客户端';
-      if (!confirm(`面板上没删成:${e instanceof Error ? e.message : e}\n\n只删这里的线路记录?${line.panel_name} 上的${left}要是还在,得自己去面板上清理。`)) return;
+      if (!confirm(t(line.kind === 'relay' ? 'customers.confirmForceRelay' : 'customers.confirmForce', { error: e instanceof Error ? e.message : String(e), panel: line.panel_name }))) return;
       await api.deleteLine(line.customer_id, line.id, true);
     }
-    toast('已删除');
+    toast(t('customers.deleted'));
     await load();
   } catch (e) {
     toastError(e);
@@ -308,21 +314,21 @@ async function removeLine(line: Line) {
 }
 
 function exitText(l: Line): string {
-  if (l.kind === 'direct') return '直连';
-  if (l.exit_kind === 'socks') return `中转 → SOCKS ${l.exit_socks_name ?? '(已删除)'}`;
-  return `中转 → 落地 ${l.exit_panel_name ?? '(已删除)'}${l.exit_port ? ':' + l.exit_port : ''}`;
+  if (l.kind === 'direct') return t('customers.direct');
+  if (l.exit_kind === 'socks') return t('customers.relayToSocks', { name: l.exit_socks_name ?? t('customers.gone') });
+  return t('customers.relayToPanel', { name: `${l.exit_panel_name ?? t('customers.gone')}${l.exit_port ? ':' + l.exit_port : ''}` });
 }
 </script>
 
 <template>
   <div class="toolbar">
     <div>
-      <h2>客户</h2>
-      <p class="muted small">一位客户可以有多条线路:直连某块面板,或经中转面板转到落地面板 / SOCKS,每条线路就是面板上的一个客户端。额度和到期按客户算:各线路流量加起来超过额度、或到了到期日,自动停用他所有客户端;加额度、续期或清零后自动恢复。</p>
+      <h2>{{ t('customers.title') }}</h2>
+      <p class="muted small">{{ t('customers.intro') }}</p>
     </div>
     <div class="row">
-      <button :disabled="syncing || !customers.length" title="马上读一遍各面板的流量,并执行额度 / 到期" @click="syncNow">{{ syncing ? '同步中…' : '立即同步' }}</button>
-      <button class="primary" @click="openForm(null)">新建客户</button>
+      <button :disabled="syncing || !customers.length" :title="t('customers.syncHint')" @click="syncNow">{{ syncing ? t('customers.syncing') : t('customers.syncNow') }}</button>
+      <button class="primary" @click="openForm(null)">{{ t('customers.create') }}</button>
     </div>
   </div>
 
@@ -331,174 +337,174 @@ function exitText(l: Line): string {
       <header class="head">
         <div class="title">
           <span class="name">{{ c.name }}</span>
-          <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ STATE_LABEL[c.state] }}</span>
+          <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
           <span v-if="c.remark" class="muted small">{{ c.remark }}</span>
-          <span class="muted small">{{ c.lines.length }} 条线路</span>
+          <span class="muted small">{{ t('customers.lineCount', { n: c.lines.length }, c.lines.length) }}</span>
           <span class="small" :class="{ 'text-err': c.state === 'over_quota' }">
-            已用 {{ fmtBytes(c.used) }}<template v-if="c.quota_bytes"> / {{ fmtBytes(c.quota_bytes) }}</template><span v-else class="muted">(不限额)</span>
+            {{ t('customers.used', { used: fmtBytes(c.used) }) }}<template v-if="c.quota_bytes"> / {{ fmtBytes(c.quota_bytes) }}</template><span v-else class="muted">{{ t('customers.unlimited') }}</span>
           </span>
           <span class="small" :class="{ 'text-warn': dueLevel(c.expire_at) === 'warn', 'text-err': dueLevel(c.expire_at) === 'err', muted: !c.expire_at }" :title="fmtDate(c.expire_at)">
             {{ fmtDue(c.expire_at) }}
           </span>
-          <span v-if="c.sub_template" class="muted small" :title="c.sub_template">模板:{{ templateName(c.sub_template) }}</span>
-          <span v-if="c.limit_devices" class="small" :class="c.sub_devices >= c.limit_devices ? 'text-warn' : 'muted'" title="拉过订阅的设备数 / 上限。满了以后新设备拉不到订阅,点订阅那一行的「记录」可以删设备">设备 {{ c.sub_devices }} / {{ c.limit_devices }}</span>
-          <span v-if="c.next_reset_at" class="muted small" :title="c.expire_at ? '重置日跟着到期日走' : `每月 ${c.reset_day} 号重置`">每月重置流量 · 下次 {{ fmtDate(c.next_reset_at) }}</span>
+          <span v-if="c.sub_template" class="muted small" :title="c.sub_template">{{ t('customers.template', { name: templateName(c.sub_template) }) }}</span>
+          <span v-if="c.limit_devices" class="small" :class="c.sub_devices >= c.limit_devices ? 'text-warn' : 'muted'" :title="t('customers.devicesHint')">{{ t('customers.devices', { n: c.sub_devices, max: c.limit_devices }) }}</span>
+          <span v-if="c.next_reset_at" class="muted small" :title="c.expire_at ? t('customers.resetFollows') : t('customers.resetEveryDay', { day: c.reset_day })">{{ t('customers.nextReset', { date: fmtDate(c.next_reset_at) }) }}</span>
         </div>
         <div class="ops">
-          <button class="primary small-btn" :disabled="!panels.length" @click="openLineFor(c)">开线路</button>
-          <button class="link" :disabled="!c.lines.length" @click="topoFor = c">网络拓扑</button>
-          <button class="link" :disabled="!c.lines.length" @click="resetUsage(c)">清零流量</button>
-          <button class="link" @click="openForm(c)">编辑</button>
-          <button class="link danger" @click="remove(c)">删除</button>
+          <button class="primary small-btn" :disabled="!panels.length" @click="openLineFor(c)">{{ t('customers.openLine') }}</button>
+          <button class="link" :disabled="!c.lines.length" @click="topoFor = c">{{ t('customers.topology') }}</button>
+          <button class="link" :disabled="!c.lines.length" @click="resetUsage(c)">{{ t('customers.resetUsage') }}</button>
+          <button class="link" @click="openForm(c)">{{ t('common.edit') }}</button>
+          <button class="link danger" @click="remove(c)">{{ t('common.delete') }}</button>
         </div>
       </header>
       <div class="sub-row">
-        <span class="muted small">订阅</span>
-        <input class="sub-input" readonly :value="subUrl(c)" aria-label="订阅链接" @focus="($event.target as HTMLInputElement).select()" />
-        <button class="link" @click="copyText(subUrl(c), `已复制「${c.name}」的订阅链接`)">复制</button>
-        <button class="link" @click="qrFor = c">二维码</button>
-        <button class="link" @click="resetLink(c)">重置链接</button>
+        <span class="muted small">{{ t('customers.sub') }}</span>
+        <input class="sub-input" readonly :value="subUrl(c)" :aria-label="t('customers.subAria')" @focus="($event.target as HTMLInputElement).select()" />
+        <button class="link" @click="copyText(subUrl(c), t('customers.subCopied', { name: c.name }))">{{ t('common.copy') }}</button>
+        <button class="link" @click="qrFor = c">{{ t('customers.qr') }}</button>
+        <button class="link" @click="resetLink(c)">{{ t('customers.resetLink') }}</button>
         <span class="muted small sub-meta" :title="c.sub_fetched_ua ?? ''">
-          <template v-if="c.sub_fetched_at">上次拉取 {{ fmtAgo(c.sub_fetched_at) }}<template v-if="c.sub_fetched_ua">,{{ shortUa(c.sub_fetched_ua) }}</template>;{{ c.sub_clients }} 个客户端 / {{ c.sub_ips }} 个 IP</template>
-          <template v-else>还没被拉取过</template>
-          <span v-if="shareIps && c.sub_ips_day >= shareIps" class="text-warn" :title="`订阅近 24 小时被 ${c.sub_ips_day} 个不同 IP 拉取,可能被转给别人用了。点「记录」看明细,确认的话点「重置链接」`">24 小时 {{ c.sub_ips_day }} 个 IP,疑似分享</span>
-          <button class="link small" @click="showFetches(c)">记录</button>
+          <template v-if="c.sub_fetched_at">{{ t('customers.lastFetch', { ago: fmtAgo(c.sub_fetched_at) }) }}<template v-if="c.sub_fetched_ua">, {{ shortUa(c.sub_fetched_ua) }}</template>{{ t('customers.fetchStats', { clients: c.sub_clients, ips: c.sub_ips }) }}</template>
+          <template v-else>{{ t('customers.neverFetched') }}</template>
+          <span v-if="shareIps && c.sub_ips_day >= shareIps" class="text-warn" :title="t('customers.shareHint', { n: c.sub_ips_day })">{{ t('customers.shareWarn', { n: c.sub_ips_day }) }}</span>
+          <button class="link small" @click="showFetches(c)">{{ t('customers.records') }}</button>
         </span>
       </div>
       <ul v-if="c.lines.length" class="lines">
         <li v-for="l in c.lines" :key="l.id" class="line">
-          <span class="chip" :class="l.kind">{{ l.kind === 'direct' ? '直连' : '中转' }}</span>
+          <span class="chip" :class="l.kind">{{ l.kind === 'direct' ? t('customers.direct') : t('customers.relay') }}</span>
           <span class="where">
             <strong>{{ l.panel_name }}</strong>
             <span class="muted small">{{ l.inbound_remark || l.inbound_id }} · {{ proto(l.protocol) }} · {{ l.email }}</span>
           </span>
           <span class="small exit" :class="{ muted: l.kind === 'direct' }">{{ exitText(l) }}</span>
           <span class="muted small stat">
-            已用 {{ fmtBytes(l.up + l.down) }} · 在线 {{ fmtAgo(l.last_online, '—') }}
-            <span v-if="!l.enable" class="badge err">{{ l.auto_disabled ? '已停用(超额 / 到期)' : '面板上已停用' }}</span>
+            {{ t('customers.lineUsage', { used: fmtBytes(l.up + l.down), ago: fmtAgo(l.last_online, '—') }) }}
+            <span v-if="!l.enable" class="badge err">{{ l.auto_disabled ? t('customers.autoDisabled') : t('customers.panelDisabled') }}</span>
           </span>
           <span class="l-ops">
-            <button class="link" :disabled="loadingLinks === l.id" @click="showLinks(l)">{{ loadingLinks === l.id ? '读取中…' : '链接' }}</button>
-            <button class="link danger" @click="removeLine(l)">删除</button>
+            <button class="link" :disabled="loadingLinks === l.id" @click="showLinks(l)">{{ loadingLinks === l.id ? t('common.loading') : t('customers.links') }}</button>
+            <button class="link danger" @click="removeLine(l)">{{ t('common.delete') }}</button>
           </span>
         </li>
       </ul>
-      <p v-else class="muted small none">还没有线路,点「开线路」;面板上已有的客户端可以在「面板」页点「归入客户」。</p>
+      <p v-else class="muted small none">{{ t('customers.noLines') }}</p>
     </article>
   </div>
-  <div v-if="!customers.length" class="empty sheet">还没有客户。点「新建客户」,建好后给他开线路。</div>
+  <div v-if="!customers.length" class="empty sheet">{{ t('customers.empty') }}</div>
 
-  <Modal v-if="showForm" :title="editing ? `编辑客户「${editing.name}」` : '新建客户'" @close="showForm = false">
+  <Modal v-if="showForm" :title="editing ? t('customers.editTitle', { name: editing.name }) : t('customers.create')" @close="showForm = false">
     <form id="customer-form" class="form" @submit.prevent="submit">
-      <label class="field">名称<input v-model="form.name" required placeholder="客户端的名字会用它生成" /></label>
-      <label class="field">备注<input v-model="form.remark" /></label>
+      <label class="field">{{ t('customers.name') }}<input v-model="form.name" required :placeholder="t('customers.namePlaceholder')" /></label>
+      <label class="field">{{ t('customers.remark') }}<input v-model="form.remark" /></label>
       <div class="two">
-        <label class="field">总额度(GB,空 = 不限)<input v-model="form.quotaGb" type="number" min="0" step="1" /></label>
+        <label class="field">{{ t('customers.quota') }}<input v-model="form.quotaGb" type="number" min="0" step="1" /></label>
         <div class="field">
-          <label class="row small check"><input v-model="form.monthlyReset" type="checkbox" @change="onMonthlyReset" />每月自动重置流量</label>
-          <span v-if="!form.monthlyReset" class="muted small">不勾 = 流量一直累计,用完为止</span>
-          <span v-else-if="form.expire" class="muted small">跟着到期日走:每月 {{ Number(form.expire.slice(8, 10)) }} 号到期那一刻重置,续费后到期日变了也跟着变</span>
-          <span v-else class="row small reset-day">没设到期日,每月<input v-model="form.resetDay" type="number" min="1" max="28" step="1" required aria-label="每月几号重置" />号 0 点重置</span>
+          <label class="row small check"><input v-model="form.monthlyReset" type="checkbox" @change="onMonthlyReset" />{{ t('customers.monthlyReset') }}</label>
+          <span v-if="!form.monthlyReset" class="muted small">{{ t('customers.monthlyOff') }}</span>
+          <span v-else-if="form.expire" class="muted small">{{ t('customers.monthlyFollow', { day: Number(form.expire.slice(8, 10)) }) }}</span>
+          <i18n-t v-else keypath="customers.monthlyDay" tag="span" class="row small reset-day" scope="global"><template #day><input v-model="form.resetDay" type="number" min="1" max="28" step="1" required :aria-label="t('customers.monthlyDayAria')" /></template></i18n-t>
         </div>
       </div>
       <div class="two">
-        <label class="field">到期日(空 = 不限期)<input v-model="form.expire" type="date" /></label>
-        <label class="field">设备数上限(空 = 不限)<input v-model="form.limitDevices" type="number" min="1" max="100" step="1" placeholder="如 3" /></label>
+        <label class="field">{{ t('customers.expire') }}<input v-model="form.expire" type="date" /></label>
+        <label class="field">{{ t('customers.limitDevices') }}<input v-model="form.limitDevices" type="number" min="1" max="100" step="1" :placeholder="t('customers.limitPlaceholder')" /></label>
       </div>
       <div class="row extend">
-        <span class="muted small">续期</span>
-        <button type="button" class="link" @click="extend(30)">+30 天</button>
-        <button type="button" class="link" @click="extend(90)">+90 天</button>
-        <button type="button" class="link" @click="extend(180)">+180 天</button>
-        <button type="button" class="link" @click="extend(365)">+1 年</button>
-        <span class="muted small">(从到期日起算,已到期的从今天起算)</span>
+        <span class="muted small">{{ t('customers.renew') }}</span>
+        <button type="button" class="link" @click="extend(30)">{{ t('customers.plusDays', { n: 30 }) }}</button>
+        <button type="button" class="link" @click="extend(90)">{{ t('customers.plusDays', { n: 90 }) }}</button>
+        <button type="button" class="link" @click="extend(180)">{{ t('customers.plusDays', { n: 180 }) }}</button>
+        <button type="button" class="link" @click="extend(365)">{{ t('customers.plusYear') }}</button>
+        <span class="muted small">{{ t('customers.renewHint') }}</span>
       </div>
       <label class="field">
-        订阅模板(Clash / Mihomo / Stash / Shadowrocket 的分组和规则)
+        {{ t('customers.subTemplate') }}
         <select v-model="form.template">
-          <option v-for="t in templates" :key="t.id" :value="t.id === templateDefault ? '' : t.id">{{ t.name }} — {{ t.desc }}</option>
-          <option value="custom">自定义模板地址…</option>
+          <option v-for="x in templates" :key="x.id" :value="x.id === templateDefault ? '' : x.id">{{ tplText(x, 'name') }} — {{ tplText(x, 'desc') }}</option>
+          <option value="custom">{{ t('customers.customTemplateOption') }}</option>
         </select>
       </label>
-      <label v-if="form.template === 'custom'" class="field">模板地址<input v-model="form.customTemplate" required placeholder="https://… subconverter 的 ini 模板" /></label>
-      <p class="muted small hint">流量按客户所有线路加总,每分钟从面板同步一次;超额或到期后自动停用他的全部客户端,改大额度、延后到期或清零流量会自动恢复。勾了「每月自动重置流量」,每月到了到期日那天自动把他的流量清零、被超额停掉的线路恢复;重置日始终跟着到期日,续费后到期日变了也跟着变(没设到期日的才要自己填每月几号)。每位客户各自设置。设备数上限管的是订阅链接:每个导入过订阅的客户端算一台,满了以后新设备拉不到订阅,客户用浏览器打开订阅链接可以自己移除旧设备;面板上不改任何东西。</p>
+      <label v-if="form.template === 'custom'" class="field">{{ t('customers.templateUrl') }}<input v-model="form.customTemplate" required :placeholder="t('customers.templateUrlPlaceholder')" /></label>
+      <p class="muted small hint">{{ t('customers.formHint') }}</p>
     </form>
     <template #footer>
       <span class="spacer" />
-      <button @click="showForm = false">取消</button>
-      <button class="primary" form="customer-form" :disabled="saving">{{ saving ? '保存中…' : editing ? '保存' : '下一步:开线路' }}</button>
+      <button @click="showForm = false">{{ t('common.cancel') }}</button>
+      <button class="primary" form="customer-form" :disabled="saving">{{ saving ? t('common.saving') : editing ? t('common.save') : t('customers.nextOpenLine') }}</button>
     </template>
   </Modal>
 
-  <Modal v-if="lineFor" :title="opened ? `「${lineFor.name}」的线路已开通` : `给「${lineFor.name}」开线路`" @close="lineFor = null">
+  <Modal v-if="lineFor" :title="opened ? t('customers.lineOpenedTitle', { name: lineFor.name }) : t('customers.openLineTitle', { name: lineFor.name })" @close="lineFor = null">
     <template v-if="!opened">
       <div class="form">
         <div class="field-block">
-          <span class="label">线路类型</span>
+          <span class="label">{{ t('customers.lineKind') }}</span>
           <div class="choices">
-            <label class="row small"><input v-model="lf.kind" type="radio" value="direct" />直连:客户端直接连一块面板</label>
-            <label class="row small"><input v-model="lf.kind" type="radio" value="relay" />中转:客户端连中转面板,流量转到落地 / SOCKS</label>
+            <label class="row small"><input v-model="lf.kind" type="radio" value="direct" />{{ t('customers.kindDirect') }}</label>
+            <label class="row small"><input v-model="lf.kind" type="radio" value="relay" />{{ t('customers.kindRelay') }}</label>
           </div>
         </div>
 
         <label class="field">
-          {{ lf.kind === 'relay' ? '中转面板' : '面板' }}
+          {{ lf.kind === 'relay' ? t('customers.relayPanel') : t('customers.panel') }}
           <select v-model="lf.panel_id">
-            <option v-for="p in panels" :key="p.id" :value="p.id" :disabled="!!p.check_error">{{ p.name }}{{ p.check_error ? '(连不上)' : '' }}</option>
+            <option v-for="p in panels" :key="p.id" :value="p.id" :disabled="!!p.check_error">{{ p.name }}{{ p.check_error ? t('customers.unreachable') : '' }}</option>
           </select>
         </label>
         <div class="field-block">
-          <span class="label">{{ lf.kind === 'relay' ? '中转上的入站' : '入站' }}</span>
+          <span class="label">{{ lf.kind === 'relay' ? t('customers.relayInbound') : t('customers.inbound') }}</span>
           <div class="choices">
-            <label class="row small"><input v-model="lf.inbound" type="radio" value="new" />自动:面板上有同协议的入站就挂上去,没有就新建</label>
+            <label class="row small"><input v-model="lf.inbound" type="radio" value="new" />{{ t('customers.inboundAuto') }}</label>
             <select v-if="lf.inbound === 'new'" v-model="lf.protocol" class="inline">
               <option value="vless">vless(reality)</option>
               <option value="hy2">hy2(hysteria2)</option>
             </select>
-            <template v-if="inboundsOf[lf.panel_id] === 'loading'"><span class="muted small">正在读取入站…</span></template>
-            <template v-else-if="inboundsOf[lf.panel_id] === 'error'"><span class="text-err small">读不到这块面板的入站 <button type="button" class="link" @click="fetchInbounds(lf.panel_id)">重试</button></span></template>
+            <template v-if="inboundsOf[lf.panel_id] === 'loading'"><span class="muted small">{{ t('customers.readingInbounds') }}</span></template>
+            <template v-else-if="inboundsOf[lf.panel_id] === 'error'"><span class="text-err small">{{ t('customers.inboundsError') }} <button type="button" class="link" @click="fetchInbounds(lf.panel_id)">{{ t('customers.retry') }}</button></span></template>
             <template v-else-if="clientInbounds.length">
               <label v-for="i in clientInbounds" :key="i.id" class="row small">
-                <input v-model="lf.inbound" type="radio" :value="i.id" />{{ i.remark || '(无名称)' }} · {{ proto(i.protocol) }} {{ i.port }} · {{ i.clients.length }} 个客户端
+                <input v-model="lf.inbound" type="radio" :value="i.id" />{{ t('customers.inboundOption', { remark: i.remark || t('customers.unnamed'), proto: proto(i.protocol), port: i.port, n: i.clients.length }) }}
               </label>
             </template>
-            <span v-else class="muted small">这块面板上还没有能挂客户端的入站</span>
+            <span v-else class="muted small">{{ t('customers.noInbounds') }}</span>
           </div>
-          <p v-if="lf.kind === 'relay'" class="muted small hint">出口按客户端配路由规则,同一个入站上的客户端可以各走各的出口,直连的客户端不受影响。</p>
+          <p v-if="lf.kind === 'relay'" class="muted small hint">{{ t('customers.relayHint') }}</p>
         </div>
 
         <template v-if="lf.kind === 'relay'">
           <div class="field-block">
-            <span class="label">出口</span>
+            <span class="label">{{ t('customers.exit') }}</span>
             <div class="choices">
-              <label class="row small"><input v-model="lf.exit_kind" type="radio" value="panel" :disabled="!landingPanels.length" />落地面板{{ landingPanels.length ? '' : '(没有第二块面板)' }}</label>
-              <label class="row small"><input v-model="lf.exit_kind" type="radio" value="socks" :disabled="!socksList.length" />SOCKS{{ socksList.length ? '' : '(SOCKS 页还没登记)' }}</label>
+              <label class="row small"><input v-model="lf.exit_kind" type="radio" value="panel" :disabled="!landingPanels.length" />{{ t('customers.landingPanel') }}{{ landingPanels.length ? '' : t('customers.noSecondPanel') }}</label>
+              <label class="row small"><input v-model="lf.exit_kind" type="radio" value="socks" :disabled="!socksList.length" />SOCKS{{ socksList.length ? '' : t('customers.noSocks') }}</label>
             </div>
           </div>
           <template v-if="lf.exit_kind === 'panel'">
             <label class="field">
-              落地面板
+              {{ t('customers.landingPanel') }}
               <select v-model="lf.exit_panel_id">
-                <option v-for="p in landingPanels" :key="p.id" :value="p.id" :disabled="!!p.check_error">{{ p.name }}{{ p.check_error ? '(连不上)' : '' }}</option>
+                <option v-for="p in landingPanels" :key="p.id" :value="p.id" :disabled="!!p.check_error">{{ p.name }}{{ p.check_error ? t('customers.unreachable') : '' }}</option>
               </select>
             </label>
             <div class="field-block">
-              <span class="label">落地上给中转用的 socks 入站</span>
+              <span class="label">{{ t('customers.exitInbound') }}</span>
               <div class="choices">
-                <label class="row small"><input v-model="lf.exit_inbound" type="radio" value="new" />自动:落地上有 xui-hub 建过的 socks 入站(relay-socks)就接着用,没有就新建</label>
-                <template v-if="inboundsOf[lf.exit_panel_id] === 'loading'"><span class="muted small">正在读取入站…</span></template>
-                <template v-else-if="inboundsOf[lf.exit_panel_id] === 'error'"><span class="text-err small">读不到落地面板的入站 <button type="button" class="link" @click="fetchInbounds(lf.exit_panel_id)">重试</button></span></template>
+                <label class="row small"><input v-model="lf.exit_inbound" type="radio" value="new" />{{ t('customers.exitInboundAuto') }}</label>
+                <template v-if="inboundsOf[lf.exit_panel_id] === 'loading'"><span class="muted small">{{ t('customers.readingInbounds') }}</span></template>
+                <template v-else-if="inboundsOf[lf.exit_panel_id] === 'error'"><span class="text-err small">{{ t('customers.landingInboundsError') }} <button type="button" class="link" @click="fetchInbounds(lf.exit_panel_id)">{{ t('customers.retry') }}</button></span></template>
                 <template v-else-if="socksInbounds.length">
-                  <label v-for="i in socksInbounds" :key="i.id" class="row small"><input v-model="lf.exit_inbound" type="radio" :value="i.id" />{{ i.remark || '(无名称)' }} · {{ i.protocol }} {{ i.port }}</label>
+                  <label v-for="i in socksInbounds" :key="i.id" class="row small"><input v-model="lf.exit_inbound" type="radio" :value="i.id" />{{ i.remark || t('customers.unnamed') }} · {{ i.protocol }} {{ i.port }}</label>
                 </template>
-                <span v-else-if="lf.exit_panel_id" class="muted small">落地上还没有 socks / mixed 入站</span>
+                <span v-else-if="lf.exit_panel_id" class="muted small">{{ t('customers.noSocksInbounds') }}</span>
               </div>
             </div>
           </template>
           <label v-else class="field">
             SOCKS
             <select v-model="lf.socks_id">
-              <option v-for="s in socksList" :key="s.id" :value="s.id">{{ s.name }} · {{ s.host }}:{{ s.port }}{{ s.check ? (s.check.ok ? ' · 可用' : ' · 上次测试失败') : '' }}</option>
+              <option v-for="s in socksList" :key="s.id" :value="s.id">{{ s.name }} · {{ s.host }}:{{ s.port }}{{ s.check ? (s.check.ok ? t('customers.socksOk') : t('customers.socksBad')) : '' }}</option>
             </select>
           </label>
         </template>
@@ -506,59 +512,59 @@ function exitText(l: Line): string {
     </template>
     <template v-else>
       <p class="muted small">
-        {{ exitText(opened.line) }},客户端在 <strong>{{ opened.line.panel_name }}</strong> 的入站 {{ opened.line.inbound_remark || opened.line.inbound_id }}({{ proto(opened.line.protocol) }}),名字 {{ opened.line.email }}。把链接或二维码发给客户。
+        {{ t('customers.openedSummary', { exit: exitText(opened.line), panel: opened.line.panel_name, inbound: opened.line.inbound_remark || opened.line.inbound_id, proto: proto(opened.line.protocol), email: opened.line.email }) }}
       </p>
       <ClientLinks :links="opened.links" :name="opened.line.email" />
     </template>
     <template #footer>
       <span class="spacer" />
       <template v-if="!opened">
-        <button @click="lineFor = null">取消</button>
-        <button class="primary" :disabled="opening || !canOpen" @click="open">{{ opening ? '开通中…' : '开通' }}</button>
+        <button @click="lineFor = null">{{ t('common.cancel') }}</button>
+        <button class="primary" :disabled="opening || !canOpen" @click="open">{{ opening ? t('customers.opening') : t('customers.open') }}</button>
       </template>
       <template v-else>
-        <button @click="opened = null">再开一条</button>
-        <button class="primary" @click="lineFor = null">完成</button>
+        <button @click="opened = null">{{ t('customers.another') }}</button>
+        <button class="primary" @click="lineFor = null">{{ t('customers.done') }}</button>
       </template>
     </template>
   </Modal>
 
-  <Modal v-if="qrFor" :title="`「${qrFor.name}」的订阅二维码`" @close="qrFor = null">
-    <QrCode :text="subUrl(qrFor)" :name="`${qrFor.name}的订阅`" />
-    <p class="muted small">Shadowrocket、Hiddify、Stash 等客户端扫码会直接添加订阅。订阅按客户端自动给格式:Clash、Mihomo、Stash、Shadowrocket 拿 Clash 配置,sing-box、Hiddify 拿 sing-box 配置,v2rayN 等拿节点链接。</p>
+  <Modal v-if="qrFor" :title="t('customers.qrTitle', { name: qrFor.name })" @close="qrFor = null">
+    <QrCode :text="subUrl(qrFor)" :name="t('customers.qrName', { name: qrFor.name })" />
+    <p class="muted small">{{ t('customers.qrHint') }}</p>
   </Modal>
 
-  <Modal v-if="fetchesFor" :title="`「${fetchesFor.customer.name}」的设备和订阅拉取记录`" wide @close="fetchesFor = null">
-    <h4 class="sec">设备<span class="muted small">{{ fetchesFor.devices.length }}{{ fetchesFor.customer.limit_devices ? ` / ${fetchesFor.customer.limit_devices}` : '' }} 台{{ fetchesFor.customer.limit_devices ? '' : ',没设上限' }}</span></h4>
-    <p v-if="!fetchesFor.devices.length" class="muted small">还没有设备拉过订阅。</p>
+  <Modal v-if="fetchesFor" :title="t('customers.fetchesTitle', { name: fetchesFor.customer.name })" wide @close="fetchesFor = null">
+    <h4 class="sec">{{ t('customers.devicesHead') }}<span class="muted small">{{ fetchesFor.customer.limit_devices ? t('customers.devicesCountMax', { n: fetchesFor.devices.length, max: fetchesFor.customer.limit_devices }) : t('customers.devicesCount', { n: fetchesFor.devices.length }) }}</span></h4>
+    <p v-if="!fetchesFor.devices.length" class="muted small">{{ t('customers.noDevices') }}</p>
     <div v-else class="table-wrap">
       <table>
         <thead>
-          <tr><th>客户端</th><th>最近的 IP</th><th>第一次</th><th>最近一次</th><th></th></tr>
+          <tr><th>{{ t('customers.colClient') }}</th><th>{{ t('customers.colLastIp') }}</th><th>{{ t('customers.colFirst') }}</th><th>{{ t('customers.colLast') }}</th><th></th></tr>
         </thead>
         <tbody>
           <tr v-for="d in fetchesFor.devices" :key="d.id">
-            <td class="small" :title="d.ua">{{ shortUa(d.ua) || '(空 UA)' }}</td>
+            <td class="small" :title="d.ua">{{ shortUa(d.ua) || t('customers.emptyUa') }}</td>
             <td class="small">{{ d.ip }}</td>
             <td class="small">{{ fmtDateTime(d.first_at) }}</td>
             <td class="small">{{ fmtDateTime(d.last_at) }}</td>
-            <td><button class="link danger small" @click="removeDevice(d)">移除</button></td>
+            <td><button class="link danger small" @click="removeDevice(d)">{{ t('customers.remove') }}</button></td>
           </tr>
         </tbody>
       </table>
     </div>
-    <p class="muted small">每个拉过订阅的客户端算一台(按 UA 区分,同型号同版本的两台会算成一台);30 天没再拉过的自动清掉。客户用浏览器打开订阅链接也能自己移除。</p>
-    <h4 class="sec">近 {{ fetchesFor.days }} 天的拉取记录</h4>
-    <p v-if="!fetchesFor.rows.length" class="muted small">还没有记录。</p>
+    <p class="muted small">{{ t('customers.devicesNote') }}</p>
+    <h4 class="sec">{{ t('customers.fetchesHead', { n: fetchesFor.days }) }}</h4>
+    <p v-if="!fetchesFor.rows.length" class="muted small">{{ t('customers.noFetches') }}</p>
     <div v-else class="table-wrap">
       <table>
         <thead>
-          <tr><th>时间</th><th>客户端</th><th>来源 IP</th><th>格式</th><th>结果</th></tr>
+          <tr><th>{{ t('customers.colTime') }}</th><th>{{ t('customers.colClient') }}</th><th>{{ t('customers.colIp') }}</th><th>{{ t('customers.colFormat') }}</th><th>{{ t('customers.colResult') }}</th></tr>
         </thead>
         <tbody>
           <tr v-for="(f, i) in fetchesFor.rows" :key="i">
             <td class="small">{{ fmtDateTime(f.at) }}</td>
-            <td class="small" :title="f.ua">{{ shortUa(f.ua) || '(空 UA)' }}</td>
+            <td class="small" :title="f.ua">{{ shortUa(f.ua) || t('customers.emptyUa') }}</td>
             <td class="small">{{ f.ip }}</td>
             <td class="small">{{ f.target }}</td>
             <td class="small" :class="f.status >= 400 ? 'text-err' : 'text-ok'">{{ f.status }}</td>
@@ -566,15 +572,15 @@ function exitText(l: Line): string {
         </tbody>
       </table>
     </div>
-    <p class="muted small">来源 IP 多、客户端杂,可能是链接被分享了;「重置链接」可以让旧链接失效。</p>
+    <p class="muted small">{{ t('customers.fetchesNote') }}</p>
   </Modal>
 
-  <Modal v-if="topoFor" :title="`「${topoFor.name}」的网络拓扑`" wide @close="topoFor = null">
-    <p class="muted small topo-hint">滚轮缩放,拖动画布或节点;点节点看下游路径和线上的协议 / 客户端名,点空白恢复。蓝边是面板,黄底是 SOCKS,虚线箭头是出网。</p>
+  <Modal v-if="topoFor" :title="t('customers.topoTitle', { name: topoFor.name })" wide @close="topoFor = null">
+    <p class="muted small topo-hint">{{ t('customers.topoHint') }}</p>
     <TopologyGraph :customer="topoFor" :panels="panels" :socks="socksList" :height="420" />
   </Modal>
 
-  <Modal v-if="linksFor" :title="`「${linksFor.line.email}」的链接`" @close="linksFor = null">
+  <Modal v-if="linksFor" :title="t('customers.linksTitle', { email: linksFor.line.email })" @close="linksFor = null">
     <ClientLinks :links="linksFor.links" :name="linksFor.line.email" />
   </Modal>
 </template>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // SOCKS 页:登记购买的 SOCKS5 代理,测连通性(出口 IP / 地区 / 延迟),给客户页的中转当出口用。
+import { t } from '../i18n';
 import { onMounted, ref } from 'vue';
 import { api } from '../api';
 import Modal from '../components/Modal.vue';
@@ -25,8 +26,8 @@ async function checkOne(s: Socks) {
   try {
     const updated = await api.checkSocks(s.id);
     Object.assign(s, updated);
-    if (updated.check?.ok) toast(`「${s.name}」可用,延迟 ${updated.check.ms} ms,出口 ${updated.check.ip ?? '未知'} ${region(updated.check.loc)}`);
-    else toast(`「${s.name}」${updated.check?.error ?? '测试失败'}`, 'err');
+    if (updated.check?.ok) toast(t('socks.okToast', { name: s.name, ms: updated.check.ms, ip: updated.check.ip ?? t('socks.unknown'), region: region(updated.check.loc) }));
+    else toast(t('socks.failToast', { name: s.name, error: updated.check?.error ?? t('socks.testFailed') }), 'err');
   } catch (e) {
     toastError(e);
   } finally {
@@ -39,7 +40,7 @@ async function checkAll() {
   try {
     list.value = await api.checkAllSocks();
     const bad = list.value.filter((s) => !s.check?.ok).length;
-    toast(`测试完成:${list.value.length - bad} 个可用,${bad} 个失败`, bad ? 'err' : 'ok');
+    toast(t('socks.allDone', { ok: list.value.length - bad, bad }), bad ? 'err' : 'ok');
   } catch (e) {
     toastError(e);
   } finally {
@@ -63,12 +64,12 @@ async function submit() {
   const body: SocksInput = { name: form.value.name, remark: form.value.remark };
   if (form.value.address.trim()) body.address = form.value.address.trim();
   const used = editing.value?.used_by ?? 0;
-  if (body.address && used && !confirm(`有 ${used} 条线路在用这个 SOCKS:改地址会把这些中转面板上的出口一起改过去并重启 Xray,中转上的客户端会断流几秒。继续?`)) return;
+  if (body.address && used && !confirm(t('socks.confirmAddress', { n: used }))) return;
   saving.value = true;
   try {
     const saved = editing.value ? await api.updateSocks(editing.value.id, body) : await api.createSocks(body);
     showForm.value = false;
-    toast('已保存');
+    toast(t('socks.saved'));
     await load();
     // 新登记的顺手测一下
     if (!editing.value) {
@@ -83,11 +84,11 @@ async function submit() {
 }
 
 async function remove(s: Socks) {
-  if (s.used_by) return toast(`还有 ${s.used_by} 条线路在用「${s.name}」,先到客户页删掉这些线路`, 'err');
-  if (!confirm(`删除 SOCKS「${s.name}」?`)) return;
+  if (s.used_by) return toast(t('socks.inUse', { n: s.used_by, name: s.name }), 'err');
+  if (!confirm(t('socks.confirmDelete', { name: s.name }))) return;
   try {
     await api.deleteSocks(s.id);
-    toast('已删除');
+    toast(t('socks.deleted'));
     await load();
   } catch (e) {
     toastError(e);
@@ -99,11 +100,11 @@ async function remove(s: Socks) {
   <div class="toolbar">
     <div>
       <h2>SOCKS</h2>
-      <p class="muted small">登记购买的 SOCKS5 代理,作为中转线路的出口。测试从 xui-hub 所在机器发起,代理商按来源 IP 放行的话,中转机上的结果可能不同。</p>
+      <p class="muted small">{{ t('socks.intro') }}</p>
     </div>
     <div class="row">
-      <button :disabled="checkingAll || !list.length" @click="checkAll">{{ checkingAll ? '测试中…' : '测试全部' }}</button>
-      <button class="primary" @click="openForm(null)">添加 SOCKS</button>
+      <button :disabled="checkingAll || !list.length" @click="checkAll">{{ checkingAll ? t('socks.testing') : t('socks.testAll') }}</button>
+      <button class="primary" @click="openForm(null)">{{ t('socks.add') }}</button>
     </div>
   </div>
 
@@ -112,13 +113,13 @@ async function remove(s: Socks) {
       <table>
         <thead>
           <tr>
-            <th>名称</th>
-            <th>地址</th>
-            <th>账号</th>
-            <th>连通性</th>
-            <th>出口</th>
-            <th>在用</th>
-            <th>备注</th>
+            <th>{{ t('socks.colName') }}</th>
+            <th>{{ t('socks.colAddress') }}</th>
+            <th>{{ t('socks.colAccount') }}</th>
+            <th>{{ t('socks.colCheck') }}</th>
+            <th>{{ t('socks.colExit') }}</th>
+            <th>{{ t('socks.colUsed') }}</th>
+            <th>{{ t('socks.colRemark') }}</th>
             <th></th>
           </tr>
         </thead>
@@ -126,47 +127,47 @@ async function remove(s: Socks) {
           <tr v-for="s in list" :key="s.id">
             <td class="name">{{ s.name }}</td>
             <td class="mono">{{ s.host }}:{{ s.port }}</td>
-            <td class="muted">{{ s.username || '无' }}<template v-if="s.has_password"> / ••••</template></td>
+            <td class="muted">{{ s.username || t('socks.noAccount') }}<template v-if="s.has_password"> / ••••</template></td>
             <td class="small">
-              <template v-if="checking.has(s.id)"><span class="muted">测试中…</span></template>
-              <template v-else-if="!s.check"><span class="muted">没测过</span></template>
-              <template v-else-if="s.check.ok"><span class="text-ok">可用</span> <span class="muted">{{ s.check.ms }} ms · {{ fmtAgo(s.check.at) }}</span></template>
-              <template v-else><span class="text-err" :title="s.check.error ?? ''">失败</span> <span class="muted">{{ (s.check.error ?? '').slice(0, 40) }} · {{ fmtAgo(s.check.at) }}</span></template>
+              <template v-if="checking.has(s.id)"><span class="muted">{{ t('socks.testing') }}</span></template>
+              <template v-else-if="!s.check"><span class="muted">{{ t('socks.neverTested') }}</span></template>
+              <template v-else-if="s.check.ok"><span class="text-ok">{{ t('socks.ok') }}</span> <span class="muted">{{ s.check.ms }} ms · {{ fmtAgo(s.check.at) }}</span></template>
+              <template v-else><span class="text-err" :title="s.check.error ?? ''">{{ t('socks.failed') }}</span> <span class="muted">{{ (s.check.error ?? '').slice(0, 40) }} · {{ fmtAgo(s.check.at) }}</span></template>
             </td>
             <td class="small">
               <template v-if="s.check?.ok">{{ s.check.ip }} <span class="muted">{{ region(s.check.loc) }}</span></template>
               <span v-else class="muted">—</span>
             </td>
-            <td class="small"><template v-if="s.used_by">{{ s.used_by }} 条线路</template><span v-else class="muted">—</span></td>
+            <td class="small"><template v-if="s.used_by">{{ t('socks.usedBy', { n: s.used_by }, s.used_by) }}</template><span v-else class="muted">—</span></td>
             <td class="muted small">{{ s.remark || '' }}</td>
             <td class="num">
               <div class="ops">
-                <button class="link" :disabled="checking.has(s.id)" @click="checkOne(s)">测试</button>
-                <button class="link" @click="openForm(s)">编辑</button>
-                <button class="link danger" @click="remove(s)">删除</button>
+                <button class="link" :disabled="checking.has(s.id)" @click="checkOne(s)">{{ t('socks.test') }}</button>
+                <button class="link" @click="openForm(s)">{{ t('common.edit') }}</button>
+                <button class="link danger" @click="remove(s)">{{ t('common.delete') }}</button>
               </div>
             </td>
           </tr>
         </tbody>
       </table>
-      <div v-if="!list.length" class="empty">还没有 SOCKS。点「添加 SOCKS」,粘贴代理商给的地址即可。</div>
+      <div v-if="!list.length" class="empty">{{ t('socks.empty') }}</div>
     </div>
   </section>
 
-  <Modal v-if="showForm" :title="editing ? `编辑 SOCKS「${editing.name}」` : '添加 SOCKS'" @close="showForm = false">
+  <Modal v-if="showForm" :title="editing ? t('socks.editTitle', { name: editing.name }) : t('socks.add')" @close="showForm = false">
     <form id="socks-form" class="form" @submit.prevent="submit">
-      <label class="field">名称<input v-model="form.name" required placeholder="如 美国家宽-1" /></label>
+      <label class="field">{{ t('socks.name') }}<input v-model="form.name" required :placeholder="t('socks.namePlaceholder')" /></label>
       <label class="field">
-        地址{{ editing ? '(留空不修改)' : '' }}
-        <input v-model="form.address" :required="!editing" placeholder="socks5://用户:密码@主机:端口 或 主机:端口:用户:密码" autocomplete="off" />
+        {{ t('socks.address') }}{{ editing ? t('socks.keepBlank') : '' }}
+        <input v-model="form.address" :required="!editing" :placeholder="t('socks.addressPlaceholder')" autocomplete="off" />
       </label>
-      <label class="field">备注<input v-model="form.remark" placeholder="代理商、到期日之类" /></label>
-      <p class="muted small hint">支持 socks5://用户:密码@主机:端口、主机:端口:用户:密码、主机:端口(无认证)。保存后会自动测一次连通性。</p>
+      <label class="field">{{ t('socks.remark') }}<input v-model="form.remark" :placeholder="t('socks.remarkPlaceholder')" /></label>
+      <p class="muted small hint">{{ t('socks.hint') }}</p>
     </form>
     <template #footer>
       <span class="spacer" />
-      <button @click="showForm = false">取消</button>
-      <button class="primary" form="socks-form" :disabled="saving">{{ saving ? '保存中…' : '保存' }}</button>
+      <button @click="showForm = false">{{ t('common.cancel') }}</button>
+      <button class="primary" form="socks-form" :disabled="saving">{{ saving ? t('common.saving') : t('common.save') }}</button>
     </template>
   </Modal>
 </template>

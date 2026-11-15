@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 一位客户的网络拓扑(cytoscape.js):客户端 → 入口面板 → 出口(落地面板的 socks 入站 / SOCKS 代理)→ 互联网。
 // 滚轮缩放、拖画布平移、拖节点摆位置;点节点高亮它下游的路径,点空白处恢复。只画这位客户用到的面板和 SOCKS。
+import { t } from '../i18n';
 import cytoscape, { type Core, type ElementDefinition } from 'cytoscape';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Customer, Panel, Socks } from '../types';
@@ -47,7 +48,7 @@ function build(): { elements: ElementDefinition[]; positions: Record<string, { x
   const directPanels = new Set<number>();
   {
     const c = props.customer;
-    addNode(`c:${c.id}`, { label: '客户端', sub: c.name }, 'customer');
+    addNode(`c:${c.id}`, { label: t('topo.client'), sub: c.name }, 'customer');
     for (const l of c.lines) {
       entryPanels.add(l.panel_id);
       addEdge(`l:${l.id}`, `c:${c.id}`, `p:${l.panel_id}`, `${proto(l.protocol)} · ${l.email}`, l.kind);
@@ -65,17 +66,17 @@ function build(): { elements: ElementDefinition[]; positions: Record<string, { x
   const panelIds = new Set([...entryPanels, ...landingPanels]);
   for (const id of panelIds) {
     const p = props.panels.find((x) => x.id === id);
-    addNode(`p:${id}`, p ? { label: p.name, sub: hostOf(p.base_url) } : { label: '面板(已删除)', sub: '' }, `panel${!p || p.check_error ? ' bad' : ''}`);
+    addNode(`p:${id}`, p ? { label: p.name, sub: hostOf(p.base_url) } : { label: t('topo.panelDeleted'), sub: '' }, `panel${!p || p.check_error ? ' bad' : ''}`);
   }
   for (const id of usedSocks) {
     const s = props.socks.find((x) => x.id === id);
-    addNode(`s:${id}`, s ? { label: s.name, sub: `${s.host}:${s.port}` } : { label: 'SOCKS(已删除)', sub: '' }, 'socks');
+    addNode(`s:${id}`, s ? { label: s.name, sub: `${s.host}:${s.port}` } : { label: t('topo.socksDeleted'), sub: '' }, 'socks');
   }
-  addNode('net', { label: '互联网', sub: '' }, 'net');
+  addNode('net', { label: t('topo.internet'), sub: '' }, 'net');
   const hasExitColumn = usedSocks.size > 0 || [...landingPanels].some((id) => !entryPanels.has(id));
   for (const id of new Set([...directPanels, ...landingPanels])) {
     const fromEntry = entryPanels.has(id);
-    addEdge(`n:p${id}`, `p:${id}`, 'net', landingPanels.has(id) && !directPanels.has(id) ? '' : '直出', `out${fromEntry && hasExitColumn ? ' arc' : ''}`);
+    addEdge(`n:p${id}`, `p:${id}`, 'net', landingPanels.has(id) && !directPanels.has(id) ? '' : t('topo.directOut'), `out${fromEntry && hasExitColumn ? ' arc' : ''}`);
   }
   for (const id of usedSocks) addEdge(`n:s${id}`, `s:${id}`, 'net', '', 'out');
 
@@ -154,8 +155,8 @@ defineExpose({ fit, relayout });
   <div class="wrap">
     <div ref="el" class="graph" :style="{ height: height + 'px' }" />
     <div class="controls">
-      <button class="link small" @click="fit">适应窗口</button>
-      <button class="link small" @click="relayout">重新排列</button>
+      <button class="link small" @click="fit">{{ t('topo.fit') }}</button>
+      <button class="link small" @click="relayout">{{ t('topo.relayout') }}</button>
     </div>
   </div>
 </template>

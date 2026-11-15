@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n';
 import { ref } from 'vue';
 import { api } from '../api';
 
@@ -25,11 +26,11 @@ async function submit() {
   <form class="login sheet" @submit.prevent="submit">
     <h1>xui-hub</h1>
     <label class="field">
-      管理密码
+      {{ t('login.password') }}
       <input v-model="password" type="password" autocomplete="current-password" autofocus required />
     </label>
     <p v-if="error" class="text-err small">{{ error }}</p>
-    <button class="primary" :disabled="busy || !password">{{ busy ? '登录中…' : '登录' }}</button>
+    <button class="primary" :disabled="busy || !password">{{ busy ? t('login.submitting') : t('login.submit') }}</button>
   </form>
 </template>
 

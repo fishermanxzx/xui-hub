@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // 顶栏里的版本号:显示当前版本,发现新版本时变成醒目的提示;点开看详情、在后台里直接更新(一键脚本装的)或看要执行的命令(Docker)。
+import { t } from '../i18n';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
 import { copyText } from '../clipboard';
@@ -28,8 +29,8 @@ async function recheck() {
   checking.value = true;
   try {
     info.value = await api.systemVersion(true);
-    if (info.value.error) toast(`检查更新失败:${info.value.error}`, 'err');
-    else toast(info.value.update_available ? `发现新版本 v${info.value.latest}` : '已经是最新版本');
+    if (info.value.error) toast(t('version.checkFailed', { error: info.value.error }), 'err');
+    else toast(info.value.update_available ? t('version.found', { v: info.value.latest }) : t('version.upToDate'));
   } catch (e) {
     toastError(e);
   } finally {
@@ -38,17 +39,17 @@ async function recheck() {
 }
 
 /** 从源码直接跑的没有版本号,不写成「vdev」 */
-const label = (v: string) => (/^\d/.test(v) ? `v${v}` : '开发版');
+const label = (v: string) => (/^\d/.test(v) ? `v${v}` : t('version.dev'));
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function update() {
   const i = info.value;
   if (!i?.latest) return;
-  if (!confirm(`把 xui-hub 从 ${label(i.current)} 更新到 v${i.latest}?更新时后台会重启,大约一分钟打不开;客户的节点不受影响,订阅链接在重启的几秒里拉不到。`)) return;
+  if (!confirm(t('version.confirm', { from: label(i.current), to: i.latest }))) return;
   const from = i.current;
   waiting.value = true;
-  waitNote.value = '已开始更新,正在下载新版本…';
+  waitNote.value = t('version.started');
   try {
     await api.systemUpdate();
     // 更新中服务会重启:请求失败是正常的,一直问到版本变了、报失败,或者等太久
@@ -56,23 +57,23 @@ async function update() {
       await sleep(3000);
       const now = await api.systemVersion().catch(() => null);
       if (!now) {
-        waitNote.value = '服务正在重启…';
+        waitNote.value = t('version.restarting');
         continue;
       }
       info.value = now;
       if (now.current !== from) {
-        toast(`已更新到 v${now.current},页面即将刷新`);
+        toast(t('version.done', { v: now.current }));
         await sleep(1200);
         location.reload();
         return;
       }
       if (now.state === 'failed') {
         waitNote.value = '';
-        toast('更新没有成功,原来的版本还在运行', 'err');
+        toast(t('version.failed'), 'err');
         return;
       }
     }
-    toast('等了 5 分钟版本还没变,去服务器上看一下:xui-hub status', 'err');
+    toast(t('version.timeout'), 'err');
   } catch (e) {
     toastError(e);
   } finally {
@@ -94,41 +95,41 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <button v-if="info" class="version" :class="{ fresh: info.update_available }" :title="info.update_available ? `有新版本 v${info.latest},点开更新` : '当前版本,点开检查更新'" @click="open = true">
-    {{ label(info.current) }}<span v-if="info.update_available" class="new">有新版本 v{{ info.latest }}</span>
+  <button v-if="info" class="version" :class="{ fresh: info.update_available }" :title="info.update_available ? t('version.badgeNew', { v: info.latest }) : t('version.badgeCurrent')" @click="open = true">
+    {{ label(info.current) }}<span v-if="info.update_available" class="new">{{ t('version.newVersion', { v: info.latest }) }}</span>
   </button>
 
-  <Modal v-if="open && info" title="xui-hub 版本" @close="open = false">
+  <Modal v-if="open && info" :title="t('version.title')" @close="open = false">
     <dl class="facts">
-      <dt>当前版本</dt>
+      <dt>{{ t('version.current') }}</dt>
       <dd>{{ label(info.current) }}</dd>
-      <dt>最新版本</dt>
+      <dt>{{ t('version.latest') }}</dt>
       <dd>
-        <template v-if="info.latest">v{{ info.latest }}<span v-if="!info.update_available" class="muted">(已是最新)</span></template>
-        <span v-else class="muted">还没查到</span>
+        <template v-if="info.latest">v{{ info.latest }}<span v-if="!info.update_available" class="muted">{{ t('version.isLatest') }}</span></template>
+        <span v-else class="muted">{{ t('version.unknown') }}</span>
       </dd>
-      <dt>上次检查</dt>
-      <dd class="muted">{{ info.checked_at ? fmtAgo(info.checked_at) : '—' }}<template v-if="info.error">,失败:{{ info.error }}</template></dd>
+      <dt>{{ t('version.lastCheck') }}</dt>
+      <dd class="muted">{{ info.checked_at ? fmtAgo(info.checked_at) : '—' }}<template v-if="info.error">{{ t('version.lastCheckFailed', { error: info.error }) }}</template></dd>
     </dl>
 
     <template v-if="info.update_available">
-      <p v-if="info.method === 'auto'" class="small">点「立即更新」会在这台服务器上执行一次 <code>xui-hub update</code>:下载新版本、换掉程序、重启服务。新版本起不来会自动退回现在的版本。数据不动。</p>
+      <p v-if="info.method === 'auto'" class="small">{{ t('version.autoHint') }}</p>
       <template v-else>
-        <p class="small">{{ info.method === 'docker' ? 'Docker 部署换不了自己的镜像,在服务器的 xui-hub 目录里执行:' : '这台机器上还没有装后台更新用的服务,在服务器上执行一次(之后就能在这里直接点更新):' }}</p>
-        <p class="cmd"><code>{{ info.command }}</code><button class="link" @click="copyText(info.command, '命令')">复制</button></p>
+        <p class="small">{{ info.method === 'docker' ? t('version.dockerHint') : t('version.manualHint') }}</p>
+        <p class="cmd"><code>{{ info.command }}</code><button class="link" @click="copyText(info.command, t('version.command'))">{{ t('common.copy') }}</button></p>
       </template>
     </template>
     <p v-if="waitNote" class="small note">{{ waitNote }}</p>
     <template v-if="info.state === 'failed' && !waiting">
-      <p class="small text-err">上次在后台里更新没有成功,脚本最后的输出:</p>
+      <p class="small text-err">{{ t('version.lastFailed') }}</p>
       <pre class="log">{{ info.log }}</pre>
     </template>
 
     <template #footer>
-      <a class="link small" :href="info.release_url" target="_blank" rel="noopener noreferrer">更新记录</a>
+      <a class="link small" :href="info.release_url" target="_blank" rel="noopener noreferrer">{{ t('version.releases') }}</a>
       <span class="spacer" />
-      <button :disabled="checking || busy" @click="recheck">{{ checking ? '检查中…' : '检查更新' }}</button>
-      <button v-if="info.update_available && info.method === 'auto'" class="primary" :disabled="busy" @click="update">{{ busy ? '更新中…' : '立即更新' }}</button>
+      <button :disabled="checking || busy" @click="recheck">{{ checking ? t('version.checking') : t('version.check') }}</button>
+      <button v-if="info.update_available && info.method === 'auto'" class="primary" :disabled="busy" @click="update">{{ busy ? t('version.updating') : t('version.update') }}</button>
     </template>
   </Modal>
 </template>

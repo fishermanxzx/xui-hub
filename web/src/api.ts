@@ -1,4 +1,5 @@
 import type { UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus } from './types';
+import { locale } from './i18n';
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -10,7 +11,8 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
   const rawBody = body instanceof Blob;
   const res = await fetch(url, {
     method,
-    headers: body !== undefined ? { 'Content-Type': rawBody ? 'application/octet-stream' : 'application/json' } : undefined,
+    // 带上界面语言:服务端按它给出错误信息
+    headers: { 'Accept-Language': locale.value, ...(body !== undefined ? { 'Content-Type': rawBody ? 'application/octet-stream' : 'application/json' } : {}) },
     body: body === undefined ? undefined : rawBody ? body : JSON.stringify(body),
   });
   const text = await res.text();

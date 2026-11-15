@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // 设置页:通知渠道(Telegram / Webhook)和提醒项、数据备份与恢复。
+import { t } from '../i18n';
 import { onMounted, ref } from 'vue';
 import { api } from '../api';
 import { toast, toastError } from '../toast';
@@ -46,11 +47,11 @@ async function addToken() {
   }
 }
 
-async function removeToken(t: ApiToken) {
-  if (!confirm(`删除令牌「${t.name}」?用它的程序会立刻调不通。`)) return;
+async function removeToken(tk: ApiToken) {
+  if (!confirm(t('settings.confirmDeleteToken', { name: tk.name }))) return;
   try {
-    await api.deleteToken(t.id);
-    if (fresh.value?.id === t.id) fresh.value = null;
+    await api.deleteToken(tk.id);
+    if (fresh.value?.id === tk.id) fresh.value = null;
     await loadTokens();
   } catch (e) {
     toastError(e);
@@ -62,7 +63,7 @@ async function save(): Promise<boolean> {
   saving.value = true;
   try {
     s.value = await api.updateSettings(s.value);
-    toast('已保存');
+    toast(t('settings.saved'));
     return true;
   } catch (e) {
     toastError(e);
@@ -79,7 +80,7 @@ async function test() {
   try {
     const { results } = await api.testNotify();
     const bad = results.filter((r) => !r.ok);
-    toast(bad.length ? `发送失败:${bad.map((r) => `${r.channel}(${r.error})`).join('、')}` : `已发送到 ${results.map((r) => r.channel).join('、')},去看看收到没有`, bad.length ? 'err' : 'ok');
+    toast(bad.length ? t('settings.sendFailed', { list: bad.map((r) => `${r.channel} (${r.error})`).join(', ') }) : t('settings.sent', { list: results.map((r) => r.channel).join(', ') }), bad.length ? 'err' : 'ok');
   } catch (e) {
     toastError(e);
   } finally {
@@ -101,7 +102,7 @@ async function loadGrants() {
 onMounted(loadGrants);
 
 async function revoke(g: OAuthGrant) {
-  if (!confirm(`撤销「${g.client_name}」的授权?它会立刻连不上,要用得重新授权。`)) return;
+  if (!confirm(t('settings.confirmRevoke', { name: g.client_name }))) return;
   try {
     await api.revokeGrant(g.id);
     await loadGrants();
@@ -118,12 +119,12 @@ const restored = ref<{ panels: number; customers: number; lines: number } | null
 async function restore() {
   const file = fileInput.value?.files?.[0];
   if (!file) return;
-  if (!confirm(`用「${file.name}」整个替换当前数据库?现在的面板、客户、线路、设置都会变成备份里的内容(旧库会在数据目录里留一份)。恢复后服务会重启,需要重新登录。`)) return;
+  if (!confirm(t('settings.confirmRestore', { file: file.name }))) return;
   restoring.value = true;
   try {
     const info = await api.restore(file);
     restored.value = info;
-    toast(info.restarting ? '备份已上传,服务正在重启…' : '备份已放好,重启服务后生效');
+    toast(info.restarting ? t('settings.restoreRestarting') : t('settings.restorePlaced'));
   } catch (e) {
     toastError(e);
   } finally {
@@ -136,72 +137,72 @@ async function restore() {
 <template>
   <div class="toolbar">
     <div>
-      <h2>设置</h2>
-      <p class="muted small">通知和备份。后台密码、端口、HTTPS 这些在服务器上改(一键脚本用 <code>xui-hub</code> 命令,Docker 改 <code>.env</code>)。</p>
+      <h2>{{ t('settings.title') }}</h2>
+      <p class="muted small">{{ t('settings.intro') }}</p>
     </div>
   </div>
 
   <template v-if="s">
     <section class="sheet block">
-      <h3>通知渠道</h3>
-      <p class="muted small">面板掉线、客户被停用、快到期这些事发到这里。两种渠道都可以不填,只在后台和日志里看。</p>
+      <h3>{{ t('settings.channels') }}</h3>
+      <p class="muted small">{{ t('settings.channelsIntro') }}</p>
       <div class="grid">
         <label class="field">
           Telegram Bot token
-          <input v-model="s.telegram.token" placeholder="在 @BotFather 创建机器人得到,形如 123456:ABC-DEF…" autocomplete="off" />
+          <input v-model="s.telegram.token" :placeholder="t('settings.tgTokenPlaceholder')" autocomplete="off" />
         </label>
         <label class="field">
           Telegram Chat ID
-          <input v-model="s.telegram.chat_id" placeholder="给机器人发条消息后,从 @userinfobot 之类的工具拿到;群组是负数" autocomplete="off" />
+          <input v-model="s.telegram.chat_id" :placeholder="t('settings.tgChatPlaceholder')" autocomplete="off" />
         </label>
       </div>
       <label class="field">
-        Webhook 地址
-        <input v-model="s.webhook.url" placeholder="https://… 每条通知 POST 一份 JSON:{ event, title, text, at }" autocomplete="off" />
+        {{ t('settings.webhook') }}
+        <input v-model="s.webhook.url" :placeholder="`${t('settings.webhookPlaceholder')} { event, title, text, at }`" autocomplete="off" />
       </label>
-      <p class="muted small">服务器要能访问 api.telegram.org。</p>
+      <p class="muted small">{{ t('settings.tgNote') }}</p>
     </section>
 
     <section class="sheet block">
-      <h3>提醒哪些事</h3>
+      <h3>{{ t('settings.events') }}</h3>
       <div class="checks">
-        <label class="row small"><input v-model="s.notify.panel_down" type="checkbox" />面板连不上 / 恢复</label>
-        <label class="row small"><input v-model="s.notify.customer_disabled" type="checkbox" />客户超额 / 到期被停用,以及恢复</label>
-        <label class="row small"><input v-model="s.notify.expiring" type="checkbox" />客户快到期:提前 <input v-model.number="s.notify.expiring_days" type="number" min="1" max="30" class="num" /> 天提醒一次</label>
-        <label class="row small"><input v-model="s.notify.quota_warn" type="checkbox" />客户流量用到额度的 <input v-model.number="s.notify.quota_warn_pct" type="number" min="50" max="99" class="num" /> % 时提醒一次</label>
-        <label class="row small"><input v-model="s.notify.monthly_reset" type="checkbox" />按月清零完成</label>
-        <label class="row small"><input v-model="s.notify.sub_share" type="checkbox" />订阅疑似被分享:24 小时内从 <input v-model.number="s.notify.sub_share_ips" type="number" min="2" max="50" class="num" /> 个以上不同 IP 拉取(每位客户每天最多提醒一次,客户卡片上也会标出来)</label>
+        <label class="row small"><input v-model="s.notify.panel_down" type="checkbox" />{{ t('settings.evPanel') }}</label>
+        <label class="row small"><input v-model="s.notify.customer_disabled" type="checkbox" />{{ t('settings.evDisabled') }}</label>
+        <label class="row small"><input v-model="s.notify.expiring" type="checkbox" /><i18n-t keypath="settings.evExpiring" tag="span" scope="global"><template #n><input v-model.number="s.notify.expiring_days" type="number" min="1" max="30" class="num" /></template></i18n-t></label>
+        <label class="row small"><input v-model="s.notify.quota_warn" type="checkbox" /><i18n-t keypath="settings.evQuota" tag="span" scope="global"><template #n><input v-model.number="s.notify.quota_warn_pct" type="number" min="50" max="99" class="num" /></template></i18n-t></label>
+        <label class="row small"><input v-model="s.notify.monthly_reset" type="checkbox" />{{ t('settings.evReset') }}</label>
+        <label class="row small"><input v-model="s.notify.sub_share" type="checkbox" /><i18n-t keypath="settings.evShare" tag="span" scope="global"><template #n><input v-model.number="s.notify.sub_share_ips" type="number" min="2" max="50" class="num" /></template></i18n-t></label>
       </div>
       <div class="row actions">
-        <button class="primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
-        <button :disabled="saving || testing" @click="test">{{ testing ? '发送中…' : '保存并发一条测试通知' }}</button>
+        <button class="primary" :disabled="saving" @click="save">{{ saving ? t('common.saving') : t('common.save') }}</button>
+        <button :disabled="saving || testing" @click="test">{{ testing ? t('settings.sending') : t('settings.saveAndTest') }}</button>
       </div>
     </section>
 
     <section class="sheet block">
-      <h3>开放 API</h3>
-      <p class="muted small">给发卡站、机器人这类程序用:请求头带 <code>Authorization: Bearer 令牌</code> 就能调后台的接口(建客户、续期、开线路、取订阅链接)。令牌改不了这页的设置,也碰不了备份恢复。接口说明见仓库的 <code>docs/api.md</code>。</p>
+      <h3>{{ t('settings.api') }}</h3>
+      <p class="muted small">{{ t('settings.apiIntro') }}</p>
       <form class="row actions" @submit.prevent="addToken">
-        <input v-model="tokenName" required maxlength="64" placeholder="令牌用在哪儿,如:发卡站" class="grow" />
-        <button class="primary">生成令牌</button>
+        <input v-model="tokenName" required maxlength="64" :placeholder="t('settings.tokenPlaceholder')" class="grow" />
+        <button class="primary">{{ t('settings.tokenCreate') }}</button>
       </form>
       <div v-if="fresh" class="fresh">
-        <p class="small"><strong>「{{ fresh.name }}」的令牌,只显示这一次,现在就复制保存:</strong></p>
+        <p class="small"><strong>{{ t('settings.tokenFresh', { name: fresh.name }) }}</strong></p>
         <div class="row">
           <input readonly :value="fresh.token" class="grow mono" @focus="($event.target as HTMLInputElement).select()" />
-          <button type="button" @click="copyText(fresh.token ?? '', '令牌已复制')">复制</button>
+          <button type="button" @click="copyText(fresh.token ?? '', t('settings.tokenCopied'))">{{ t('common.copy') }}</button>
         </div>
-        <p class="muted small">试一下:<code>curl -H "Authorization: Bearer {{ fresh.token }}" {{ origin }}/api/customers</code></p>
+        <p class="muted small">{{ t('settings.tryIt') }}<code>curl -H "Authorization: Bearer {{ fresh.token }}" {{ origin }}/api/customers</code></p>
       </div>
       <table v-if="tokens.length" class="tokens">
-        <thead><tr><th>名称</th><th>令牌</th><th>创建</th><th>上次使用</th><th></th></tr></thead>
+        <thead><tr><th>{{ t('settings.colName') }}</th><th>{{ t('settings.colToken') }}</th><th>{{ t('settings.colCreated') }}</th><th>{{ t('settings.colLastUsed') }}</th><th></th></tr></thead>
         <tbody>
-          <tr v-for="t in tokens" :key="t.id">
-            <td>{{ t.name }}</td>
-            <td class="mono muted">xh_…{{ t.hint }}</td>
-            <td class="muted small">{{ fmtAgo(t.created_at) }}</td>
-            <td class="muted small">{{ t.last_used_at ? fmtAgo(t.last_used_at) : '还没用过' }}</td>
-            <td><button type="button" class="link danger" @click="removeToken(t)">删除</button></td>
+          <tr v-for="tk in tokens" :key="tk.id">
+            <td>{{ tk.name }}</td>
+            <td class="mono muted">xh_…{{ tk.hint }}</td>
+            <td class="muted small">{{ fmtAgo(tk.created_at) }}</td>
+            <td class="muted small">{{ tk.last_used_at ? fmtAgo(tk.last_used_at) : t('settings.neverUsed') }}</td>
+            <td><button type="button" class="link danger" @click="removeToken(tk)">{{ t('common.delete') }}</button></td>
           </tr>
         </tbody>
       </table>
@@ -209,43 +210,43 @@ async function restore() {
 
     <section class="sheet block">
       <h3>MCP</h3>
-      <p class="muted small">让 Claude、Cursor 这类 AI 客户端直接管理这里的客户和线路(查客户、建客户、续期、开线路、看设备等;改不了这页的设置)。在客户端里添加下面这个地址,两种方式任选:</p>
+      <p class="muted small">{{ t('settings.mcpIntro') }}</p>
       <div class="row">
-        <input readonly :value="mcpUrl" class="grow mono" aria-label="MCP 地址" @focus="($event.target as HTMLInputElement).select()" />
-        <button type="button" @click="copyText(mcpUrl, 'MCP 地址已复制')">复制</button>
+        <input readonly :value="mcpUrl" class="grow mono" :aria-label="t('settings.mcpAria')" @focus="($event.target as HTMLInputElement).select()" />
+        <button type="button" @click="copyText(mcpUrl, t('settings.mcpCopied'))">{{ t('common.copy') }}</button>
       </div>
       <ul class="ways small">
-        <li><strong>OAuth 授权</strong>:只填地址,客户端会打开一个授权页,输入后台密码点「允许」即可。授权过的应用列在下面,随时可以撤销。客户端在外网(如 claude.ai)时,这个地址要能从公网用 HTTPS 访问。</li>
-        <li><strong>API 令牌</strong>:在上面「开放 API」生成一个令牌,客户端里把它配成请求头 <code>Authorization: Bearer 令牌</code>。例如 Claude Code:<code>claude mcp add --transport http xui-hub {{ mcpUrl }} --header "Authorization: Bearer xh_…"</code></li>
+        <li><strong>{{ t('settings.mcpOauthTitle') }}</strong>{{ t('settings.mcpOauth') }}</li>
+        <li><strong>{{ t('settings.mcpTokenTitle') }}</strong>{{ t('settings.mcpToken') }}<code>claude mcp add --transport http xui-hub {{ mcpUrl }} --header "Authorization: Bearer xh_…"</code></li>
       </ul>
       <table v-if="grants.length" class="tokens">
-        <thead><tr><th>已授权的应用</th><th>授权时间</th><th>上次使用</th><th></th></tr></thead>
+        <thead><tr><th>{{ t('settings.grantsCol') }}</th><th>{{ t('settings.grantedAt') }}</th><th>{{ t('settings.colLastUsed') }}</th><th></th></tr></thead>
         <tbody>
           <tr v-for="g in grants" :key="g.id">
             <td :title="g.client_id">{{ g.client_name }}</td>
             <td class="muted small">{{ fmtAgo(g.created_at) }}</td>
-            <td class="muted small">{{ g.last_used_at ? fmtAgo(g.last_used_at) : '还没用过' }}</td>
-            <td><button type="button" class="link danger" @click="revoke(g)">撤销</button></td>
+            <td class="muted small">{{ g.last_used_at ? fmtAgo(g.last_used_at) : t('settings.neverUsed') }}</td>
+            <td><button type="button" class="link danger" @click="revoke(g)">{{ t('settings.revoke') }}</button></td>
           </tr>
         </tbody>
       </table>
-      <p v-else class="muted small">还没有应用通过 OAuth 授权。</p>
+      <p v-else class="muted small">{{ t('settings.noGrants') }}</p>
     </section>
 
     <section class="sheet block">
-      <h3>备份与恢复</h3>
-      <p class="muted small">整个后台的数据(面板、客户、线路、订阅链接、设置)都在一个数据库文件里;面板上的客户端不在里面,它们本来就在面板上。</p>
+      <h3>{{ t('settings.backup') }}</h3>
+      <p class="muted small">{{ t('settings.backupIntro') }}</p>
       <div class="row actions">
-        <a class="btn" :href="api.backupUrl" download>下载备份</a>
-        <label class="row small"><input v-model="s.backup.daily" type="checkbox" @change="save" />每天把备份发到上面的 Telegram</label>
+        <a class="btn" :href="api.backupUrl" download>{{ t('settings.download') }}</a>
+        <label class="row small"><input v-model="s.backup.daily" type="checkbox" @change="save" />{{ t('settings.daily') }}</label>
       </div>
       <div class="restore">
-        <span class="label">恢复</span>
+        <span class="label">{{ t('settings.restore') }}</span>
         <div class="row">
           <input ref="fileInput" type="file" accept=".db,application/octet-stream" :disabled="restoring" @change="restore" />
-          <span class="muted small">选一个之前下载的 .db 文件,会整个替换当前数据,然后服务自动重启。</span>
+          <span class="muted small">{{ t('settings.restoreHint') }}</span>
         </div>
-        <p v-if="restored" class="small text-ok">备份里有 {{ restored.panels }} 块面板、{{ restored.customers }} 位客户、{{ restored.lines }} 条线路。等几秒刷新页面重新登录。</p>
+        <p v-if="restored" class="small text-ok">{{ t('settings.restored', { panels: restored.panels, customers: restored.customers, lines: restored.lines }) }}</p>
       </div>
     </section>
   </template>

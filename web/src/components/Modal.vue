@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { t } from '../i18n';
 defineProps<{ title: string; wide?: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 </script>
@@ -8,7 +9,7 @@ const emit = defineEmits<{ close: [] }>();
     <div class="modal sheet" :class="{ wide }" role="dialog" aria-modal="true" :aria-label="title">
       <header>
         <h2>{{ title }}</h2>
-        <button class="link close" aria-label="关闭" @click="emit('close')">关闭</button>
+        <button class="link close" :aria-label="t('common.close')" @click="emit('close')">{{ t('common.close') }}</button>
       </header>
       <div class="body">
         <slot />

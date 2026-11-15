@@ -1,4 +1,6 @@
-// 展示格式化。
+// 展示格式化。文案走 i18n:这些函数在模板里调用,切换语言后跟着重算。
+
+import { locale, t } from './i18n';
 
 export function fmtBytes(n: number): string {
   if (!n) return '0';
@@ -23,7 +25,7 @@ export function gbToBytes(gb: number): number {
 function pad(n: number): string {
   return String(n).padStart(2, '0');
 }
-export function fmtDate(ms: number, empty = '不限期'): string {
+export function fmtDate(ms: number, empty = t('fmt.noExpiry')): string {
   if (!ms) return empty;
   const d = new Date(ms);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -39,15 +41,15 @@ export function msToDateInput(ms: number): string {
   const d = new Date(ms);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
-export const STATE_LABEL: Record<string, string> = { active: '正常', expired: '已到期', over_quota: '已超额' };
+export const stateLabel = (state: string): string => (state === 'active' || state === 'expired' || state === 'over_quota' ? t(`state.${state}`) : state);
 
-export function fmtAgo(ms: number | null | undefined, empty = '从未'): string {
+export function fmtAgo(ms: number | null | undefined, empty = t('fmt.never')): string {
   if (!ms) return empty;
   const diff = Date.now() - ms;
-  if (diff < 60_000) return '刚刚';
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-  return `${Math.floor(diff / 86_400_000)} 天前`;
+  if (diff < 60_000) return t('fmt.justNow');
+  if (diff < 3_600_000) return t('fmt.minutesAgo', { n: Math.floor(diff / 60_000) });
+  if (diff < 86_400_000) return t('fmt.hoursAgo', { n: Math.floor(diff / 3_600_000) });
+  return t('fmt.daysAgo', { n: Math.floor(diff / 86_400_000) });
 }
 
 const DAY_MS = 86_400_000;
@@ -64,12 +66,12 @@ export function daysUntil(ms: number, now = Date.now()): number {
 
 /** 到期的说法:明天到期、3 天后、已过期 2 天、不限期 */
 export function fmtDue(ms: number, now = Date.now()): string {
-  if (!ms) return '不限期';
+  if (!ms) return t('fmt.noExpiry');
   const d = daysUntil(ms, now);
-  if (d < 0) return `已过期 ${-d} 天`;
-  if (d === 0) return '今天到期';
-  if (d === 1) return '明天到期';
-  return `${d} 天后`;
+  if (d < 0) return t('fmt.overdue', { n: -d });
+  if (d === 0) return t('fmt.dueToday');
+  if (d === 1) return t('fmt.dueTomorrow');
+  return t('fmt.dueIn', { n: d });
 }
 
 /** 到期的紧急程度:已过期 err,7 天内 warn,其余不标 */
@@ -87,7 +89,7 @@ export function subUrl(c: { sub_url: string | null; sub_token: string }): string
 /** 订阅客户端的简称:UA 的第一段(如 clash-verge/v2.5.8),浏览器统一叫浏览器 */
 export function shortUa(ua: string | null | undefined): string {
   if (!ua) return '';
-  if (ua.startsWith('Mozilla/')) return '浏览器';
+  if (ua.startsWith('Mozilla/')) return t('fmt.browser');
   const first = ua.split(' ')[0];
   return first.length > 28 ? `${first.slice(0, 27)}…` : first;
 }
@@ -98,13 +100,13 @@ export function fmtDateTime(ms: number | null | undefined, empty = '—'): strin
   return `${fmtDate(ms)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 出口地区:常见的给中文名,其余原样显示代码 */
-const REGION: Record<string, string> = {
-  US: '美国', TW: '台湾', HK: '香港', JP: '日本', SG: '新加坡', KR: '韩国', DE: '德国', GB: '英国',
-  NL: '荷兰', FR: '法国', CA: '加拿大', AU: '澳大利亚', MY: '马来西亚', TH: '泰国', VN: '越南', PH: '菲律宾', IN: '印度', RU: '俄罗斯', CN: '中国',
-};
+/** 出口地区:常见的给名字(按当前语言),其余原样显示代码 */
+const REGIONS = new Set(['US', 'TW', 'HK', 'JP', 'SG', 'KR', 'DE', 'GB', 'NL', 'FR', 'CA', 'AU', 'MY', 'TH', 'VN', 'PH', 'IN', 'RU', 'CN']);
 export function region(loc: string | null | undefined): string {
-  return loc ? (REGION[loc] ?? loc) : '';
+  if (!loc) return '';
+  // 读一下 locale,模板里用到时切换语言会重算
+  void locale.value;
+  return REGIONS.has(loc) ? t(`region.${loc}` as 'region.US') : loc;
 }
 
 /** 面板地址只显示主机名和端口 */
