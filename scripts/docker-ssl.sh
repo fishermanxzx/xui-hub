@@ -26,7 +26,14 @@ die() { err "$*"; exit 1; }
 
 is_domain() { [[ "$1" =~ ^([A-Za-z0-9](-*[A-Za-z0-9])*\.)+[A-Za-z]{2,}$ ]]; }
 is_ipv4() { [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; }
-public_ip() { curl -4fsS --max-time 3 https://api4.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}'; }
+public_ip() {
+  local u ip
+  for u in https://api4.ipify.org https://ipv4.icanhazip.com https://4.ident.me; do
+    ip="$(curl -4fsS --max-time 3 "$u" 2>/dev/null | tr -d '[:space:]')"
+    if is_ipv4 "$ip"; then echo "$ip"; return 0; fi
+  done
+  hostname -I 2>/dev/null | awk '{print $1}'
+}
 port_in_use() { [ -n "$(ss -ltn 2>/dev/null | awk -v p="$1" '$4 ~ ("[:.]" p "$")')" ]; }
 env_get() { { grep -E "^$1=" "$ENV_FILE" 2>/dev/null || true; } | tail -n 1 | cut -d= -f2- | sed -e "s/^'//" -e "s/'$//"; }
 env_set() {
@@ -38,6 +45,15 @@ env_del() {
   mv "$ENV_FILE.tmp" "$ENV_FILE"; chmod 600 "$ENV_FILE"
 }
 port() { local p; p="$(env_get HOST_PORT)"; echo "${p:-8788}"; }
+# 宿主机上只映射到某一个地址时返回它(compose 里是 ${LISTEN_ADDR:-0.0.0.0}:端口:8788);没设或设成通配返回空
+listen_addr() {
+  local a
+  a="$(env_get LISTEN_ADDR)"
+  case "$a" in 0.0.0.0 | ::) a="" ;; esac
+  printf '%s\n' "$a"
+}
+# 写进 URL 的主机名:IPv6 要加方括号
+url_host() { case "$1" in *:*) echo "[$1]" ;; *) echo "$1" ;; esac; }
 compose() { (cd "$DIR" && docker compose "$@"); }
 
 preflight() {
@@ -111,27 +127,37 @@ install_cert() {
   ok "证书已装到 $CERT_DIR($(cert_summary "$CERT_DIR/fullchain.pem")),acme.sh 会自动续期"
 }
 
-# 等容器起来:最多 40 秒
+# 等容器起来:最多 40 秒。连的是宿主机上实际映射的地址(LISTEN_ADDR 写了具体地址时,127.0.0.1 上没人听)
 wait_up() {
-  local i
+  local i a
+  a="$(listen_addr)"
   for i in $(seq 1 20); do
     sleep 2
-    curl -ksf -o /dev/null --max-time 3 "$1://127.0.0.1:$(port)/api/session" && return 0
+    curl -ksf -o /dev/null --max-time 3 "$1://$(url_host "${a:-127.0.0.1}"):$(port)/api/session" && return 0
   done
   return 1
 }
 
+# 换上证书并重建容器;起不来就把 .env 改回原来的设置,不留下一个打不开的后台
 use_cert() {
-  local host="$1"
+  local host="$1" old_cf old_kf
+  old_cf="$(env_get TLS_CERT_FILE)"; old_kf="$(env_get TLS_KEY_FILE)"
   env_set TLS_CERT_FILE /cert/fullchain.pem
   env_set TLS_KEY_FILE /cert/privkey.pem
-  compose up -d >/dev/null 2>&1 || { err "docker compose up -d 失败,手动执行看报错"; return 1; }
-  if wait_up https; then
+  if compose up -d >/dev/null 2>&1 && wait_up https; then
     ok "xui-hub 已切到 HTTPS:https://$host:$(port)"
-    [ "$host" != "$(public_ip)" ] && echo "  确认域名 $host 已解析到本机 $(public_ip)"
-  else
-    err "容器没起来,看日志:docker compose logs --tail 30 app"; return 1
+    is_domain "$host" && echo "  确认域名 $host 已解析到本机 $(public_ip)"
+    return 0
   fi
+  err "换上证书后 xui-hub 没起来,已改回原来的设置。容器日志:"
+  compose logs --tail 15 app 2>&1 | sed 's/^/    /' >&2
+  if [ -n "$old_cf" ] && [ -n "$old_kf" ]; then
+    env_set TLS_CERT_FILE "$old_cf"; env_set TLS_KEY_FILE "$old_kf"
+  else
+    env_del 'TLS_CERT_FILE|TLS_KEY_FILE'
+  fi
+  compose up -d >/dev/null 2>&1 || err "docker compose up -d 失败,手动执行看报错"
+  return 1
 }
 
 issue_domain() {
@@ -184,7 +210,9 @@ issue_cf() {
 ssl_off() {
   env_del 'TLS_CERT_FILE|TLS_KEY_FILE'
   compose up -d >/dev/null 2>&1 || { err "docker compose up -d 失败,手动执行看报错"; return 1; }
-  if wait_up http; then ok "已关闭 HTTPS,后台地址 http://$(public_ip):$(port)(证书和自动续期还留着)"; else err "容器没起来:docker compose logs --tail 30 app"; return 1; fi
+  local a
+  a="$(listen_addr)"
+  if wait_up http; then ok "已关闭 HTTPS,后台地址 http://$(url_host "${a:-$(public_ip)}"):$(port)(证书和自动续期还留着)"; else err "容器没起来:docker compose logs --tail 30 app"; return 1; fi
 }
 
 menu() {
