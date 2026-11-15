@@ -59,6 +59,8 @@ export const DEFAULT_CONVERT_OPTIONS: Record<string, string> = {
   emoji: 'true',
   list: 'false',
   tfo: 'false',
+  // 不写的话 Clash 配置里节点没有 udp: true,Mihomo 对 vless / vmess / trojan 默认不转发 UDP(QUIC、语音通话、游戏走不了)
+  udp: 'true',
   scv: 'true',
   fdn: 'false',
   expand: 'true',
