@@ -2,6 +2,7 @@
 
 import { linesOnPanel, updateLineStats } from '../customers/repo';
 import type { DB } from '../db';
+import { recordTraffic } from '../traffic/daily';
 import { errorText, mapLimit, using } from '../util';
 import { normalizeClients } from '../xui/normalize';
 import { getPanel, listPanels, recordCheck, type Panel } from './repo';
@@ -20,6 +21,7 @@ export function checkPanel(db: DB, panel: Panel, probe: PanelProbe, now = Date.n
       const [inbounds, raw, status] = await Promise.all([probe.listInbounds(), probe.listClients(), probe.serverStatus?.().catch(() => null)]);
       const clients = normalizeClients(raw, inbounds);
       syncLines(db, panel.id, clients, now);
+      recordTraffic(db, panel.id, clients, now);
       recordCheck(
         db,
         panel.id,

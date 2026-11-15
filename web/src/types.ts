@@ -284,3 +284,25 @@ export interface CreatedClient {
   inbound: { id: number; remark: string; port: number; created: boolean };
   links: string[];
 }
+
+export type TrafficBy = 'customer' | 'panel';
+
+export interface TrafficRow {
+  /** 客户 / 面板的 id(没归入客户的那一行是 0) */
+  id: number;
+  name: string;
+  deleted: boolean;
+  up: number;
+  down: number;
+  /** 每天的上行 + 下行,和 days 一一对应 */
+  daily: number[];
+}
+
+/** 流量统计:days 从早到晚,total 是每天的合计,rows 按用量从大到小 */
+export interface TrafficReport {
+  by: TrafficBy;
+  id: number | null;
+  days: string[];
+  total: { up: number[]; down: number[] };
+  rows: TrafficRow[];
+}

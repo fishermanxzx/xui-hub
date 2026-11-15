@@ -82,6 +82,7 @@ Authorization: Bearer xh_……
 | GET | `/socks` | SOCKS 代理列表 |
 | GET | `/sub-templates` | 内置的订阅模板 |
 | POST | `/sync` | 立即同步全部面板的流量并执行额度 / 到期 |
+| GET | `/traffic` | 流量统计。查询参数:`by`(`customer` 按客户,默认;`panel` 按面板),`days`(最近几天,含今天,默认 30,最多 365),`id`(可选:展开这位客户 / 这块面板名下各个客户端;按客户时 `0` 是没归入客户的客户端)。返回 `days`(日期)、`total`(每天的上行 / 下行)、`rows`(每行的 `up`、`down` 和每天的合计 `daily`,按用量从大到小) |
 
 ## 例子:卖出一个月的套餐
 

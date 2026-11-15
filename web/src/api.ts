@@ -1,4 +1,4 @@
-import type { ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus } from './types';
+import type { TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus } from './types';
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -73,6 +73,9 @@ export const api = {
   deleteLine: (id: number, lineId: number, force = false) => call('DELETE', `/api/customers/${id}/lines/${lineId}${force ? '?force=1' : ''}`),
   /** 把面板上已有的客户端归到客户名下(成为直连线路),面板上不改 */
   importClients: (id: number, panelId: number, emails: string[]) => call<ImportResult>('POST', `/api/customers/${id}/lines/import`, { panel_id: panelId, emails }),
+
+  /** 流量统计;id 给了就展开这位客户 / 这块面板名下的各个客户端 */
+  traffic: (by: TrafficBy, days: number, id?: number) => call<TrafficReport>('GET', `/api/traffic?by=${by}&days=${days}${id === undefined ? '' : `&id=${id}`}`),
 
   subTemplates: () => call<{ default: string; templates: SubTemplate[] }>('GET', '/api/sub-templates'),
 

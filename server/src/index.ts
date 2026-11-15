@@ -10,6 +10,7 @@ import { applyPendingRestore, backupBuffer, backupName } from './backup';
 import { tcpOpen } from './clients/create';
 import { listCustomers } from './customers/repo';
 import { pruneDevices } from './subscription/devices';
+import { pruneTraffic } from './traffic/daily';
 import { openDb } from './db';
 import { env, isLoopbackHost, PROJECT_ROOT } from './env';
 import { apiRouter } from './http/routes';
@@ -166,6 +167,7 @@ const check = noOverlap(async () => {
     pruneSubFetches(db, env.subLogDays);
     pruneDevices(db, now);
     pruneNotified(db, now);
+    pruneTraffic(db, now);
   } catch (e) {
     console.error('同步失败', e);
   }

@@ -7,11 +7,13 @@ import Customers from './views/Customers.vue';
 import Panels from './views/Panels.vue';
 import SettingsView from './views/Settings.vue';
 import SocksView from './views/Socks.vue';
+import Traffic from './views/Traffic.vue';
 
-type Tab = 'customers' | 'panels' | 'socks' | 'settings';
+type Tab = 'customers' | 'panels' | 'traffic' | 'socks' | 'settings';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'customers', label: '客户' },
   { id: 'panels', label: '面板' },
+  { id: 'traffic', label: '流量' },
   { id: 'socks', label: 'SOCKS' },
   { id: 'settings', label: '设置' },
 ];
@@ -62,6 +64,7 @@ onMounted(checkSession);
       <main class="shell">
         <Customers v-if="tab === 'customers'" />
         <Panels v-else-if="tab === 'panels'" />
+        <Traffic v-else-if="tab === 'traffic'" />
         <SocksView v-else-if="tab === 'socks'" />
         <SettingsView v-else />
       </main>

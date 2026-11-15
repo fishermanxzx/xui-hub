@@ -34,6 +34,7 @@ import { enforceCustomers } from '../lines/enforce';
 import { openLine, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
 import { checkSocks } from '../socks/check';
 import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, planSocksUpdate, saveCheck, updateSocks } from '../socks/repo';
+import { trafficReport } from '../traffic/daily';
 import { errorText, mapLimit, panelKey, serial, using } from '../util';
 import { XUIError } from '../xui/client';
 import { LoginLimiter, passwordMatches, readCookie, SESSION_COOKIE, SESSION_MAX_AGE_MS, sessionCookie, sessionKeys, signSession, verifySession } from './auth';
@@ -368,6 +369,16 @@ export function apiRouter(deps: RouteDeps): Router {
     wrap(async (req) => {
       const r = await importClients(db, idParam(req), req.body ?? {}, deps.clientFor);
       return { ...r, customer: customerOf(idParam(req)) };
+    }),
+  );
+  // 流量统计:by=customer|panel,days=最近几天;带 id 时展开这位客户 / 这块面板名下的各个客户端
+  r.get(
+    '/traffic',
+    wrap(async (req) => {
+      const by = req.query.by === 'panel' ? 'panel' : 'customer';
+      const id = req.query.id === undefined || req.query.id === '' ? null : Number(req.query.id);
+      if (id != null && !(Number.isInteger(id) && id >= 0)) throw new InputError('id 不对');
+      return trafficReport(db, { by, days: Number(req.query.days) || 30, id });
     }),
   );
   // 立即同步全部面板并执行额度 / 到期

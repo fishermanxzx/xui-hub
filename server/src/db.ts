@@ -187,6 +187,27 @@ export const MIGRATIONS: string[] = [
     expires_at INTEGER NOT NULL
   );
   `,
+  `
+  -- 流量统计。traffic_seen:每个客户端上次同步时的累计流量(算增量的起点);
+  -- traffic_daily:每个客户端每天用的流量,customer_id 是当时它归在哪位客户名下(没归入的为空)。
+  -- 统计不跟着面板 / 客户删:删掉以后历史还在,只是名字显示成「已删除」
+  CREATE TABLE traffic_seen (
+    panel_id INTEGER NOT NULL REFERENCES panels(id) ON DELETE CASCADE,
+    email    TEXT NOT NULL,
+    up       INTEGER NOT NULL,
+    down     INTEGER NOT NULL,
+    PRIMARY KEY (panel_id, email)
+  ) WITHOUT ROWID;
+  CREATE TABLE traffic_daily (
+    day         TEXT NOT NULL,
+    panel_id    INTEGER NOT NULL,
+    email       TEXT NOT NULL,
+    customer_id INTEGER,
+    up          INTEGER NOT NULL DEFAULT 0,
+    down        INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, panel_id, email)
+  ) WITHOUT ROWID;
+  `,
 ];
 
 export function openDb(file: string): DB {
