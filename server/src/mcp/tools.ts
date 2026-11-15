@@ -207,26 +207,6 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
-    name: 'adopt_clients',
-    title: '把面板上已有的客户端归入客户',
-    description:
-      '把面板上已经存在的客户端记成客户的直连线路(用 list_panel_inbounds 看有哪些客户端、哪些还不属于任何客户)。面板上不改任何东西;之后它的流量计入客户额度,超额 / 到期会被停用,订阅里也会带上它。' +
-      '已经属于某位客户的、没挂在 vless / hy2 / trojan / vmess 入站上的会出现在 failed 里。',
-    inputSchema: obj(
-      {
-        customer_id: customerId,
-        panel_id: int('面板 id(list_panels 返回的)', { minimum: 1 }),
-        emails: { type: 'array', items: { type: 'string', minLength: 1 }, minItems: 1, maxItems: 200, description: '客户端的 email(面板上的客户端名字),一次可以多个' },
-      },
-      ['customer_id', 'panel_id', 'emails'],
-    ),
-    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    run: async (a, ctx) => {
-      const r = await call(ctx, 'POST', `/customers/${Number(a.customer_id)}/lines/import`, { panel_id: a.panel_id, emails: a.emails });
-      return { adopted: r.lines.map((l: any) => ({ line_id: l.id, email: l.email, protocol: l.protocol === 'hysteria' ? 'hy2' : l.protocol })), failed: r.failed };
-    },
-  },
-  {
     name: 'get_line_links',
     title: '线路的分享链接',
     description: '取一条线路的节点分享链接(vless:// / hysteria2:// …)。',
@@ -300,4 +280,4 @@ export async function runTool(tool: ToolDef, args: unknown, ctx: ToolContext): P
 
 export const INSTRUCTIONS =
   'xui-hub 把多台 3x-ui 面板接到一个后台,按「客户」管理线路。一位客户有若干线路(每条是某块面板上的一个客户端)、一个总流量额度、一个到期时间和一条订阅链接。' +
-  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。面板上已有的客户端用 list_panel_inbounds 查、adopt_clients 归到客户名下。续费用 renew_customer。删除类操作(delete_customer、delete_line、reset_subscription_link)执行前先向用户确认。';
+  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer。删除类操作(delete_customer、delete_line、reset_subscription_link)执行前先向用户确认。';

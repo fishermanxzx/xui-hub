@@ -95,12 +95,6 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
     assert.equal((await call('nope')).body.error.code, -32602);
     assert.equal((await rpc(token, 'resources/list')).body.error.code, -32601);
 
-    // 面板上已有的客户端归入客户;再归一次落在 failed 里
-    (data.p1.clients as any[]).push({ email: 'old', id: 'o1', inboundIds: [7] });
-    const adopted = toolJson(await call('adopt_clients', { customer_id: c.id, panel_id: 1, emails: ['old', 'ghost'] }));
-    assert.deepEqual([adopted.adopted.map((l: any) => [l.email, l.protocol]), adopted.failed.map((f: any) => f.email)], [[['old', 'vless']], ['ghost']]);
-    assert.match(toolJson(await call('adopt_clients', { customer_id: c.id, panel_id: 1, emails: ['old'] })).failed[0].error, /已经是客户/);
-
     assert.equal(toolJson(await call('delete_customer', { customer_id: c.id })).deleted, true);
     assert.deepEqual(data.p1.clients, []);
   } finally {
