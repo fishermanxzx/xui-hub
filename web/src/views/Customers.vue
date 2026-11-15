@@ -9,7 +9,7 @@ import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, region, shortUa, STATE_LABEL, subUrl } from '../format';
 import { toast, toastError } from '../toast';
-import type { ClientProtocol, Customer, EnforceOp, Line, LineKind, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubFetch, SubTemplate } from '../types';
+import type { ClientProtocol, Customer, EnforceOp, Line, LineKind, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
 
 const customers = ref<Customer[]>([]);
 const panels = ref<Panel[]>([]);
@@ -41,7 +41,7 @@ const proto = (p: string) => PROTOCOL[p] ?? p;
 const editing = ref<Customer | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', remark: '', quotaGb: '', expire: '', resetDay: '', limitIp: '', template: '', customTemplate: '' });
+const form = ref({ name: '', remark: '', quotaGb: '', expire: '', resetDay: '', limitDevices: '', template: '', customTemplate: '' });
 /** 内置的 Clash 订阅模板;第一次打开表单时取 */
 const templates = ref<SubTemplate[]>([]);
 const templateName = (v: string) => templates.value.find((t) => t.id === v)?.name ?? (v ? '自定义模板' : '');
@@ -50,7 +50,7 @@ function openForm(c: Customer | null) {
   editing.value = c;
   const tpl = c?.sub_template ?? '';
   const custom = /^https:/.test(tpl);
-  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', resetDay: c?.reset_day ? String(c.reset_day) : '', limitIp: c?.limit_ip ? String(c.limit_ip) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '' };
+  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', resetDay: c?.reset_day ? String(c.reset_day) : '', limitDevices: c?.limit_devices ? String(c.limit_devices) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '' };
   showForm.value = true;
 }
 
@@ -75,13 +75,12 @@ function opsNote(ops: EnforceOp[]): string {
 
 async function submit() {
   saving.value = true;
-  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.resetDay === '' ? 0 : Number(form.value.resetDay), limit_ip: form.value.limitIp === '' ? 0 : Number(form.value.limitIp), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template };
+  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.resetDay === '' ? 0 : Number(form.value.resetDay), limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template };
   try {
     const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
     showForm.value = false;
-    const limitFailed = (saved as { limit_failed?: { line: string; error: string }[] }).limit_failed ?? [];
-    const note = [opsNote((saved as { ops?: EnforceOp[] }).ops ?? []), limitFailed.length ? `${limitFailed.length} 个客户端的在线 IP 数没写成:${limitFailed.map((f) => `${f.line}(${f.error})`).join('、')}` : ''].filter(Boolean).join(';');
-    toast(note ? `已保存,${note}` : '已保存', note.includes('失败') || limitFailed.length ? 'err' : 'ok');
+    const note = opsNote((saved as { ops?: EnforceOp[] }).ops ?? []);
+    toast(note ? `已保存,${note}` : '已保存', note.includes('失败') ? 'err' : 'ok');
     await load();
     // 新建完直接进开线路
     if (!editing.value) openLineFor(customers.value.find((c) => c.id === saved.id) ?? saved);
@@ -123,7 +122,7 @@ const topoFor = ref<Customer | null>(null);
 
 // ---------- 订阅 ----------
 const qrFor = ref<Customer | null>(null);
-const fetchesFor = ref<{ customer: Customer; days: number; rows: SubFetch[] } | null>(null);
+const fetchesFor = ref<{ customer: Customer; days: number; rows: SubFetch[]; devices: SubDevice[] } | null>(null);
 /** 「疑似分享」的门槛(设置页里的 IP 个数);没开这项提醒就是 0,不标 */
 const shareIps = ref(0);
 onMounted(async () => {
@@ -146,9 +145,22 @@ async function resetLink(c: Customer) {
   }
 }
 
+async function removeDevice(d: SubDevice) {
+  const f = fetchesFor.value;
+  if (!f || !confirm(`移除「${shortUa(d.ua) || '(空 UA)'}」?它再拉订阅会重新占一个名额,名额满了就拉不到。`)) return;
+  try {
+    await api.deleteDevice(f.customer.id, d.id);
+    f.devices = f.devices.filter((x) => x.id !== d.id);
+    await load();
+  } catch (e) {
+    toastError(e);
+  }
+}
+
 async function showFetches(c: Customer) {
   try {
-    fetchesFor.value = { customer: c, ...(await api.subFetches(c.id)) };
+    const [fetches, devices] = await Promise.all([api.subFetches(c.id), api.devices(c.id)]);
+    fetchesFor.value = { customer: c, ...fetches, devices };
   } catch (e) {
     toastError(e);
   }
@@ -324,7 +336,7 @@ function exitText(l: Line): string {
             {{ fmtDue(c.expire_at) }}
           </span>
           <span v-if="c.sub_template" class="muted small" :title="c.sub_template">模板:{{ templateName(c.sub_template) }}</span>
-          <span v-if="c.limit_ip" class="muted small" title="每条线路同时在线的 IP 数上限">限 {{ c.limit_ip }} 个 IP</span>
+          <span v-if="c.limit_devices" class="small" :class="c.sub_devices >= c.limit_devices ? 'text-warn' : 'muted'" title="拉过订阅的设备数 / 上限。满了以后新设备拉不到订阅,点订阅那一行的「记录」可以删设备">设备 {{ c.sub_devices }} / {{ c.limit_devices }}</span>
           <span v-if="c.reset_day" class="muted small" :title="c.last_reset_at ? `上次清零 ${fmtDateTime(c.last_reset_at)}` : '还没清过'">每月 {{ c.reset_day }} 号清零</span>
         </div>
         <div class="ops">
@@ -343,8 +355,8 @@ function exitText(l: Line): string {
         <button class="link" @click="resetLink(c)">重置链接</button>
         <span class="muted small sub-meta" :title="c.sub_fetched_ua ?? ''">
           <template v-if="c.sub_fetched_at">上次拉取 {{ fmtAgo(c.sub_fetched_at) }}<template v-if="c.sub_fetched_ua">,{{ shortUa(c.sub_fetched_ua) }}</template>;{{ c.sub_clients }} 个客户端 / {{ c.sub_ips }} 个 IP</template>
-          <span v-if="shareIps && c.sub_ips_day >= shareIps" class="text-warn" :title="`订阅近 24 小时被 ${c.sub_ips_day} 个不同 IP 拉取,可能被转给别人用了。点「记录」看明细,确认的话点「重置链接」`">24 小时 {{ c.sub_ips_day }} 个 IP,疑似分享</span>
           <template v-else>还没被拉取过</template>
+          <span v-if="shareIps && c.sub_ips_day >= shareIps" class="text-warn" :title="`订阅近 24 小时被 ${c.sub_ips_day} 个不同 IP 拉取,可能被转给别人用了。点「记录」看明细,确认的话点「重置链接」`">24 小时 {{ c.sub_ips_day }} 个 IP,疑似分享</span>
           <button class="link small" @click="showFetches(c)">记录</button>
         </span>
       </div>
@@ -381,7 +393,7 @@ function exitText(l: Line): string {
       </div>
       <div class="two">
         <label class="field">到期日(空 = 不限期)<input v-model="form.expire" type="date" /></label>
-        <label class="field">每条线路同时在线 IP 数(空 = 不限)<input v-model="form.limitIp" type="number" min="1" max="100" step="1" placeholder="如 2" /></label>
+        <label class="field">设备数上限(空 = 不限)<input v-model="form.limitDevices" type="number" min="1" max="100" step="1" placeholder="如 3" /></label>
       </div>
       <div class="row extend">
         <span class="muted small">续期</span>
@@ -399,7 +411,7 @@ function exitText(l: Line): string {
         </select>
       </label>
       <label v-if="form.template === 'custom'" class="field">模板地址<input v-model="form.customTemplate" required placeholder="https://… subconverter 的 ini 模板" /></label>
-      <p class="muted small hint">流量按客户所有线路加总,每分钟从面板同步一次;超额或到期后自动停用他的全部客户端,改大额度、延后到期或清零流量会自动恢复。设了清零日,每月这天 0 点自动把他的流量清零。同时在线 IP 数写到面板的客户端上,由面板执行(面板那台机器要装了 fail2ban,3x-ui 的 Docker 版自带)。</p>
+      <p class="muted small hint">流量按客户所有线路加总,每分钟从面板同步一次;超额或到期后自动停用他的全部客户端,改大额度、延后到期或清零流量会自动恢复。设了清零日,每月这天 0 点自动把他的流量清零。设备数上限管的是订阅链接:每个导入过订阅的客户端算一台,满了以后新设备拉不到订阅,客户用浏览器打开订阅链接可以自己移除旧设备;面板上不改任何东西。</p>
     </form>
     <template #footer>
       <span class="spacer" />
@@ -506,7 +518,27 @@ function exitText(l: Line): string {
     <p class="muted small">Shadowrocket、Hiddify、Stash 等客户端扫码会直接添加订阅。订阅按客户端自动给格式:Clash、Mihomo、Stash、Shadowrocket 拿 Clash 配置,sing-box、Hiddify 拿 sing-box 配置,v2rayN 等拿节点链接。</p>
   </Modal>
 
-  <Modal v-if="fetchesFor" :title="`「${fetchesFor.customer.name}」近 ${fetchesFor.days} 天的订阅拉取记录`" wide @close="fetchesFor = null">
+  <Modal v-if="fetchesFor" :title="`「${fetchesFor.customer.name}」的设备和订阅拉取记录`" wide @close="fetchesFor = null">
+    <h4 class="sec">设备<span class="muted small">{{ fetchesFor.devices.length }}{{ fetchesFor.customer.limit_devices ? ` / ${fetchesFor.customer.limit_devices}` : '' }} 台{{ fetchesFor.customer.limit_devices ? '' : ',没设上限' }}</span></h4>
+    <p v-if="!fetchesFor.devices.length" class="muted small">还没有设备拉过订阅。</p>
+    <div v-else class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>客户端</th><th>最近的 IP</th><th>第一次</th><th>最近一次</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="d in fetchesFor.devices" :key="d.id">
+            <td class="small" :title="d.ua">{{ shortUa(d.ua) || '(空 UA)' }}</td>
+            <td class="small">{{ d.ip }}</td>
+            <td class="small">{{ fmtDateTime(d.first_at) }}</td>
+            <td class="small">{{ fmtDateTime(d.last_at) }}</td>
+            <td><button class="link danger small" @click="removeDevice(d)">移除</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted small">每个拉过订阅的客户端算一台(按 UA 区分,同型号同版本的两台会算成一台);30 天没再拉过的自动清掉。客户用浏览器打开订阅链接也能自己移除。</p>
+    <h4 class="sec">近 {{ fetchesFor.days }} 天的拉取记录</h4>
     <p v-if="!fetchesFor.rows.length" class="muted small">还没有记录。</p>
     <div v-else class="table-wrap">
       <table>
@@ -617,6 +649,16 @@ h2 {
   min-width: 200px;
   font-size: 12px;
   padding: 4px 8px;
+}
+.sec {
+  margin: 12px 0 6px;
+  font-size: 14px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.sec:first-child {
+  margin-top: 0;
 }
 .sub-meta {
   flex-basis: 100%;

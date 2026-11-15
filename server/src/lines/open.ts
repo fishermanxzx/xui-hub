@@ -65,7 +65,7 @@ export async function openLine(db: DB, customerId: number, input: OpenLineInput,
           await applyRoutes(admin, [route]);
         }
         undo.push(() => admin.deleteClient(email));
-        const links = await addClientTo(admin, inbound, email, customer.limit_ip);
+        const links = await addClientTo(admin, inbound, email);
         const line = addLine(db, {
           customer_id: customer.id,
           kind,

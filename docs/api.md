@@ -26,7 +26,8 @@ Authorization: Bearer xh_……
 | `quota_bytes` | 总额度(字节),0 = 不限 |
 | `expire_at` | 到期时间(毫秒时间戳),0 = 不限期 |
 | `reset_day` | 每月几号清零流量(1-28),0 = 不清零 |
-| `limit_ip` | 每条线路同时在线的 IP 数上限,0 = 不限 |
+| `limit_devices` | 能拉订阅的设备数上限,0 = 不限 |
+| `sub_devices` | 已经拉过订阅的设备数 |
 | `sub_template` | Clash 订阅模板:空 = 默认,内置模板 id,或 https 模板地址 |
 | `used` | 已用流量(字节,各线路之和) |
 | `state` | `active` 正常 / `expired` 已到期 / `over_quota` 已超额 |
@@ -37,11 +38,13 @@ Authorization: Bearer xh_……
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/customers` | 全部客户 |
-| POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_ip`、`sub_template` |
+| POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_devices`、`sub_template` |
 | PATCH | `/customers/:id` | 修改,只传要改的字段。改了额度 / 到期会立刻停用或恢复他的客户端 |
 | POST | `/customers/:id/renew` | 续期。请求体:`days`(1-3650),`reset_usage`(可选,`true` 时顺带把流量清零)。在现在的到期日上加天数,已到期或没设到期日的从现在起算 |
 | POST | `/customers/:id/reset-usage` | 把已用流量清零 |
 | POST | `/customers/:id/sub-token` | 重置订阅链接,旧链接立即失效 |
+| GET | `/customers/:id/devices` | 拉过订阅的设备(`id`、`ua`、`ip`、`first_at`、`last_at`) |
+| DELETE | `/customers/:id/devices/:deviceId` | 移除一台设备,让出名额 |
 | DELETE | `/customers/:id` | 删除客户,连同他在各面板上的客户端 |
 
 ## 线路

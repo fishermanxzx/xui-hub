@@ -1,5 +1,5 @@
-// 同时在线 IP 数上限:客户上设一个数,写到他每条线路在面板上的客户端(limitIp)。
-// 真正拦人的是面板:3x-ui 靠 fail2ban 按访问日志封超出的 IP,面板那台机器上要装了 fail2ban 才生效(Docker 版自带)。
+// 把面板客户端的 limitIp 写成某个值。0.9.0 用它做过「同时在线 IP 数」,现在设备数上限改在订阅链接上做(subscription/devices.ts),
+// 这里只剩一个用途:升级后把当时写到面板上的 limitIp 清回 0。
 
 import type { Line } from '../customers/repo';
 import type { DB } from '../db';

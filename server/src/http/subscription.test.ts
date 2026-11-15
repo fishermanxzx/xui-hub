@@ -278,3 +278,63 @@ test('拉取记录:有效 token 的请求记客户、格式、状态码、UA 和
     await close();
   }
 });
+
+test('设备数上限:名额内的设备登记放行,满了新设备 403;自助页列出设备,移除一台后新设备能拉;同客户端升级版本不占新名额', async () => {
+  const { db, id, token, otherToken } = setup();
+  const { link, close } = await serve(db, fakeConverter([]));
+  const { listDevices, pruneDevices, DEVICE_IDLE_DAYS } = await import('../subscription/devices');
+  const page = (t = token) => fetch(link(t), { headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html' } }).then((r) => r.text());
+  try {
+    // 没设上限:随便拉,设备照样登记
+    for (const ua of [CLASH_UA, CLASH_UA, V2RAYN_UA]) assert.equal((await get(link(token), ua)).status, 200);
+    assert.deepEqual(listDevices(db, id).map((d) => d.ua).sort(), [CLASH_UA, V2RAYN_UA]);
+    // 浏览器看自助页不算设备
+    assert.match(await page(), /2 台,不限/);
+    assert.equal(listDevices(db, id).length, 2);
+
+    // 上限 2:已有的两台照常,第三台被拒,记录里是 403
+    updateCustomer(db, id, { limit_devices: 2 });
+    assert.equal((await get(link(token), CLASH_UA)).status, 200);
+    const blocked = await get(link(token), SING_UA);
+    assert.equal(blocked.status, 403);
+    assert.match(await blocked.text(), /device limit reached/);
+    assert.equal(listDevices(db, id).length, 2);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(listSubFetches(db, id).filter((f) => f.ua === SING_UA).map((f) => f.status), [403]);
+    // 别的客户不受影响
+    assert.equal((await get(link(otherToken), SING_UA)).status, 200);
+
+    // 同一个客户端升级了版本(同 IP):顶替原来那台,不占新名额
+    assert.equal((await get(link(token), 'clash-verge/v2.4.0')).status, 200);
+    assert.deepEqual(listDevices(db, id).map((d) => d.ua).sort(), ['clash-verge/v2.4.0', V2RAYN_UA]);
+
+    // 自助页:2 / 2,提示已满;移除一台(凭 token),新设备就能拉了
+    const html = await page();
+    assert.match(html, /2 \/ 2 台/);
+    assert.match(html, /设备数已到上限/);
+    const victim = listDevices(db, id).find((d) => d.ua === V2RAYN_UA)!;
+    assert.ok(html.includes(`/sub/${token}/devices/${victim.id}/delete`));
+    // 拿别人的 token 删不掉
+    await fetch(`${link(otherToken)}/devices/${victim.id}/delete`, { method: 'POST', redirect: 'manual' });
+    assert.equal(listDevices(db, id).length, 2);
+    const del = await fetch(`${link(token)}/devices/${victim.id}/delete`, { method: 'POST', redirect: 'manual' });
+    assert.deepEqual([del.status, del.headers.get('location')], [303, `../../../${token}?removed=1`]);
+    assert.equal((await fetch(`${link('bad')}/devices/1/delete`, { method: 'POST', redirect: 'manual' })).status, 404);
+    assert.equal((await get(link(token), SING_UA)).status, 200);
+    assert.equal((await get(link(token), V2RAYN_UA)).status, 403);
+
+    // 带 x-hwid 的客户端按它认设备:UA 变了也是同一台
+    updateCustomer(db, id, { limit_devices: 3 });
+    const hw = (ua: string, hwid: string) => fetch(link(token), { headers: { 'User-Agent': ua, 'x-hwid': hwid } });
+    assert.deepEqual([(await hw('Happ/1.0', 'abc')).status, (await hw('Happ/2.0', 'abc')).status, (await hw('Happ/2.0', 'xyz')).status], [200, 200, 403]);
+
+    // 30 天没再拉过的设备自动清掉
+    assert.equal(listDevices(db, id).length, 3);
+    pruneDevices(db, Date.now() + (DEVICE_IDLE_DAYS + 1) * 86_400_000);
+    assert.equal(listDevices(db, id).length, 0);
+    assert.equal(updateCustomer(db, id, { limit_devices: 0 }), undefined);
+    assert.throws(() => updateCustomer(db, id, { limit_devices: 101 }), /设备数上限/);
+  } finally {
+    await close();
+  }
+});

@@ -8,7 +8,7 @@ import { recordSubFetch } from '../subscription/fetchLog';
 import { shareEvents } from '../notify/events';
 import { DEFAULT_SETTINGS } from '../settings';
 import { checkCustomTemplate, type TemplateFetcher } from '../subscription/templates';
-import { addPanel, fakePanels, memoryDb, vlessInbound, type FakePanel } from '../testUtil';
+import { fakePanels, memoryDb, type FakePanel } from '../testUtil';
 import { clientBody } from '../xui/client';
 import { apiRouter } from './routes';
 import { createToken, listTokens, verifyToken } from './tokens';
@@ -26,8 +26,6 @@ async function serve(db: DB, data: Record<string, FakePanel> = {}, adminPassword
   };
   return { call, close: () => new Promise((r) => server.close(r)) };
 }
-
-const panel = (): FakePanel => ({ inbounds: [vlessInbound(7, 443)], clients: [], xray: {}, restarts: 0 });
 
 test('API 令牌:明文只给一次、库里只有哈希;带令牌能调客户接口,碰不了设置 / 备份 / 令牌管理;删掉就失效', async () => {
   const db = memoryDb();
@@ -87,31 +85,6 @@ test('续期接口:在到期日上加天数,过期的从现在起算,可以顺�
     assert.equal(renewed.state, 'active');
     assert.ok(Math.abs(renewed.expire_at - (now + 30 * 86_400_000)) < 5000);
     assert.equal((await call('POST', `/customers/${a.id}/renew`, { days: 0 })).status, 400);
-  } finally {
-    await close();
-  }
-});
-
-test('同时在线 IP 数:新开的线路带上;改了就写到各线路的客户端,别的字段不动;面板写不成的列出来', async () => {
-  const db = memoryDb();
-  addPanel(db, 'p1');
-  const data = { p1: panel() };
-  const { call, close } = await serve(db, data);
-  try {
-    const c = (await call('POST', '/customers', { name: '小李', limit_ip: 2 })).body;
-    assert.equal(c.limit_ip, 2);
-    await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: 1, inbound: { id: 7 } });
-    assert.deepEqual(data.p1.clients.map((x) => [x.email, x.limitIp, x.enable, x.flow]), [['小李', 2, true, 'xtls-rprx-vision']]);
-    const up = (await call('PATCH', `/customers/${c.id}`, { limit_ip: 5 })).body;
-    assert.deepEqual([up.limit_ip, up.limit_failed], [5, []]);
-    assert.deepEqual(data.p1.clients.map((x) => [x.limitIp, x.enable, x.flow]), [[5, true, 'xtls-rprx-vision']]);
-    // 没改这一项就不去碰面板
-    data.p1.fail = { updateClient: '面板挂了' };
-    assert.deepEqual((await call('PATCH', `/customers/${c.id}`, { remark: 'x' })).body.limit_failed, []);
-    const bad = (await call('PATCH', `/customers/${c.id}`, { limit_ip: 0 })).body;
-    assert.deepEqual(bad.limit_failed, [{ line: 'p1 上的 小李', error: '面板挂了' }]);
-    assert.equal(getCustomer(db, c.id)!.limit_ip, 0);
-    assert.equal((await call('PATCH', `/customers/${c.id}`, { limit_ip: 101 })).status, 400);
   } finally {
     await close();
   }

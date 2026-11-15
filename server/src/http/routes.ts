@@ -27,7 +27,7 @@ import { broadcast, channelsFor } from '../notify/send';
 import { getSettings, updateSettings } from '../settings';
 import { checkCustomTemplate, DEFAULT_TEMPLATE, isCustomTemplate, TEMPLATES, validTemplate, type TemplateFetcher } from '../subscription/templates';
 import { listSubFetches, subClientCounts, subIpsSince } from '../subscription/fetchLog';
-import { applyLimitIp } from '../lines/limit';
+import { deleteDevice, deviceCounts, listDevices } from '../subscription/devices';
 import { createToken, deleteToken, listTokens, TOKEN_BLOCKED, verifyToken } from './tokens';
 import { enforceCustomers } from '../lines/enforce';
 import { openLine, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
@@ -281,6 +281,7 @@ export function apiRouter(deps: RouteDeps): Router {
   const withSub = (customers: CustomerView[]) => {
     const counts = subClientCounts(db, Date.now() - deps.subLogDays * 86_400_000);
     const day = subIpsSince(db, Date.now() - 86_400_000);
+    const devices = deviceCounts(db);
     return customers.map((c) => ({
       ...c,
       sub_url: deps.subBaseUrl ? `${deps.subBaseUrl}/sub/${c.sub_token}` : null,
@@ -288,6 +289,8 @@ export function apiRouter(deps: RouteDeps): Router {
       sub_ips: counts.get(c.id)?.ips ?? 0,
       // 近 24 小时拉订阅的 IP 数(疑似分享看这个)
       sub_ips_day: day.get(c.id)?.length ?? 0,
+      // 拉过订阅的设备数(设备数上限看这个)
+      sub_devices: devices.get(c.id) ?? 0,
     }));
   };
   const plainCustomer = (id: number) => {
@@ -307,6 +310,9 @@ export function apiRouter(deps: RouteDeps): Router {
       return customerOf(idParam(req));
     }),
   );
+  // 拉过订阅的设备;删掉一台,名额就让出来(那台再拉订阅会重新占一个)
+  r.get('/customers/:id/devices', wrap((req) => listDevices(db, plainCustomer(idParam(req)).id)));
+  r.delete('/customers/:id/devices/:did', wrap((req) => void deleteDevice(db, idParam(req), Number(req.params.did))));
   r.get('/customers/:id/sub-fetches', wrap((req) => ({ days: deps.subLogDays, rows: listSubFetches(db, customerOf(idParam(req)).id) })));
   /** 自定义模板地址(新填的 / 改了的)保存前试拉一次,取不到或不是模板就不让存 */
   const checkTemplate = async (input: unknown, current = '') => {
@@ -321,17 +327,15 @@ export function apiRouter(deps: RouteDeps): Router {
       return customerOf(createCustomer(db, req.body ?? {}));
     }),
   );
-  // 改了额度 / 到期马上执行一次停用 / 恢复,不等下一轮同步;改了同时在线 IP 数就写到各线路的客户端上
+  // 改了额度 / 到期马上执行一次停用 / 恢复,不等下一轮同步
   r.patch(
     '/customers/:id',
     wrap(async (req) => {
       const before = plainCustomer(idParam(req));
       await checkTemplate(req.body?.sub_template, before.sub_template);
       updateCustomer(db, before.id, req.body ?? {});
-      const after = plainCustomer(before.id);
-      const limit_failed = after.limit_ip !== before.limit_ip ? await applyLimitIp(db, after.lines, after.limit_ip, deps.clientFor) : [];
       const ops = await enforceCustomers(db, deps.clientFor, before.id);
-      return { ...customerOf(before.id), ops, limit_failed };
+      return { ...customerOf(before.id), ops };
     }),
   );
   // 续期:在现在的到期日上加 days 天(已过期或没设到期日的从现在起算);reset_usage 顺带把流量清零。给发卡 / 机器人用
@@ -363,10 +367,7 @@ export function apiRouter(deps: RouteDeps): Router {
     '/customers/:id/lines/import',
     wrap(async (req) => {
       const r = await importClients(db, idParam(req), req.body ?? {}, deps.clientFor);
-      // 客户设了同时在线 IP 数的,归进来的客户端也写上(没设就不动面板)
-      const c = plainCustomer(idParam(req));
-      const limit_failed = c.limit_ip > 0 ? await applyLimitIp(db, r.lines, c.limit_ip, deps.clientFor) : [];
-      return { ...r, limit_failed, customer: customerOf(c.id) };
+      return { ...r, customer: customerOf(idParam(req)) };
     }),
   );
   // 立即同步全部面板并执行额度 / 到期

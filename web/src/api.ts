@@ -1,4 +1,4 @@
-import type { ApiToken, BackupInfo, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubFetch, SubTemplate, UpdateStatus } from './types';
+import type { ApiToken, BackupInfo, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus } from './types';
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -54,11 +54,14 @@ export const api = {
   customers: () => call<Customer[]>('GET', '/api/customers'),
   createCustomer: (body: CustomerInput) => call<Customer>('POST', '/api/customers', body),
   /** 改了额度 / 到期会立刻执行停用 / 恢复,ops 是到面板上的操作结果 */
-  updateCustomer: (id: number, body: CustomerInput) => call<Customer & { ops: EnforceOp[]; limit_failed: { line: string; error: string }[] }>('PATCH', `/api/customers/${id}`, body),
+  updateCustomer: (id: number, body: CustomerInput) => call<Customer & { ops: EnforceOp[] }>('PATCH', `/api/customers/${id}`, body),
   /** 清零已用:各线路客户端在面板上的流量清零,超额停掉的随之恢复 */
   resetUsage: (id: number) => call<Customer & { failed: { line: string; error: string }[]; ops: EnforceOp[] }>('POST', `/api/customers/${id}/reset-usage`),
   /** 重置订阅链接(换 token,旧链接立即失效) */
   resetSubToken: (id: number) => call<Customer>('POST', `/api/customers/${id}/sub-token`),
+  devices: (id: number) => call<SubDevice[]>('GET', `/api/customers/${id}/devices`),
+  /** 删掉一台设备,名额让出来 */
+  deleteDevice: (id: number, deviceId: number) => call('DELETE', `/api/customers/${id}/devices/${deviceId}`),
   subFetches: (id: number) => call<{ days: number; rows: SubFetch[] }>('GET', `/api/customers/${id}/sub-fetches`),
   /** 立即同步全部面板并执行额度 / 到期 */
   syncNow: () => call<{ ops: EnforceOp[] }>('POST', '/api/sync'),

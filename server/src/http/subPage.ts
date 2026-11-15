@@ -3,6 +3,7 @@
 
 import qrcode from 'qrcode-generator';
 import type { CustomerView } from '../customers/repo';
+import type { SubDevice } from '../subscription/devices';
 
 const GB = 1024 ** 3;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -50,11 +51,29 @@ export interface SubPageData {
   customer: CustomerView;
   /** 完整订阅链接 */
   url: string;
+  /** 拉过订阅的设备 */
+  devices?: SubDevice[];
+  /** 刚移除了一台设备 */
+  removed?: boolean;
 }
+
+/** UA 里的客户端名和版本,如 "clash-verge/v2.4.2 (…)" → "clash-verge v2.4.2" */
+export function deviceName(ua: string): string {
+  const first = ua.trim().split(/\s+/)[0] ?? '';
+  return first ? first.replace('/', ' ').slice(0, 40) : '未知客户端';
+}
+
+const fmtAgo = (ms: number, now: number) => {
+  const m = Math.max(0, Math.floor((now - ms) / 60_000));
+  if (m < 1) return '刚刚';
+  if (m < 60) return `${m} 分钟前`;
+  if (m < 1440) return `${Math.floor(m / 60)} 小时前`;
+  return `${Math.floor(m / 1440)} 天前`;
+};
 
 const STATE: Record<string, { label: string; cls: string }> = { active: { label: '正常', cls: 'ok' }, expired: { label: '已到期', cls: 'bad' }, over_quota: { label: '流量已用完', cls: 'bad' } };
 
-export function renderSubPage({ customer: c, url }: SubPageData, now = Date.now()): string {
+export function renderSubPage({ customer: c, url, devices = [], removed = false }: SubPageData, now = Date.now()): string {
   const st = STATE[c.state] ?? STATE.active;
   const pct = c.quota_bytes ? Math.min(100, Math.round((c.used / c.quota_bytes) * 100)) : 0;
   const left = c.quota_bytes ? Math.max(0, c.quota_bytes - c.used) : 0;
@@ -70,6 +89,24 @@ export function renderSubPage({ customer: c, url }: SubPageData, now = Date.now(
         `</li>`,
     )
     .join('');
+  const full = c.limit_devices > 0 && devices.length >= c.limit_devices;
+  const base = new URL(url).pathname;
+  const deviceRows = devices
+    .map(
+      (d) =>
+        `<li><span class="pname">${esc(deviceName(d.ua))}</span><span class="muted">${esc(d.ip || '未知 IP')} · ${fmtAgo(d.last_at, now)}更新过订阅</span>` +
+        `<form method="post" action="${esc(`${base}/devices/${d.id}/delete`)}" onsubmit="return confirm('移除这台设备?它下次更新订阅会失败,除非名额还有空。')"><button class="del">移除</button></form></li>`,
+    )
+    .join('');
+  const deviceCard =
+    c.limit_devices > 0 || devices.length
+      ? `<div class="card">
+  <div class="row"><h2>设备</h2><span class="muted">${c.limit_devices > 0 ? `${devices.length} / ${c.limit_devices} 台` : `${devices.length} 台,不限`}</span></div>
+  ${removed ? '<div class="okmsg">已移除。现在可以在新设备上更新订阅了。</div>' : ''}
+  ${full ? '<div class="notice">设备数已到上限,新设备更新订阅会失败。要换设备,先在下面移除一台不用的。</div>' : c.limit_devices > 0 ? '<div class="muted">每个导入过订阅的客户端算一台。</div>' : ''}
+  ${deviceRows ? `<ul class="lines devices">${deviceRows}</ul>` : '<div class="muted">还没有设备导入过订阅。</div>'}
+</div>`
+      : '';
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -97,6 +134,7 @@ ul.lines{list-style:none;margin:8px 0 0;padding:0}ul.lines li{display:flex;gap:1
 .notice{background:var(--bad-bg);color:var(--bad);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:14px}
 footer{margin-top:24px;text-align:center}footer a{color:var(--soft);text-decoration:none;font-size:12px}
 h2{font-size:15px;margin:0 0 4px}
+.devices form{margin-left:auto}.del{font-size:13px;padding:5px 10px;color:var(--bad)}.okmsg{background:var(--ok-bg);color:var(--ok);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:14px}
 </style>
 </head>
 <body><div class="wrap">
@@ -120,6 +158,7 @@ h2{font-size:15px;margin:0 0 4px}
   <div class="muted" style="text-align:center">手机扫码添加订阅</div>
 </div>
 
+${deviceCard}
 <div class="card">
   <h2>线路</h2>
   ${lines ? `<ul class="lines">${lines}</ul>` : '<div class="muted">还没有线路。</div>'}

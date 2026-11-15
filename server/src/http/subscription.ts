@@ -15,6 +15,7 @@ import { clientIp, recordSubFetch } from '../subscription/fetchLog';
 import { collectLinks, encodeSubscription, mergeLinks, userinfoHeader, type LinkFetcher } from '../subscription/service';
 import { renderSubPage } from './subPage';
 import { templateUrl } from '../subscription/templates';
+import { admitDevice, deleteDevice, deviceKey, listDevices } from '../subscription/devices';
 
 export interface SubscriptionDeps {
   db: DB;
@@ -143,12 +144,17 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
       if (req.query.target === undefined && isBrowserUA(ua) && (req.get('accept') ?? '').includes('text/html')) {
         const base = deps.subBaseUrl || `${req.protocol}://${req.get('host')}`;
         res.set({ 'Cache-Control': 'no-store', 'Content-Type': 'text/html; charset=utf-8' });
-        res.send(renderSubPage({ customer, url: `${base}/sub/${customer.sub_token}` }));
+        res.send(renderSubPage({ customer, url: `${base}/sub/${customer.sub_token}`, devices: listDevices(db, customer.id), removed: req.query.removed === '1' }));
         return;
       }
       const target = requestedTarget(req);
       // token 有效的请求都记一条拉取记录(响应发完后记,带上最终状态码)
       res.on('finish', () => recordSubFetch(db, { at: Date.now(), customer_id: customer.id, target, status: res.statusCode, ua: ua ?? '', ip: clientIp(req) }));
+      // 设备数上限:名额满了的新设备拉不到订阅(已经拿到节点的设备不受影响),客户在自助页删掉一台旧的就能再加
+      if (!admitDevice(db, customer.id, customer.limit_devices, { key: deviceKey(req), ua: ua ?? '', ip: clientIp(req) })) {
+        res.status(403).type('text/plain').send('device limit reached: open the subscription link in a browser and remove an old device first\n设备数已达上限:用浏览器打开订阅链接,删掉一台旧设备后再更新订阅');
+        return;
+      }
       touchSubFetch(db, customer.id, ua ?? '');
       res.set(formatHeaders(target, customer.name, userinfoHeader(customer)));
       if (target === 'base64') {
@@ -169,6 +175,25 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
       }
       const source = `${deps.internalBaseUrl}/internal/nodes/${customer.id}?key=${encodeURIComponent(deps.internalSecret)}`;
       res.send(withTemplate(req, target, customer.name, (await deps.convert(target, source, { ...DEFAULT_CONVERT_OPTIONS, config: templateUrl(customer.sub_template) })).body));
+    }),
+  );
+
+  // 自助页上「移除」一台设备:凭订阅链接里的 token,只能动自己名下的
+  r.post(
+    '/sub/:token/devices/:did/delete',
+    handle(async (req, res) => {
+      const id = customerIdBySubToken(db, String(req.params.token));
+      if (id == null) {
+        res.status(404).type('text/plain').send('not found');
+        return;
+      }
+      try {
+        deleteDevice(db, id, Number(req.params.did));
+      } catch {
+        // 已经不在了(点了两次):照样回到页面
+      }
+      // 相对地址:前面有反代、带路径前缀时也能回到自助页
+      res.redirect(303, `../../../${encodeURIComponent(String(req.params.token))}?removed=1`);
     }),
   );
 

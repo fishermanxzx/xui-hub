@@ -147,6 +147,22 @@ export const MIGRATIONS: string[] = [
     last_used_at INTEGER
   );
   `,
+  `
+  -- 设备数上限改在订阅链接上做(不再往面板写 limitIp):每个拉过订阅的客户端记一台,满了新设备拉不到。
+  -- limit_ip 这一列留着只为把 0.9.0 写到面板上的 limitIp 清回去(清完归零),不再使用
+  ALTER TABLE customers ADD COLUMN limit_devices INTEGER NOT NULL DEFAULT 0;
+  UPDATE customers SET limit_devices = limit_ip;
+  CREATE TABLE sub_devices (
+    id          INTEGER PRIMARY KEY,
+    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    key         TEXT NOT NULL,
+    ua          TEXT NOT NULL,
+    ip          TEXT NOT NULL,
+    first_at    INTEGER NOT NULL,
+    last_at     INTEGER NOT NULL,
+    UNIQUE (customer_id, key)
+  );
+  `,
 ];
 
 export function openDb(file: string): DB {

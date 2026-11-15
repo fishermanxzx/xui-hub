@@ -145,8 +145,8 @@ export interface Customer {
   last_reset_at: number;
   /** Clash 订阅模板:'' = 默认,内置模板 id,或自定义 https 地址 */
   sub_template: string;
-  /** 每条线路同时在线的 IP 数上限,0 = 不限 */
-  limit_ip: number;
+  /** 能拉订阅的设备数上限,0 = 不限 */
+  limit_devices: number;
   /** 订阅链接 /sub/<token> 里的 token */
   sub_token: string;
   /** 订阅链接;未配置 SUB_BASE_URL 时为 null,前端用当前地址拼 */
@@ -158,6 +158,8 @@ export interface Customer {
   sub_ips: number;
   /** 近 24 小时拉订阅的 IP 数 */
   sub_ips_day: number;
+  /** 拉过订阅的设备数 */
+  sub_devices: number;
   created_at: number;
   updated_at: number;
   lines: Line[];
@@ -176,6 +178,16 @@ export interface SubFetch {
   ip: string;
 }
 
+/** 拉过订阅的一台设备(按 UA 区分) */
+export interface SubDevice {
+  id: number;
+  customer_id: number;
+  ua: string;
+  ip: string;
+  first_at: number;
+  last_at: number;
+}
+
 export interface CustomerInput {
   name?: string;
   remark?: string;
@@ -183,7 +195,7 @@ export interface CustomerInput {
   expire_at?: number;
   reset_day?: number;
   sub_template?: string;
-  limit_ip?: number;
+  limit_devices?: number;
 }
 
 export interface SubTemplate {
