@@ -88,6 +88,40 @@ open_firewall() {
   return 0
 }
 
+# 把 $DIR 里的管理脚本和服务单元装进系统,并(重)启动服务。装新版本、退回旧版本都走这里
+activate() {
+  chown -R root:root "$DIR"
+  chmod -R a+rX "$DIR"
+  install -m 755 "$DIR/xui-hub.sh" /usr/bin/xui-hub
+  # subconverter 以服务用户运行并在自己目录写缓存
+  [ -d "$DIR/subconverter" ] && chown -R "$RUN_USER:$RUN_USER" "$DIR/subconverter"
+  install -m 644 "$DIR/xui-hub.service" /etc/systemd/system/$SERVICE.service
+  if [ -f "$DIR/xui-hub-subconverter.service" ]; then
+    install -m 644 "$DIR/xui-hub-subconverter.service" /etc/systemd/system/$SERVICE-subconverter.service
+    systemctl daemon-reload
+    systemctl enable -q "$SERVICE-subconverter"
+    systemctl restart "$SERVICE-subconverter"
+  fi
+  # 后台端口在 1024 以下时,给服务加上绑低端口的能力(一个 drop-in)。怎么加只在管理脚本里有一份;
+  # 0.10.7 及更早的版本没有这个子命令,忽略即可
+  /usr/bin/xui-hub sync-unit >/dev/null 2>&1 || true
+  systemctl daemon-reload
+  systemctl enable -q "$SERVICE"
+  # 之前要是反复崩溃用完了启动次数限额,不清掉的话这次重启会被 systemd 拒绝
+  systemctl reset-failed "$SERVICE" 2>/dev/null || true
+  systemctl restart "$SERVICE"
+}
+
+# 等服务应答,最多 30 秒
+wait_ready() {
+  local i
+  for i in $(seq 1 30); do
+    curl -fsSk -o /dev/null --max-time 3 "$1" 2>/dev/null && return 0
+    sleep 1
+  done
+  return 1
+}
+
 install_xui_hub() {
   local tag="${1:-}"
   if [ -z "$tag" ]; then
@@ -104,20 +138,16 @@ install_xui_hub() {
   tar -xzf "$tmp/$name" -C "$tmp"
   [ -x "$tmp/xui-hub/bin/node" ] && [ -f "$tmp/xui-hub/server/dist/index.js" ] || die "包里缺文件"
 
-  # 已在运行就先停,换掉整个程序目录(数据在 /etc/xui-hub,不动)
+  # 已在运行就先停,换掉整个程序目录(数据在 /etc/xui-hub,不动)。
+  # 原来的程序目录先留在 $DIR.old:新版本起不来的话还能退回去,确认就绪了再删
   systemctl stop "$SERVICE" 2>/dev/null || true
   rm -rf "$DIR.new" "$DIR.old"
   mv "$tmp/xui-hub" "$DIR.new"
   [ -d "$DIR" ] && mv "$DIR" "$DIR.old"
   mv "$DIR.new" "$DIR"
-  rm -rf "$DIR.old" "$tmp"
-  chown -R root:root "$DIR"
-  chmod -R a+rX "$DIR"
+  rm -rf "$tmp"
 
-  install -m 755 "$DIR/xui-hub.sh" /usr/bin/xui-hub
   id "$RUN_USER" >/dev/null 2>&1 || useradd --system --home-dir "$DIR" --shell /usr/sbin/nologin "$RUN_USER" 2>/dev/null || useradd --system --home-dir "$DIR" --shell /sbin/nologin "$RUN_USER"
-  # subconverter 以服务用户运行并在自己目录写缓存
-  [ -d "$DIR/subconverter" ] && chown -R "$RUN_USER:$RUN_USER" "$DIR/subconverter"
   mkdir -p "$ETC"
 
   # 首次安装(或 .env 里还没有密码):写 .env,密码 / 端口来自环境变量或提问,否则随机 / 默认
@@ -143,38 +173,40 @@ install_xui_hub() {
   fi
   # 数据目录归服务用户(数据库由它写);.env 归 root,服务用户只读
   chown "$RUN_USER:$RUN_USER" "$ETC"
+  # 卸载时保留了数据、现在重装的:服务用户是新建的,编号可能和原来不一样,数据库和证书的属主要跟着改,不然服务读不了
+  for f in "$ETC"/hub.db "$ETC"/hub.db-wal "$ETC"/hub.db-shm; do [ -e "$f" ] && chown "$RUN_USER:$RUN_USER" "$f"; done
+  [ -d "$ETC/cert" ] && chgrp -R "$RUN_USER" "$ETC/cert"
   chmod 700 "$ETC"
   chown root:"$RUN_USER" "$ENV_FILE"
   chmod 640 "$ENV_FILE"
 
-  install -m 644 "$DIR/xui-hub.service" /etc/systemd/system/$SERVICE.service
-  if [ -f "$DIR/xui-hub-subconverter.service" ]; then
-    install -m 644 "$DIR/xui-hub-subconverter.service" /etc/systemd/system/$SERVICE-subconverter.service
-    systemctl daemon-reload
-    systemctl enable -q "$SERVICE-subconverter"
-    systemctl restart "$SERVICE-subconverter"
-  fi
-  systemctl daemon-reload
-  systemctl enable -q "$SERVICE"
-  # 之前要是反复崩溃用完了启动次数限额,不清掉的话这次重启会被 systemd 拒绝
-  systemctl reset-failed "$SERVICE" 2>/dev/null || true
-  systemctl restart "$SERVICE"
+  activate
 
-  local port i scheme=http listen probe url
+  local port scheme=http listen probe url
   port="$(env_get HOST_PORT)"; port="${port:-8788}"
   [ -n "$(env_get TLS_CERT_FILE)" ] && scheme=https
   # 探活连服务实际监听的地址:LISTEN_ADDR 写了具体地址(内网 / 隧道网卡的 IP)时,127.0.0.1 上没人听
   listen="$(env_get LISTEN_ADDR)"
   case "$listen" in "" | 0.0.0.0 | ::) listen=127.0.0.1 ;; *:*) listen="[$listen]" ;; esac
   probe="$scheme://$listen:$port/api/session"
-  for i in $(seq 1 30); do
-    curl -fsSk -o /dev/null --max-time 3 "$probe" 2>/dev/null && break
-    sleep 1
-  done
-  if ! curl -fsSk -o /dev/null --max-time 3 "$probe" 2>/dev/null; then
+  if ! wait_ready "$probe"; then
     journalctl -u "$SERVICE" -n 30 --no-pager || true
+    # 是更新的话退回原来的版本,不把一个起不来的后台留给用户(数据库迁移只增不改,原来的程序接着能用)
+    if [ -d "$DIR.old" ]; then
+      warn "xui-hub $tag 没有在 30 秒内就绪(日志在上面),退回原来的版本"
+      systemctl stop "$SERVICE" 2>/dev/null || true
+      rm -rf "$DIR"
+      mv "$DIR.old" "$DIR"
+      # 退回是尽力而为:中间哪一步失败都接着往下做
+      activate || true
+      if wait_ready "$probe"; then
+        die "xui-hub $tag 在这台机器上起不来,已退回原来的 $(cat "$DIR/VERSION" 2>/dev/null || echo 版本)并恢复运行"
+      fi
+      die "xui-hub $tag 起不来,退回原来的版本后也没起来:问题多半不在版本上,检查 $ENV_FILE 和日志(xui-hub log)"
+    fi
     die "服务没有在 30 秒内就绪,看上面的日志(xui-hub log)"
   fi
+  rm -rf "$DIR.old"
   open_firewall "$port"
 
   # 后台地址问刚装好的管理脚本(证书签给哪个域名、只监听哪个地址,算法只在它那里有一份)。

@@ -144,9 +144,28 @@ cert_mismatch_hint() {
   warn "  要用证书里的域名访问,在 $ENV_FILE 里加一行 PANEL_HOST=<域名>;机器换了 IP 就重新申请:xui-hub ssl ip"
 }
 
+# 后台端口在 1024 以下时,服务(不是 root)要有 CAP_NET_BIND_SERVICE 才绑得上。只在用到时用 drop-in 加上:
+# 写死在单元里的话,不支持 ambient capabilities 的环境(很老的内核、部分容器)上服务会直接起不来,哪怕用的是默认端口
+DROPIN=/etc/systemd/system/$SERVICE.service.d/low-port.conf
+sync_port_cap() {
+  local want=0 have=0
+  [ "$(port)" -lt 1024 ] 2>/dev/null && want=1
+  [ -f "$DROPIN" ] && have=1
+  [ "$want" = "$have" ] && return 0
+  if [ "$want" = 1 ]; then
+    mkdir -p "${DROPIN%/*}"
+    printf '[Service]\nAmbientCapabilities=CAP_NET_BIND_SERVICE\n' >"$DROPIN"
+  else
+    rm -f "$DROPIN"
+    rmdir "${DROPIN%/*}" 2>/dev/null
+  fi
+  systemctl daemon-reload
+}
+
 # 脚本自己重启服务时先清掉 systemd 记的失败次数:配置有问题让服务反复崩溃后,启动次数限额(3 分钟 10 次)可能已经用完,
 # 不清的话,连改回正确配置后的那次重启都会被拒绝(start-limit-hit),后台就一直起不来
 svc_restart() {
+  sync_port_cap
   systemctl reset-failed "$SERVICE" 2>/dev/null
   systemctl restart "$SERVICE"
 }
@@ -184,7 +203,8 @@ uninstall() {
   need_root; check_install || return 1
   confirm "停掉并删除 xui-hub 程序?" || return 0
   systemctl disable --now "$SERVICE" "$SERVICE-subconverter" 2>/dev/null
-  rm -f /etc/systemd/system/$SERVICE.service /etc/systemd/system/$SERVICE-subconverter.service /usr/bin/xui-hub
+  rm -f /etc/systemd/system/$SERVICE.service /etc/systemd/system/$SERVICE-subconverter.service "$DROPIN" /usr/bin/xui-hub
+  rmdir "${DROPIN%/*}" 2>/dev/null
   systemctl daemon-reload
   rm -rf "$DIR"
   if confirm "连同数据目录 $ETC(数据库和 .env)一起删除?"; then rm -rf "$ETC"; ok "已删除 $ETC"; else ok "保留了 $ETC"; fi
@@ -203,18 +223,26 @@ password() {
   pw_ok "$pw" || { err "密码里不能有单引号"; return 1; }
   env_set ADMIN_PASSWORD "${pw:-$(rand 16)}"
   svc_restart
+  wait_up || { err "密码已经写进 $ENV_FILE,但 xui-hub 没起来,看日志:xui-hub log"; return 1; }
   # 自己输的不回显;随机生成的打出来(之前登录着的设备都要重新登录)
   if [ -n "$pw" ]; then ok "密码已更新"; else ok "密码已更新:$(env_get ADMIN_PASSWORD)"; fi
 }
 
-# 放行端口:ufw 或 firewalld 开着才动(和安装时一致)。管道里不用 grep -q:它匹配到就退出,上游被 SIGPIPE 打断,pipefail 下整条算失败
+# 开着的是哪种防火墙(都没开就什么也不输出)。管道里不用 grep -q:它匹配到就退出,上游被 SIGPIPE 打断,pipefail 下整条算失败
+firewall_kind() {
+  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep '^Status: active' >/dev/null; then
+    echo ufw
+  elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
+    echo firewalld
+  fi
+}
+# 放行端口:ufw 或 firewalld 开着才动(和安装时一致)
 open_firewall() {
   local p="$1"
-  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep '^Status: active' >/dev/null; then
-    if ufw allow "$p"/tcp >/dev/null; then ok "ufw 已放行 $p/tcp"; else warn "ufw 放行 $p/tcp 失败,自己放行一下:ufw allow $p/tcp"; fi
-  elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
-    if firewall-cmd -q --permanent --add-port="$p"/tcp && firewall-cmd -q --reload; then ok "firewalld 已放行 $p/tcp"; else warn "firewalld 放行 $p/tcp 失败,自己放行一下:firewall-cmd --permanent --add-port=$p/tcp && firewall-cmd --reload"; fi
-  fi
+  case "$(firewall_kind)" in
+    ufw) if ufw allow "$p"/tcp >/dev/null; then ok "ufw 已放行 $p/tcp"; else warn "ufw 放行 $p/tcp 失败,自己放行一下:ufw allow $p/tcp"; fi ;;
+    firewalld) if firewall-cmd -q --permanent --add-port="$p"/tcp && firewall-cmd -q --reload; then ok "firewalld 已放行 $p/tcp"; else warn "firewalld 放行 $p/tcp 失败,自己放行一下:firewall-cmd --permanent --add-port=$p/tcp && firewall-cmd --reload"; fi ;;
+  esac
   return 0
 }
 
@@ -238,6 +266,11 @@ set_port() {
   fi
   open_firewall "$p"
   ok "端口已改为 $p,后台地址 $(panel_url)(云服务器记得放行安全组)"
+  # 旧端口的放行规则不替用户收回(它可能另有用处,比如把 443 让给网站),只说一声
+  case "$(firewall_kind)" in
+    ufw) echo "  旧端口 $old 的放行规则还留着,不用了可以收回:ufw delete allow $old/tcp" ;;
+    firewalld) echo "  旧端口 $old 的放行规则还留着,不用了可以收回:firewall-cmd --permanent --remove-port=$old/tcp && firewall-cmd --reload" ;;
+  esac
 }
 
 settings() {
@@ -260,7 +293,7 @@ settings() {
 
 svc() {
   need_root
-  case "$1" in start | restart) systemctl reset-failed "$SERVICE" 2>/dev/null ;; esac
+  case "$1" in start | restart) sync_port_cap; systemctl reset-failed "$SERVICE" 2>/dev/null ;; esac
   systemctl "$1" "$SERVICE-subconverter" 2>/dev/null
   systemctl "$1" "$SERVICE" && show_status
 }
@@ -394,10 +427,13 @@ acme_issue() {
   out="$("$ACME" --issue "$@" --server letsencrypt --keylength ec-256 --force 2>&1)" || rc=$?
   case "$out" in *"Cert success"*) return 0 ;; esac
   err "acme.sh 的报错(退出码 $rc):"
-  # 只挑报错相关的行(挑不出就给最后几行);万一带出 Token 就遮掉
-  { printf '%s\n' "$out" | grep -iE "error|invalid|fail|denied|unauthorized|rate ?limit|timeout|not found|refused|detail" || printf '%s\n' "$out" | tail -n 8; } |
-    tail -n 12 | sed -e "s/${CF_Token:-__no_token__}/***/g" -e 's/^\[[^]]*\] */    /' >&2
+  acme_errors "$out"
   return 1
+}
+# 从 acme.sh 的输出里只挑报错相关的行(挑不出就给最后几行);万一带出 Token 就遮掉
+acme_errors() {
+  { printf '%s\n' "$1" | grep -iE "error|invalid|fail|denied|unauthorized|rate ?limit|timeout|not found|refused|detail" || printf '%s\n' "$1" | tail -n 8; } |
+    tail -n 12 | sed -e "s/${CF_Token:-__no_token__}/***/g" -e 's/^\[[^]]*\] */    /' >&2
 }
 ssl_issue_ip() {
   need_root; install_acme || return 1
@@ -486,10 +522,16 @@ pick_cert_name() {
 
 ssl_renew() {
   need_root; [ -x "$ACME" ] || { err "acme.sh 没装,没有可续的证书"; return 1; }
-  local name id; name="$(pick_cert_name)" || return 1
+  local name id out rc=0; name="$(pick_cert_name)" || return 1
   id="$(acme_id_of "$name")"
-  "$ACME" --renew -d "$id" --ecc --force 2>&1 | grep -E "Cert success|Skip|error|Error|Reload" || true
-  ok "已强制续期 $name($(cert_summary "$CERT_DIR/$name/fullchain.pem"))"
+  [ -n "$id" ] || { err "acme.sh 里没有 $name 对应的证书记录,续不了"; return 1; }
+  echo "  正在续期,一般不到 1 分钟,期间没有输出是正常的,不要按 Ctrl+C…"
+  out="$("$ACME" --renew -d "$id" --ecc --force 2>&1)" || rc=$?
+  # 成没成看 acme.sh 自己的话,不能跑完就说续好了(不是它签的证书、验证没过都会失败)
+  case "$out" in
+    *"Cert success"*) ok "已强制续期 $name($(cert_summary "$CERT_DIR/$name/fullchain.pem"))" ;;
+    *) err "续期失败,acme.sh 的报错(退出码 $rc):"; acme_errors "$out"; return 1 ;;
+  esac
 }
 
 ssl_remove() {
@@ -545,7 +587,8 @@ ssl_disable() {
   need_root
   env_unset TLS_CERT_FILE TLS_KEY_FILE PANEL_HOST
   svc_restart
-  ok "已关闭 HTTPS,后台地址 $(panel_url)"
+  # 等服务真的应答了再说成功(重启要一两秒,马上去访问会连不上)
+  if wait_up; then ok "已关闭 HTTPS,后台地址 $(panel_url)"; else err "xui-hub 没起来,看日志:xui-hub log"; return 1; fi
 }
 
 ssl_menu() {
@@ -655,8 +698,10 @@ case "${1:-}" in
   password) password ;;
   port) set_port ;;
   settings) settings ;;
-  # 只打印后台地址。install.sh 装完后靠它显示地址,算法只留这一份(install.sh 永远是 main 上的,这个脚本跟着发布包走)
+  # 下面两个是给 install.sh 用的,逻辑只在这里留一份(install.sh 永远是 main 上的,这个脚本跟着发布包走):
+  #   address 打印后台地址;sync-unit 按当前端口加上或去掉绑低端口的 drop-in
   address) need_root; panel_url ;;
+  sync-unit) need_root; sync_port_cap ;;
   ssl) shift; ssl_cmd "$@" ;;
   backup) backup "${2:-}" ;;
   restore) restore "${2:-}" ;;
