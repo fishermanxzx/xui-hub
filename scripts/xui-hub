@@ -5,6 +5,7 @@
 #   xui-hub password        重设后台密码          xui-hub port        改后台端口
 #   xui-hub settings        当前设置              xui-hub uninstall   卸载
 #   xui-hub ssl             SSL 证书管理菜单(xui-hub ssl ip | domain <域名> | cf <域名> 可直接执行)
+#   xui-hub backup [目录]   备份数据库            xui-hub restore <文件>  恢复备份
 set -uo pipefail
 
 REPO="${XUIHUB_REPO:-fishermanxzx/xui-hub}"
@@ -13,6 +14,8 @@ ETC=/etc/xui-hub
 ENV_FILE="$ETC/.env"
 SERVICE=xui-hub
 RUN_USER=xuihub
+CERT_DIR="$ETC/cert"
+ACME="$HOME/.acme.sh/acme.sh"
 
 red='\033[0;31m'; green='\033[0;32m'; yellow='\033[0;33m'; plain='\033[0m'
 ok() { echo -e "${green}$*${plain}"; }
@@ -73,6 +76,10 @@ uninstall() {
   if confirm "连同数据目录 $ETC(数据库和 .env)一起删除?"; then rm -rf "$ETC"; ok "已删除 $ETC"; else ok "保留了 $ETC"; fi
   userdel "$RUN_USER" 2>/dev/null
   ok "已卸载"
+  # 申请过证书的话,acme.sh 的自动续期还在(续完会去重启一个已经不存在的服务,只是报个错)
+  if [ -x "$ACME" ] && [ -n "$("$ACME" --list 2>/dev/null | awk 'NR>1')" ]; then
+    warn "acme.sh 里的证书还在自动续期,不要了就逐个删掉:$ACME --remove -d <域名或 IP> --ecc($ACME --list 看有哪些)"
+  fi
 }
 
 password() {
@@ -86,6 +93,16 @@ password() {
   if [ -n "$pw" ]; then ok "密码已更新"; else ok "密码已更新:$(env_get ADMIN_PASSWORD)"; fi
 }
 
+# 放行端口:ufw 或 firewalld 开着才动(和安装时一致)。管道里不用 grep -q:它匹配到就退出,上游被 SIGPIPE 打断,pipefail 下整条算失败
+open_firewall() {
+  local p="$1"
+  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep '^Status: active' >/dev/null; then
+    ufw allow "$p"/tcp >/dev/null && ok "ufw 已放行 $p/tcp"
+  elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd -q --permanent --add-port="$p"/tcp && firewall-cmd -q --reload && ok "firewalld 已放行 $p/tcp"
+  fi
+}
+
 set_port() {
   need_root; check_install || return 1
   local p
@@ -94,7 +111,7 @@ set_port() {
   [[ "$p" =~ ^[0-9]+$ ]] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ] || { err "端口不合法"; return 1; }
   env_set HOST_PORT "$p"
   systemctl restart "$SERVICE"
-  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then ufw allow "$p"/tcp >/dev/null; fi
+  open_firewall "$p"
   ok "端口已改为 $p,后台地址 $(scheme)://$(public_ip):$p(云服务器记得放行安全组)"
 }
 
@@ -142,8 +159,6 @@ restore() {
 }
 
 # ======================= SSL 证书(照 x-ui 的做法:acme.sh + Let's Encrypt) =======================
-CERT_DIR="$ETC/cert"
-ACME="$HOME/.acme.sh/acme.sh"
 is_domain() { [[ "$1" =~ ^([A-Za-z0-9](-*[A-Za-z0-9])*\.)+[A-Za-z]{2,}$ ]]; }
 is_ipv4() { [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; }
 
@@ -170,7 +185,7 @@ install_acme() {
   "$ACME" --set-default-ca --server letsencrypt >/dev/null 2>&1
 }
 
-port_in_use() { ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$1$"; }
+port_in_use() { [ -n "$(ss -ltn 2>/dev/null | awk -v p="$1" '$4 ~ ("[:.]" p "$")')" ]; }
 
 # acme.sh 的证书状态目录(申请失败时清掉,否则下次会沿用坏状态)
 acme_state_rm() { local id="${1:?}"; rm -rf "${HOME:?}/.acme.sh/${id}" "${HOME:?}/.acme.sh/${id}_ecc"; }
@@ -304,7 +319,9 @@ pick_cert_name() {
   [ -n "$names" ] || { err "还没有证书"; return 1; }
   echo "$names" | sed 's/^/  /' >&2
   read -r -p "选哪一个(输入名字):" name
-  echo "$names" | grep -qx "$name" || { err "没有这个证书"; return 1; }
+  # 名字只能是目录下的一项(后面会按它删目录,不能让 .. 或带 / 的混进来)
+  case "$name" in "" | . | .. | */*) err "没有这个证书"; return 1 ;; esac
+  [ -d "$CERT_DIR/$name" ] || { err "没有这个证书"; return 1; }
   echo "$name"
 }
 
@@ -339,7 +356,8 @@ ssl_set_paths() {
   if [ "$c" = 2 ]; then
     read -r -p "证书(fullchain)路径:" cf; read -r -p "私钥路径:" kf
     [ -f "$cf" ] && [ -f "$kf" ] || { err "文件不存在"; return 1; }
-    sudo -u "$RUN_USER" test -r "$cf" -a -r "$kf" 2>/dev/null || warn "注意:服务用户 $RUN_USER 读不到这两个文件,起不来的话给它读权限(chgrp $RUN_USER 并 chmod 640)"
+    # 最小化安装的系统不一定有 sudo,用 runuser(util-linux 自带)
+    runuser -u "$RUN_USER" -- test -r "$cf" -a -r "$kf" 2>/dev/null || warn "注意:服务用户 $RUN_USER 读不到这两个文件,起不来的话给它读权限(chgrp $RUN_USER 并 chmod 640)"
     env_set TLS_CERT_FILE "$cf"; env_set TLS_KEY_FILE "$kf"; systemctl restart "$SERVICE"; sleep 2
     if systemctl is-active -q "$SERVICE"; then ok "已切到 HTTPS:https://$(public_ip):$(port)"; else err "xui-hub 没起来:xui-hub log"; fi
     return
@@ -467,5 +485,5 @@ case "${1:-}" in
   start | stop | restart | enable | disable) svc "$1" ;;
   status) systemctl status "$SERVICE" --no-pager ;;
   log | logs) journalctl -u "$SERVICE" -f -n 100 ;;
-  *) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

@@ -87,7 +87,8 @@ public_ip() {
 
 open_firewall() {
   local p="$1"
-  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
+  # 管道里不用 grep -q:它匹配到就退出,上游被 SIGPIPE 打断,pipefail 下整条算失败(明明开着防火墙却判成没开)
+  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep '^Status: active' >/dev/null; then
     ufw allow "$p"/tcp >/dev/null && say "ufw 已放行 $p/tcp"
   elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
     firewall-cmd -q --permanent --add-port="$p"/tcp && firewall-cmd -q --reload && say "firewalld 已放行 $p/tcp"
@@ -103,7 +104,7 @@ install_xui_hub() {
   say "安装 xui-hub $tag"
   local name="xui-hub-linux-$ARCH.tar.gz" base="https://github.com/$REPO/releases/download/$tag" tmp
   tmp="$(mktemp -d)"
-  say "下载 $name(约 47 MB)"
+  say "下载 $name(几十 MB,网慢的话要等一会儿)"
   curl -fsSL --retry 5 --retry-delay 3 --connect-timeout 15 -o "$tmp/$name" "$base/$name" || die "下载失败:$base/$name(检查版本是否存在、服务器能否访问 GitHub)"
   curl -fsL --retry 3 -o "$tmp/$name.sha256" "$base/$name.sha256" || die "下载校验文件失败"
   (cd "$tmp" && sha256sum -c "$name.sha256" >/dev/null) || die "sha256 校验不通过,下载的包不完整或被改动"

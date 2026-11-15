@@ -27,7 +27,7 @@ die() { err "$*"; exit 1; }
 is_domain() { [[ "$1" =~ ^([A-Za-z0-9](-*[A-Za-z0-9])*\.)+[A-Za-z]{2,}$ ]]; }
 is_ipv4() { [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; }
 public_ip() { curl -4fsS --max-time 3 https://api4.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}'; }
-port_in_use() { ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$1$"; }
+port_in_use() { [ -n "$(ss -ltn 2>/dev/null | awk -v p="$1" '$4 ~ ("[:.]" p "$")')" ]; }
 env_get() { { grep -E "^$1=" "$ENV_FILE" 2>/dev/null || true; } | tail -n 1 | cut -d= -f2- | sed -e "s/^'//" -e "s/'$//"; }
 env_set() {
   { grep -vE "^$1=" "$ENV_FILE" 2>/dev/null || true; printf '%s=%s\n' "$1" "$2"; } >"$ENV_FILE.tmp"
