@@ -8,7 +8,7 @@ import { customerIdBySubToken, getCustomer, touchSubFetch, type CustomerView } f
 import type { Converter } from '../subscription/convert';
 import { DEFAULT_CONVERT_OPTIONS, isBrowserUA, isStashUA, targetFromParam, targetFromUA, type Target } from '../subscription/format';
 import { buildLoon, buildQuantumultX } from '../subscription/apple';
-import { applyMihomoTemplate, withTrojanFingerprint } from '../subscription/mihomo';
+import { applyMihomoTemplate, lowerMode, withTrojanFingerprint } from '../subscription/mihomo';
 import { parseNodes } from '../subscription/nodes';
 import { buildSingbox, singboxLegacyDns } from '../subscription/singbox';
 import { clientIp, recordSubFetch } from '../subscription/fetchLog';
@@ -104,7 +104,7 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
   const withTemplate = (req: Request, target: Target, customerName: string, body: string) => {
     if (target !== 'clash') return body;
     const stash = isStashUA(req.get('user-agent'));
-    const out = stash ? body : withTrojanFingerprint(body);
+    const out = lowerMode(stash ? body : withTrojanFingerprint(body));
     return deps.mihomoTemplate(customerName) ? applyMihomoTemplate(out, { stash }) : out;
   };
 

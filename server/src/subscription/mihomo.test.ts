@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import YAML from 'yaml';
-import { applyMihomoTemplate, mihomoTemplateMatcher, withTrojanFingerprint } from './mihomo';
+import { applyMihomoTemplate, lowerMode, mihomoTemplateMatcher, withTrojanFingerprint } from './mihomo';
 
 const BODY = [
   'proxies:',
@@ -86,4 +86,11 @@ test('trojan 节点没写 client-fingerprint 的补上 chrome,其他节点、已
     ].join('\n'),
   );
   assert.equal(YAML.parse(withTrojanFingerprint(body)).proxies[0]['client-fingerprint'], 'chrome');
+});
+
+test('头部的 mode 改成小写;节点名里碰巧有 mode: 的、proxies 之后的都不动', () => {
+  assert.ok(lowerMode(BASE).startsWith('port: 7890\nsocks-port: 7891\nallow-lan: true\nmode: rule\nlog-level: info\n'));
+  assert.ok(lowerMode(BASE).endsWith(BODY));
+  assert.equal(lowerMode('mode: "Global"\nproxies:\n  - {name: x}\nmode: Rule\n'), 'mode: global\nproxies:\n  - {name: x}\nmode: Rule\n');
+  assert.equal(lowerMode('mode: script\nproxies: []\n'), 'mode: script\nproxies: []\n');
 });

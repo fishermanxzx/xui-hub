@@ -80,6 +80,16 @@ export function withTrojanFingerprint(yamlText: string, fingerprint = 'chrome'):
   );
 }
 
+/**
+ * subconverter 生成的头部写的是 `mode: Rule`(首字母大写)。内核不分大小写照样认,但 Mihomo 的配置规范只列小写的
+ * rule / global / direct,编辑器按规范校验会报错,有的客户端也只认小写。统一改成小写,只动 proxies: 之前的那一行。
+ */
+export function lowerMode(yamlText: string): string {
+  const at = yamlText.search(/^proxies:/m);
+  const head = at < 0 ? yamlText : yamlText.slice(0, at);
+  return head.replace(/^(mode:[ \t]*)(['"]?)(rule|global|direct)\2[ \t]*$/im, (_m, key: string, _q, mode: string) => key + mode.toLowerCase()) + (at < 0 ? '' : yamlText.slice(at));
+}
+
 /** MIHOMO_TEMPLATE:all = 全部;逗号分隔的订阅名 = 只对这些生效(灰度);空 = 关闭 */
 export function mihomoTemplateMatcher(setting: string): (customerName: string) => boolean {
   const value = setting.trim();
