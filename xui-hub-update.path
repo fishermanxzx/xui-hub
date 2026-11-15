@@ -1,0 +1,9 @@
+# 后台里点「更新」时,xui-hub 在数据目录放一个请求文件;这里看到它就拉起 xui-hub-update.service
+[Unit]
+Description=xui-hub update request
+
+[Path]
+PathExists=/etc/xui-hub/update-request
+
+[Install]
+WantedBy=multi-user.target

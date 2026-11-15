@@ -12,7 +12,7 @@ Authorization: Bearer xh_……
 
 - 请求和响应都是 JSON,地址前缀是 `https://<后台地址>/api`。
 - 出错时状态码是 4xx / 5xx,响应体 `{"error": "原因"}`。400 是参数不对,401 是令牌无效,502 是面板连不上或面板报错。
-- 令牌不能调 `/settings`、`/backup`、`/restore`、`/tokens`(返回 403),这些只能在后台登录后操作。
+- 令牌不能调 `/settings`、`/backup`、`/restore`、`/tokens`、`/system`(返回 403),这些只能在后台登录后操作。
 - 同一个 IP 连续带错令牌 10 次,10 分钟内会被拒绝(429)。
 
 ## 客户
@@ -84,6 +84,7 @@ Authorization: Bearer xh_……
 | GET | `/socks` | SOCKS 代理列表 |
 | GET | `/sub-templates` | 内置的订阅模板 |
 | POST | `/sync` | 立即同步全部面板的流量并执行额度 / 到期 |
+| GET | `/system/version` | xui-hub 自己的版本:`current`、`latest`(GitHub 上最新的发布版本,缓存 6 小时,`?refresh=1` 重查)、`update_available`、`method`(`auto` 能在后台里直接更新 / `docker` / `manual`) |
 | GET | `/traffic` | 流量统计。查询参数:`by`(`customer` 按客户,默认;`panel` 按面板),`days`(最近几天,含今天,默认 30,最多 365),`id`(可选:展开这位客户 / 这块面板名下各个客户端;按客户时 `0` 是没归入客户的客户端)。返回 `days`(日期)、`total`(每天的上行 / 下行)、`rows`(每行的 `up`、`down` 和每天的合计 `daily`,按用量从大到小) |
 
 ## 例子:卖出一个月的套餐

@@ -11,6 +11,7 @@ import { tcpOpen } from './clients/create';
 import { listCustomers } from './customers/repo';
 import { pruneDevices } from './subscription/devices';
 import { pruneTraffic } from './traffic/daily';
+import { createUpdater } from './update';
 import { openDb } from './db';
 import { env, isLoopbackHost, PROJECT_ROOT } from './env';
 import { apiRouter } from './http/routes';
@@ -71,6 +72,7 @@ const apiDeps = {
   subBaseUrl: env.subBaseUrl,
   subLogDays: env.subLogDays,
   dataDir: env.dataDir,
+  updater: createUpdater({ version: env.version, dataDir: env.dataDir, docker: !!process.env.XUIHUB_VERSION }),
   // 恢复备份:退出让 systemd / Docker 拉起,起来时换库
   onRestore: () => {
     console.log('恢复备份:重启服务');

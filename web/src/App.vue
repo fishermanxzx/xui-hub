@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue';
 import { api, setUnauthorizedHandler } from './api';
 import { toasts } from './toast';
+import VersionBadge from './components/VersionBadge.vue';
 import Login from './views/Login.vue';
 import Customers from './views/Customers.vue';
 import Panels from './views/Panels.vue';
@@ -58,6 +59,7 @@ onMounted(checkSession);
             <a v-for="t in TABS" :key="t.id" :href="'#' + t.id" :class="{ on: tab === t.id }" :aria-current="tab === t.id ? 'page' : undefined">{{ t.label }}</a>
           </nav>
           <span class="spacer" />
+          <VersionBadge />
           <button v-if="authRequired" class="link quiet" title="所有设备上的登录一起退出" @click="logout">退出登录</button>
         </div>
       </header>

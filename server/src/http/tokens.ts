@@ -1,5 +1,5 @@
 // 开放 API 的令牌:给发卡站、机器人这类程序用,请求头带 Authorization: Bearer <令牌> 就能调 /api。
-// 库里只存 SHA-256,明文只在创建时返回一次。令牌不能改设置、备份恢复、管理令牌(见 TOKEN_BLOCKED)。
+// 库里只存 SHA-256,明文只在创建时返回一次。令牌不能改设置、备份恢复、管理令牌、更新 xui-hub(见 TOKEN_BLOCKED)。
 
 import { createHash, randomBytes } from 'node:crypto';
 import type { DB } from '../db';
@@ -48,4 +48,4 @@ export function verifyToken(db: DB, header: string | undefined, now = Date.now()
 }
 
 /** 令牌碰不了的接口:设置(里面有 Telegram token)、备份恢复(整库)、令牌管理 */
-export const TOKEN_BLOCKED = /^\/(settings|backup|restore|tokens|oauth-grants)(\/|$)/;
+export const TOKEN_BLOCKED = /^\/(settings|backup|restore|tokens|oauth-grants|system)(\/|$)/;

@@ -1,4 +1,4 @@
-import type { TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus } from './types';
+import type { UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus } from './types';
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -78,6 +78,11 @@ export const api = {
 
   /** 流量统计;id 给了就展开这位客户 / 这块面板名下的各个客户端 */
   traffic: (by: TrafficBy, days: number, id?: number) => call<TrafficReport>('GET', `/api/traffic?by=${by}&days=${days}${id === undefined ? '' : `&id=${id}`}`),
+
+  /** xui-hub 自己的版本和能不能更新;refresh 重新问一次 GitHub */
+  systemVersion: (refresh = false) => call<UpdateInfo>('GET', `/api/system/version${refresh ? '?refresh=1' : ''}`),
+  /** 发起更新到最新版(更新在后台跑,期间服务会重启) */
+  systemUpdate: () => call<{ started: boolean }>('POST', '/api/system/update'),
 
   subTemplates: () => call<{ default: string; templates: SubTemplate[] }>('GET', '/api/sub-templates'),
 

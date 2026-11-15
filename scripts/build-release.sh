@@ -56,7 +56,7 @@ chmod 755 "$PKG/subconverter/subconverter"
 
 say "打包"
 cp "$ROOT/scripts/xui-hub" "$PKG/xui-hub.sh"
-cp "$ROOT/xui-hub.service" "$ROOT/xui-hub-subconverter.service" "$ROOT/.env.example" "$ROOT/LICENSE" "$PKG/"
+cp "$ROOT/xui-hub.service" "$ROOT/xui-hub-subconverter.service" "$ROOT/xui-hub-update.path" "$ROOT/xui-hub-update.service" "$ROOT/.env.example" "$ROOT/LICENSE" "$PKG/"
 printf '%s\n' "$VERSION" >"$PKG/VERSION"
 printf 'node=%s\narch=%s\nsubconverter=%s\nbuilt=%s\n' "$NODE_VERSION" "$ARCH" "$SC_VERSION" "$(date -u +%FT%TZ)" >"$PKG/BUILD"
 chmod 755 "$PKG/xui-hub.sh"

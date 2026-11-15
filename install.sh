@@ -102,6 +102,13 @@ activate() {
     systemctl enable -q "$SERVICE-subconverter"
     systemctl restart "$SERVICE-subconverter"
   fi
+  # 后台里点「更新」用的:xui-hub 放下请求文件,这个 path 单元看到后以 root 跑 xui-hub update(0.13 及更早的包里没有)
+  if [ -f "$DIR/xui-hub-update.path" ] && [ -f "$DIR/xui-hub-update.service" ]; then
+    install -m 644 "$DIR/xui-hub-update.path" /etc/systemd/system/$SERVICE-update.path
+    install -m 644 "$DIR/xui-hub-update.service" /etc/systemd/system/$SERVICE-update.service
+    systemctl daemon-reload
+    systemctl enable -q --now "$SERVICE-update.path" || true
+  fi
   # 后台端口在 1024 以下时,给服务加上绑低端口的能力(一个 drop-in)。怎么加只在管理脚本里有一份;
   # 0.10.7 及更早的版本没有这个子命令,忽略即可
   /usr/bin/xui-hub sync-unit >/dev/null 2>&1 || true

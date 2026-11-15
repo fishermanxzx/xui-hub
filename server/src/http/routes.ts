@@ -35,6 +35,7 @@ import { openLine, removeLine, removeLines, repointSocksLines, type LineAdmin } 
 import { checkSocks } from '../socks/check';
 import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, planSocksUpdate, saveCheck, updateSocks } from '../socks/repo';
 import { trafficReport } from '../traffic/daily';
+import type { Updater } from '../update';
 import { errorText, mapLimit, panelKey, serial, using } from '../util';
 import { XUIError } from '../xui/client';
 import { LoginLimiter, passwordMatches, readCookie, SESSION_COOKIE, SESSION_MAX_AGE_MS, sessionCookie, sessionKeys, signSession, verifySession } from './auth';
@@ -65,6 +66,8 @@ export interface RouteDeps {
   dataDir?: string;
   /** 恢复文件放好后调用:退出进程让 systemd / Docker 重启 */
   onRestore?: () => void;
+  /** xui-hub 自己的版本检查和更新;不给 = 没有这两个接口 */
+  updater?: Updater;
   /** 拉自定义订阅模板(保存前校验用);测试里换成假的 */
   fetchTemplate?: TemplateFetcher;
 }
@@ -395,6 +398,23 @@ export function apiRouter(deps: RouteDeps): Router {
       const id = req.query.id === undefined || req.query.id === '' ? null : Number(req.query.id);
       if (id != null && !(Number.isInteger(id) && id >= 0)) throw new InputError('id 不对');
       return trafficReport(db, { by, days: Number(req.query.days) || 30, id });
+    }),
+  );
+  // xui-hub 自己的版本:当前版本、GitHub 上最新的发布版本、能不能在后台里直接更新;refresh=1 重新查一次
+  r.get(
+    '/system/version',
+    wrap((req) => {
+      if (!deps.updater) throw new InputError('没有启用版本检查');
+      return deps.updater.info(req.query.refresh === '1');
+    }),
+  );
+  // 更新到最新版:只是发起,更新在后台跑,期间服务会重启;前端轮询 /system/version 看版本变没变
+  r.post(
+    '/system/update',
+    wrap(async () => {
+      if (!deps.updater) throw new InputError('没有启用版本检查');
+      await deps.updater.start();
+      return { started: true };
     }),
   );
   // 立即同步全部面板并执行额度 / 到期

@@ -202,8 +202,8 @@ update() { check_install && run_installer "$@"; }
 uninstall() {
   need_root; check_install || return 1
   confirm "停掉并删除 xui-hub 程序?" || return 0
-  systemctl disable --now "$SERVICE" "$SERVICE-subconverter" 2>/dev/null
-  rm -f /etc/systemd/system/$SERVICE.service /etc/systemd/system/$SERVICE-subconverter.service "$DROPIN" /usr/bin/xui-hub
+  systemctl disable --now "$SERVICE" "$SERVICE-subconverter" "$SERVICE-update.path" 2>/dev/null
+  rm -f /etc/systemd/system/$SERVICE.service /etc/systemd/system/$SERVICE-subconverter.service /etc/systemd/system/$SERVICE-update.path /etc/systemd/system/$SERVICE-update.service /var/log/xui-hub-update.log "$DROPIN" /usr/bin/xui-hub
   rmdir "${DROPIN%/*}" 2>/dev/null
   systemctl daemon-reload
   rm -rf "$DIR"

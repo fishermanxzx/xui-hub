@@ -308,3 +308,18 @@ export interface TrafficReport {
   total: { up: number[]; down: number[] };
   rows: TrafficRow[];
 }
+
+/** xui-hub 自己的版本信息 */
+export interface UpdateInfo {
+  current: string;
+  latest: string | null;
+  update_available: boolean;
+  /** auto = 后台里能直接更新;docker / manual = 要在服务器上执行 command */
+  method: 'auto' | 'docker' | 'manual';
+  command: string;
+  checked_at: number | null;
+  error: string | null;
+  state: 'idle' | 'running' | 'failed';
+  log: string;
+  release_url: string;
+}
