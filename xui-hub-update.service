@@ -5,4 +5,6 @@ Description=xui-hub update to the latest release
 
 [Service]
 Type=oneshot
+# systemd 起的服务没有 HOME,管理脚本里 acme.sh 的路径要用它
+Environment=HOME=/root
 ExecStart=/bin/sh -c 'rm -f /etc/xui-hub/update-request; XUIHUB_NONINTERACTIVE=1 /usr/bin/xui-hub update >/var/log/xui-hub-update.log 2>&1; echo "exit=$?" >>/var/log/xui-hub-update.log; chmod 644 /var/log/xui-hub-update.log'
