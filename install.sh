@@ -156,6 +156,8 @@ install_xui_hub() {
   fi
   systemctl daemon-reload
   systemctl enable -q "$SERVICE"
+  # 之前要是反复崩溃用完了启动次数限额,不清掉的话这次重启会被 systemd 拒绝
+  systemctl reset-failed "$SERVICE" 2>/dev/null || true
   systemctl restart "$SERVICE"
 
   local port i scheme=http listen probe url

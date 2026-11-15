@@ -144,6 +144,13 @@ cert_mismatch_hint() {
   warn "  要用证书里的域名访问,在 $ENV_FILE 里加一行 PANEL_HOST=<域名>;机器换了 IP 就重新申请:xui-hub ssl ip"
 }
 
+# 脚本自己重启服务时先清掉 systemd 记的失败次数:配置有问题让服务反复崩溃后,启动次数限额(3 分钟 10 次)可能已经用完,
+# 不清的话,连改回正确配置后的那次重启都会被拒绝(start-limit-hit),后台就一直起不来
+svc_restart() {
+  systemctl reset-failed "$SERVICE" 2>/dev/null
+  systemctl restart "$SERVICE"
+}
+
 # 重启后等服务真的能应答。systemctl restart 对 Type=simple 的服务总是成功,端口绑不上、证书读不到都是进程起来之后才崩;
 # 连的是服务实际监听的地址(LISTEN_ADDR 写了具体地址时,127.0.0.1 上没人听)
 wait_up() {
@@ -151,6 +158,8 @@ wait_up() {
   a="$(listen_addr)"
   for ((i = 0; i < 15; i++)); do
     curl -fsSk -o /dev/null --max-time 3 "$(scheme)://$(url_host "${a:-127.0.0.1}"):$(port)/api/session" 2>/dev/null && return 0
+    # 已经崩了又被 systemd 拉起来两回,不用等满
+    [ "$(systemctl show "$SERVICE" -p NRestarts --value 2>/dev/null)" -ge 2 ] 2>/dev/null && return 1
     sleep 1
   done
   return 1
@@ -193,7 +202,7 @@ password() {
   read -r -s -p "新的后台密码(直接回车随机生成):" pw; echo
   pw_ok "$pw" || { err "密码里不能有单引号"; return 1; }
   env_set ADMIN_PASSWORD "${pw:-$(rand 16)}"
-  systemctl restart "$SERVICE"
+  svc_restart
   # 自己输的不回显;随机生成的打出来(之前登录着的设备都要重新登录)
   if [ -n "$pw" ]; then ok "密码已更新"; else ok "密码已更新:$(env_get ADMIN_PASSWORD)"; fi
 }
@@ -219,12 +228,12 @@ set_port() {
   [ "$p" != "$old" ] || { echo "端口没变,还是 $old"; return 0; }
   port_in_use "$p" && { err "端口 $p 已经被别的程序占用(ss -ltnp 看是谁),换一个"; return 1; }
   env_set HOST_PORT "$p"
-  systemctl restart "$SERVICE"
+  svc_restart
   if ! wait_up; then
     err "换到 $p 端口后 xui-hub 没起来,已改回 $old。日志:"
     journalctl -u "$SERVICE" -n 10 --no-pager
     env_set HOST_PORT "$old"
-    systemctl restart "$SERVICE"
+    svc_restart
     return 1
   fi
   open_firewall "$p"
@@ -249,7 +258,12 @@ settings() {
   cat "$DIR/BUILD" 2>/dev/null | sed 's/^/  /'
 }
 
-svc() { need_root; systemctl "$1" "$SERVICE-subconverter" 2>/dev/null; systemctl "$1" "$SERVICE" && show_status; }
+svc() {
+  need_root
+  case "$1" in start | restart) systemctl reset-failed "$SERVICE" 2>/dev/null ;; esac
+  systemctl "$1" "$SERVICE-subconverter" 2>/dev/null
+  systemctl "$1" "$SERVICE" && show_status
+}
 
 # ======================= 备份 / 恢复 =======================
 # 备份用 SQLite 在线备份(服务不用停,WAL 里的也带上);恢复先停服务再换文件,旧库留一份 .bak
@@ -276,7 +290,7 @@ restore() {
   [ -f "$ETC/hub.db" ] && mv "$ETC/hub.db" "$ETC/hub.db.bak-$(date +%Y%m%d-%H%M%S)"
   rm -f "$ETC/hub.db-wal" "$ETC/hub.db-shm"
   cp "$file" "$ETC/hub.db"; chown "$RUN_USER:$RUN_USER" "$ETC/hub.db"; chmod 600 "$ETC/hub.db"
-  systemctl start "$SERVICE"
+  svc_restart
   if wait_up; then ok "已恢复,服务已重启(登录状态会失效,重新登录即可)"; else err "服务没起来:xui-hub log"; fi
 }
 
@@ -332,7 +346,7 @@ set_tls() {
   env_set TLS_CERT_FILE "$cf"
   env_set TLS_KEY_FILE "$kf"
   if [ -n "$host" ]; then env_set PANEL_HOST "$host"; else env_unset PANEL_HOST; fi
-  systemctl restart "$SERVICE"
+  svc_restart
   if wait_up; then
     ok "xui-hub 已切到 HTTPS:$(panel_url)"
     is_domain "$host" && echo "  确认域名 $host 已解析到本机 $(public_ip)"
@@ -343,7 +357,7 @@ set_tls() {
   journalctl -u "$SERVICE" -n 10 --no-pager
   if [ -n "$old_cf" ]; then env_set TLS_CERT_FILE "$old_cf"; env_set TLS_KEY_FILE "$old_kf"; else env_unset TLS_CERT_FILE TLS_KEY_FILE; fi
   if [ -n "$old_host" ]; then env_set PANEL_HOST "$old_host"; else env_unset PANEL_HOST; fi
-  systemctl restart "$SERVICE"
+  svc_restart
   return 1
 }
 
@@ -530,7 +544,7 @@ ssl_set_paths() {
 ssl_disable() {
   need_root
   env_unset TLS_CERT_FILE TLS_KEY_FILE PANEL_HOST
-  systemctl restart "$SERVICE"
+  svc_restart
   ok "已关闭 HTTPS,后台地址 $(panel_url)"
 }
 
