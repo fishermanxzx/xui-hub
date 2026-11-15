@@ -144,6 +144,7 @@ docker compose pull && docker compose up -d
 | `LISTEN_ADDR` / `HOST_PORT` | `0.0.0.0` / `8788` | 监听地址和端口 |
 | `CHECK_INTERVAL_SEC` | `60` | 同步面板并执行额度 / 到期的间隔(秒) |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | 空 | 证书和私钥路径,两项都填即启用 HTTPS |
+| `PANEL_HOST` | 空 | 一键脚本显示后台地址用的域名或 IP,`xui-hub ssl` 设证书时自动写入;空则从证书里取 |
 | `SUB_BASE_URL` | 空 | 订阅链接的地址前缀,空则用打开后台时的地址 |
 | `MIHOMO_TEMPLATE` | 空 | Clash 订阅附加 Mihomo 基础配置:`all` 或逗号分隔的客户名 |
 | `SUB_LOG_DAYS` | `7` | 订阅拉取记录保留天数 |

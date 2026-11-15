@@ -19,6 +19,8 @@ Environment=SUBCONVERTER_URL=http://127.0.0.1:25500
 ExecStart=/bin/sh -c 'HOST="${LISTEN_ADDR:-0.0.0.0}" PORT="${HOST_PORT:-8788}" exec /usr/local/xui-hub/bin/node server/dist/index.js'
 Restart=always
 RestartSec=3
+# 服务不是 root,给它绑 1024 以下端口的能力(后台端口想用 443 的情况)
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

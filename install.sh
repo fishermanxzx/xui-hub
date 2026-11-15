@@ -76,32 +76,16 @@ env_set() {
   mv "$ENV_FILE.tmp" "$ENV_FILE"
 }
 
-public_ip() {
-  local u ip
-  for u in https://api4.ipify.org https://ipv4.icanhazip.com https://4.ident.me; do
-    ip="$(curl -4fsS --max-time 3 "$u" 2>/dev/null | tr -d '[:space:]')"
-    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "$ip"; return; fi
-  done
-  hostname -I 2>/dev/null | awk '{print $1}'
-}
-
-# 后台地址里的主机名:配了证书就用证书签给的名字(域名或 IP;通配符证书取它的主域名),按 IP 访问会报证书不符;没配证书用公网 IP
-cert_host() {
-  local f="$1" names
-  [ -f "$f" ] || return 1
-  names="$(openssl x509 -in "$f" -noout -text 2>/dev/null | sed -n '/Subject Alternative Name/{n;p;}' | tr ',' '\n' | sed -e 's/^ *//' -e 's/^DNS://' -e 's/^IP Address://' | grep -v '^\*\.' | sed -n 1p)"
-  [ -n "$names" ] && printf '%s\n' "$names"
-}
-panel_host() { cert_host "$(env_get TLS_CERT_FILE)" || public_ip; }
-
+# 放行失败只提醒、不算安装失败:这时服务已经在跑了,脚本要是在这里退出,后面的后台地址和随机密码就没人看到
 open_firewall() {
   local p="$1"
   # 管道里不用 grep -q:它匹配到就退出,上游被 SIGPIPE 打断,pipefail 下整条算失败(明明开着防火墙却判成没开)
   if command -v ufw >/dev/null && ufw status 2>/dev/null | grep '^Status: active' >/dev/null; then
-    ufw allow "$p"/tcp >/dev/null && say "ufw 已放行 $p/tcp"
+    if ufw allow "$p"/tcp >/dev/null; then say "ufw 已放行 $p/tcp"; else warn "ufw 放行 $p/tcp 失败,自己放行一下:ufw allow $p/tcp"; fi
   elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd -q --permanent --add-port="$p"/tcp && firewall-cmd -q --reload && say "firewalld 已放行 $p/tcp"
+    if firewall-cmd -q --permanent --add-port="$p"/tcp && firewall-cmd -q --reload; then say "firewalld 已放行 $p/tcp"; else warn "firewalld 放行 $p/tcp 失败,自己放行一下:firewall-cmd --permanent --add-port=$p/tcp && firewall-cmd --reload"; fi
   fi
+  return 0
 }
 
 install_xui_hub() {
@@ -174,22 +158,31 @@ install_xui_hub() {
   systemctl enable -q "$SERVICE"
   systemctl restart "$SERVICE"
 
-  local port i scheme=http
+  local port i scheme=http listen probe url
   port="$(env_get HOST_PORT)"; port="${port:-8788}"
   [ -n "$(env_get TLS_CERT_FILE)" ] && scheme=https
+  # 探活连服务实际监听的地址:LISTEN_ADDR 写了具体地址(内网 / 隧道网卡的 IP)时,127.0.0.1 上没人听
+  listen="$(env_get LISTEN_ADDR)"
+  case "$listen" in "" | 0.0.0.0 | ::) listen=127.0.0.1 ;; *:*) listen="[$listen]" ;; esac
+  probe="$scheme://$listen:$port/api/session"
   for i in $(seq 1 30); do
-    curl -fsSk -o /dev/null "$scheme://127.0.0.1:$port/api/session" 2>/dev/null && break
+    curl -fsSk -o /dev/null --max-time 3 "$probe" 2>/dev/null && break
     sleep 1
   done
-  if ! curl -fsSk -o /dev/null "$scheme://127.0.0.1:$port/api/session" 2>/dev/null; then
+  if ! curl -fsSk -o /dev/null --max-time 3 "$probe" 2>/dev/null; then
     journalctl -u "$SERVICE" -n 30 --no-pager || true
     die "服务没有在 30 秒内就绪,看上面的日志(xui-hub log)"
   fi
   open_firewall "$port"
 
+  # 后台地址问刚装好的管理脚本(证书签给哪个域名、只监听哪个地址,算法只在它那里有一份)。
+  # 指定装 0.10.5 及更早的版本时它还没有 address 子命令,就只给个样子
+  url="$(/usr/bin/xui-hub address 2>/dev/null)" || url=""
+  case "$url" in http://?* | https://?*) ;; *) url="$scheme://<服务器 IP>:$port" ;; esac
+
   echo
   echo -e "${green}xui-hub $tag 安装完成,正在运行${plain}"
-  echo -e "  后台地址:${green}$scheme://$(panel_host):$port${plain}"
+  echo -e "  后台地址:${green}$url${plain}"
   if [ -n "$NEW_PASSWORD" ]; then
     echo -e "  后台密码:${green}$NEW_PASSWORD${plain}   (已写入 $ENV_FILE)"
   else

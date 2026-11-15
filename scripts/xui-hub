@@ -39,6 +39,14 @@ env_set() {
   chown root:"$RUN_USER" "$ENV_FILE" 2>/dev/null
   chmod 640 "$ENV_FILE"
 }
+env_unset() {
+  local pat
+  pat="$(IFS='|'; echo "$*")"
+  { grep -vE "^($pat)=" "$ENV_FILE" 2>/dev/null || true; } >"$ENV_FILE.tmp"
+  mv "$ENV_FILE.tmp" "$ENV_FILE"
+  chown root:"$RUN_USER" "$ENV_FILE" 2>/dev/null
+  chmod 640 "$ENV_FILE"
+}
 confirm() {
   local yn
   read -r -p "$1 [y/N] " yn
@@ -49,16 +57,104 @@ check_install() { installed || { err "xui-hub 还没安装,先执行 xui-hub ins
 version() { cat "$DIR/VERSION" 2>/dev/null || echo 未知; }
 port() { local p; p="$(env_get HOST_PORT)"; echo "${p:-8788}"; }
 scheme() { [ -n "$(env_get TLS_CERT_FILE)" ] && echo https || echo http; }
-public_ip() { curl -4fsS --max-time 3 https://api4.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}'; }
-
-# 后台地址里的主机名:配了证书就用证书签给的名字(域名或 IP;通配符证书取它的主域名),按 IP 访问会报证书不符;没配证书用公网 IP
-cert_host() {
-  local f="$1" names
-  [ -f "$f" ] || return 1
-  names="$(openssl x509 -in "$f" -noout -text 2>/dev/null | sed -n '/Subject Alternative Name/{n;p;}' | tr ',' '\n' | sed -e 's/^ *//' -e 's/^DNS://' -e 's/^IP Address://' | grep -v '^\*\.' | sed -n 1p)"
-  [ -n "$names" ] && printf '%s\n' "$names"
+is_domain() { [[ "$1" =~ ^([A-Za-z0-9](-*[A-Za-z0-9])*\.)+[A-Za-z]{2,}$ ]]; }
+is_ipv4() { [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; }
+# 只监听某一个地址时返回它;没设或设成通配(所有网卡都听)返回空
+listen_addr() {
+  local a
+  a="$(env_get LISTEN_ADDR)"
+  case "$a" in 0.0.0.0 | ::) a="" ;; esac
+  printf '%s\n' "$a"
 }
-panel_host() { cert_host "$(env_get TLS_CERT_FILE)" || public_ip; }
+# 写进 URL 的主机名:IPv6 要加方括号
+url_host() { case "$1" in *:*) echo "[$1]" ;; *) echo "$1" ;; esac; }
+
+# 出口公网 IPv4,问不到就返回失败
+public_ipv4() {
+  local u ip
+  for u in https://api4.ipify.org https://ipv4.icanhazip.com https://4.ident.me; do
+    ip="$(curl -4fsS --max-time 3 "$u" 2>/dev/null | tr -d '[:space:]')"
+    if is_ipv4 "$ip"; then echo "$ip"; return 0; fi
+  done
+  return 1
+}
+public_ip() { public_ipv4 || hostname -I 2>/dev/null | awk '{print $1}'; }
+# 这个 IPv4 是不是本机的:网卡上有,或者就是出口公网 IP(公网 IP 问不到时不下结论,当它是)
+ip_is_local() {
+  local pub
+  hostname -I 2>/dev/null | tr ' ' '\n' | grep -Fx "$1" >/dev/null && return 0
+  pub="$(public_ipv4)" || return 0
+  [ "$pub" = "$1" ]
+}
+
+# ---- 后台地址 ----
+# 证书签给的名字(SAN),一行一个。只认域名和 IP,email / URI / DirName 这些不是访问地址
+cert_names() {
+  [ -f "$1" ] || return 1
+  openssl x509 -in "$1" -noout -ext subjectAltName 2>/dev/null |
+    awk -F, '{ for (i = 1; i <= NF; i++) { t = $i; sub(/^ +/, "", t); if (sub(/^DNS:/, "", t) || sub(/^IP Address:/, "", t)) print t } }'
+}
+# 证书是不是签给了这个名字(域名按通配符规则算)。看输出不看退出码:OpenSSL 1.1 不管符不符都返回 0
+cert_covers() {
+  local f="$1" h="$2" flag=-checkhost
+  [ -f "$f" ] && [ -n "$h" ] || return 1
+  case "$h" in *:*) flag=-checkip ;; esac
+  is_ipv4 "$h" && flag=-checkip
+  openssl x509 -in "$f" -noout "$flag" "$h" 2>/dev/null | grep 'does match' >/dev/null
+}
+# 这个名字能不能当后台地址:回环不行;IPv4 得是本机的(机器换过 IP 的话,旧 IP 证书里的地址已经连不到这里)
+host_usable() {
+  case "$1" in "" | localhost | 127.* | ::1 | 0:0:0:0:0:0:0:1) return 1 ;; esac
+  ! is_ipv4 "$1" || ip_is_local "$1"
+}
+# 从证书里挑一个能当地址的名字。通配符条目跳过:*.example.com 不含 example.com 本身,具体用哪个子域名猜不出来
+cert_host() {
+  local n
+  while read -r n; do
+    case "$n" in \*.*) continue ;; esac
+    if host_usable "$n"; then printf '%s\n' "$n"; return 0; fi
+  done < <(cert_names "$1")
+  return 1
+}
+# 后台地址里的主机名,依次取:
+#   PANEL_HOST(设证书时记下的访问域名 / IP;证书换了、不再签给它就不算)→ 从证书里挑 → 只监听某个地址时就是它 → 公网 IP
+panel_host() {
+  local cert h
+  cert="$(env_get TLS_CERT_FILE)"
+  h="$(env_get PANEL_HOST)"
+  if host_usable "$h" && { [ -z "$cert" ] || cert_covers "$cert" "$h"; }; then printf '%s\n' "$h"; return; fi
+  if [ -n "$cert" ] && cert_host "$cert"; then return; fi
+  h="$(listen_addr)"
+  if [ -n "$h" ]; then printf '%s\n' "$h"; return; fi
+  public_ip
+}
+panel_url() {
+  local h
+  h="$(panel_host)"
+  echo "$(scheme)://$(url_host "${h:-<服务器 IP>}"):$(port)"
+}
+# 开了 HTTPS、但证书不是签给上面那个地址的(通配符证书、换过 IP 的 IP 证书):浏览器会报证书不符,说清楚怎么办
+cert_mismatch_hint() {
+  local cert h
+  cert="$(env_get TLS_CERT_FILE)"
+  [ -n "$cert" ] || return 0
+  h="$(panel_host)"
+  cert_covers "$cert" "$h" && return 0
+  warn "  证书没有签给 $h(证书里的名字:$(cert_names "$cert" | paste -sd' ' -)),按这个地址打开浏览器会报证书不符"
+  warn "  要用证书里的域名访问,在 $ENV_FILE 里加一行 PANEL_HOST=<域名>;机器换了 IP 就重新申请:xui-hub ssl ip"
+}
+
+# 重启后等服务真的能应答。systemctl restart 对 Type=simple 的服务总是成功,端口绑不上、证书读不到都是进程起来之后才崩;
+# 连的是服务实际监听的地址(LISTEN_ADDR 写了具体地址时,127.0.0.1 上没人听)
+wait_up() {
+  local a i
+  a="$(listen_addr)"
+  for ((i = 0; i < 15; i++)); do
+    curl -fsSk -o /dev/null --max-time 3 "$(scheme)://$(url_host "${a:-127.0.0.1}"):$(port)/api/session" 2>/dev/null && return 0
+    sleep 1
+  done
+  return 1
+}
 
 run_installer() {
   need_root
@@ -106,30 +202,47 @@ password() {
 open_firewall() {
   local p="$1"
   if command -v ufw >/dev/null && ufw status 2>/dev/null | grep '^Status: active' >/dev/null; then
-    ufw allow "$p"/tcp >/dev/null && ok "ufw 已放行 $p/tcp"
+    if ufw allow "$p"/tcp >/dev/null; then ok "ufw 已放行 $p/tcp"; else warn "ufw 放行 $p/tcp 失败,自己放行一下:ufw allow $p/tcp"; fi
   elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
-    firewall-cmd -q --permanent --add-port="$p"/tcp && firewall-cmd -q --reload && ok "firewalld 已放行 $p/tcp"
+    if firewall-cmd -q --permanent --add-port="$p"/tcp && firewall-cmd -q --reload; then ok "firewalld 已放行 $p/tcp"; else warn "firewalld 放行 $p/tcp 失败,自己放行一下:firewall-cmd --permanent --add-port=$p/tcp && firewall-cmd --reload"; fi
   fi
+  return 0
 }
 
 set_port() {
   need_root; check_install || return 1
-  local p
-  read -r -p "新的后台端口 [$(port)]:" p
-  p="${p:-$(port)}"
+  local p old
+  old="$(port)"
+  read -r -p "新的后台端口 [$old]:" p
+  p="${p:-$old}"
   [[ "$p" =~ ^[0-9]+$ ]] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ] || { err "端口不合法"; return 1; }
+  [ "$p" != "$old" ] || { echo "端口没变,还是 $old"; return 0; }
+  port_in_use "$p" && { err "端口 $p 已经被别的程序占用(ss -ltnp 看是谁),换一个"; return 1; }
   env_set HOST_PORT "$p"
   systemctl restart "$SERVICE"
+  if ! wait_up; then
+    err "换到 $p 端口后 xui-hub 没起来,已改回 $old。日志:"
+    journalctl -u "$SERVICE" -n 10 --no-pager
+    env_set HOST_PORT "$old"
+    systemctl restart "$SERVICE"
+    return 1
+  fi
   open_firewall "$p"
-  ok "端口已改为 $p,后台地址 $(scheme)://$(panel_host):$p(云服务器记得放行安全组)"
+  ok "端口已改为 $p,后台地址 $(panel_url)(云服务器记得放行安全组)"
 }
 
 settings() {
-  check_install || return 1
+  need_root; check_install || return 1
+  local la
   echo "版本:$(version)"
-  echo "后台地址:$(scheme)://$(panel_host):$(port)"
+  echo "后台地址:$(panel_url)"
+  cert_mismatch_hint
   if [ -n "$(env_get TLS_CERT_FILE)" ]; then echo "HTTPS 证书:$(env_get TLS_CERT_FILE)($(cert_summary "$(env_get TLS_CERT_FILE)"))"; else echo "HTTPS:未开启(xui-hub ssl 可申请证书)"; fi
-  echo "监听地址:$(env_get LISTEN_ADDR | grep . || echo 0.0.0.0)"
+  la="$(listen_addr)"
+  case "$la" in
+    127.* | ::1 | localhost) echo "监听地址:$la(只听本机,外面要经反向代理访问)" ;;
+    *) echo "监听地址:${la:-0.0.0.0}" ;;
+  esac
   echo "程序目录:$DIR"
   echo "数据目录:$ETC(hub.db、.env)"
   echo "配置文件:$ENV_FILE"
@@ -163,14 +276,11 @@ restore() {
   [ -f "$ETC/hub.db" ] && mv "$ETC/hub.db" "$ETC/hub.db.bak-$(date +%Y%m%d-%H%M%S)"
   rm -f "$ETC/hub.db-wal" "$ETC/hub.db-shm"
   cp "$file" "$ETC/hub.db"; chown "$RUN_USER:$RUN_USER" "$ETC/hub.db"; chmod 600 "$ETC/hub.db"
-  systemctl start "$SERVICE"; sleep 2
-  if systemctl is-active -q "$SERVICE"; then ok "已恢复,服务已重启(登录状态会失效,重新登录即可)"; else err "服务没起来:xui-hub log"; fi
+  systemctl start "$SERVICE"
+  if wait_up; then ok "已恢复,服务已重启(登录状态会失效,重新登录即可)"; else err "服务没起来:xui-hub log"; fi
 }
 
 # ======================= SSL 证书(照 x-ui 的做法:acme.sh + Let's Encrypt) =======================
-is_domain() { [[ "$1" =~ ^([A-Za-z0-9](-*[A-Za-z0-9])*\.)+[A-Za-z]{2,}$ ]]; }
-is_ipv4() { [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; }
-
 cert_summary() {
   local f="$1" issuer end
   [ -f "$f" ] || { echo "文件不存在"; return; }
@@ -214,19 +324,45 @@ install_cert_files() {
   echo "$dir"
 }
 
-# 把证书设给 xui-hub:写 .env 并重启
-use_cert() {
-  local dir="$1" host="$2"
-  env_set TLS_CERT_FILE "$dir/fullchain.pem"
-  env_set TLS_KEY_FILE "$dir/privkey.pem"
+# 把一对证书文件设给 xui-hub:写 .env(连同访问用的域名 / IP,之后显示后台地址就用它)并重启;
+# 起不来就改回原来的设置,不留下一个打不开的后台
+set_tls() {
+  local cf="$1" kf="$2" host="$3" old_cf old_kf old_host
+  old_cf="$(env_get TLS_CERT_FILE)"; old_kf="$(env_get TLS_KEY_FILE)"; old_host="$(env_get PANEL_HOST)"
+  env_set TLS_CERT_FILE "$cf"
+  env_set TLS_KEY_FILE "$kf"
+  if [ -n "$host" ]; then env_set PANEL_HOST "$host"; else env_unset PANEL_HOST; fi
   systemctl restart "$SERVICE"
-  sleep 2
-  if systemctl is-active -q "$SERVICE"; then
-    ok "xui-hub 已切到 HTTPS:https://$host:$(port)"
-    [ "$host" != "$(public_ip)" ] && echo "  确认域名 $host 已解析到本机 $(public_ip)"
-  else
-    err "xui-hub 没起来,看日志:xui-hub log"; journalctl -u "$SERVICE" -n 10 --no-pager
+  if wait_up; then
+    ok "xui-hub 已切到 HTTPS:$(panel_url)"
+    is_domain "$host" && echo "  确认域名 $host 已解析到本机 $(public_ip)"
+    cert_mismatch_hint
+    return 0
   fi
+  err "换上这张证书后 xui-hub 没起来,已改回原来的设置。日志:"
+  journalctl -u "$SERVICE" -n 10 --no-pager
+  if [ -n "$old_cf" ]; then env_set TLS_CERT_FILE "$old_cf"; env_set TLS_KEY_FILE "$old_kf"; else env_unset TLS_CERT_FILE TLS_KEY_FILE; fi
+  if [ -n "$old_host" ]; then env_set PANEL_HOST "$old_host"; else env_unset PANEL_HOST; fi
+  systemctl restart "$SERVICE"
+  return 1
+}
+
+# 用 $CERT_DIR 下的一张证书。没给访问地址就从证书里取(目录名不一定是域名,IP 证书的目录叫 ip)
+use_cert() {
+  local dir="$1" host="${2:-}"
+  [ -n "$host" ] || host="$(cert_host "$dir/fullchain.pem")"
+  set_tls "$dir/fullchain.pem" "$dir/privkey.pem" "$host"
+}
+
+# 服务看不看得到这个路径:单元开了 ProtectHome / PrivateTmp,/root、/home、/tmp 下的文件对它不存在,改权限也没用
+hidden_from_service() {
+  local real
+  real="$(readlink -f "$1" 2>/dev/null)"
+  case "${real:-$1}" in
+    /root/* | /home/* | /run/user/*) [ "$(systemctl show "$SERVICE" -p ProtectHome 2>/dev/null)" != ProtectHome=no ] ;;
+    /tmp/* | /var/tmp/*) [ "$(systemctl show "$SERVICE" -p PrivateTmp 2>/dev/null)" != PrivateTmp=no ] ;;
+    *) return 1 ;;
+  esac
 }
 
 ask_use_cert() {
@@ -360,27 +496,42 @@ ssl_set_paths() {
   need_root
   echo "  1. 用 $CERT_DIR 下已有的证书"
   echo "  2. 自定义证书文件路径(如 certbot 的 /etc/letsencrypt/live/...)"
-  local c cf kf name
+  local c cf kf name f host guess
   read -r -p "选择:" c
   if [ "$c" = 2 ]; then
     read -r -p "证书(fullchain)路径:" cf; read -r -p "私钥路径:" kf
     [ -f "$cf" ] && [ -f "$kf" ] || { err "文件不存在"; return 1; }
+    # 读不到就不往下设:设上去服务起不来
+    for f in "$cf" "$kf"; do
+      if hidden_from_service "$f"; then
+        err "$f 在服务看不到的目录里:systemd 把 /root、/home、/tmp 对 xui-hub 隔离了,改权限也读不到"
+        err "把证书和私钥放到别处(比如 /etc/ssl/ 下)再来设"
+        return 1
+      fi
+    done
     # 最小化安装的系统不一定有 sudo,用 runuser(util-linux 自带)
-    runuser -u "$RUN_USER" -- test -r "$cf" -a -r "$kf" 2>/dev/null || warn "注意:服务用户 $RUN_USER 读不到这两个文件,起不来的话给它读权限(chgrp $RUN_USER 并 chmod 640)"
-    env_set TLS_CERT_FILE "$cf"; env_set TLS_KEY_FILE "$kf"; systemctl restart "$SERVICE"; sleep 2
-    if systemctl is-active -q "$SERVICE"; then ok "已切到 HTTPS:https://$(panel_host):$(port)"; else err "xui-hub 没起来:xui-hub log"; fi
+    if command -v runuser >/dev/null && ! runuser -u "$RUN_USER" -- test -r "$cf" -a -r "$kf" 2>/dev/null; then
+      err "服务用户 $RUN_USER 读不到这两个文件。先给它读权限(文件 chgrp $RUN_USER 并 chmod 640,上层目录也要它进得去)再来设"
+      return 1
+    fi
+    # 访问用的域名问清楚:一张证书可以签给好几个名字,通配符证书更是猜不出用哪个子域名
+    guess="$(cert_host "$cf")"
+    read -r -p "访问后台用的域名或 IP${guess:+ [$guess]}:" host
+    host="${host:-$guess}"
+    [ -n "$host" ] || { err "要填一个证书签给的域名或 IP,证书里的名字:$(cert_names "$cf" | paste -sd' ' -)"; return 1; }
+    cert_covers "$cf" "$host" || { err "这张证书没有签给「$host」,证书里的名字:$(cert_names "$cf" | paste -sd' ' -)"; return 1; }
+    set_tls "$cf" "$kf" "$host"
     return
   fi
   name="$(pick_cert_name)" || return 1
-  use_cert "$CERT_DIR/$name" "$name"
+  use_cert "$CERT_DIR/$name"
 }
 
 ssl_disable() {
   need_root
-  { grep -vE '^TLS_(CERT|KEY)_FILE=' "$ENV_FILE" || true; } >"$ENV_FILE.tmp"
-  mv "$ENV_FILE.tmp" "$ENV_FILE"; chown root:"$RUN_USER" "$ENV_FILE" 2>/dev/null; chmod 640 "$ENV_FILE"
+  env_unset TLS_CERT_FILE TLS_KEY_FILE PANEL_HOST
   systemctl restart "$SERVICE"
-  ok "已关闭 HTTPS,后台地址 http://$(public_ip):$(port)"
+  ok "已关闭 HTTPS,后台地址 $(panel_url)"
 }
 
 ssl_menu() {
@@ -434,6 +585,8 @@ show_status() {
 }
 
 show_menu() {
+  # 菜单里的操作几乎都要 root,而且不是 root 连 .env 都读不到,显示的端口 / 状态会是错的
+  need_root
   echo -e "
 ╔══════════════════════════════════════════╗
 ║  ${green}xui-hub 管理脚本${plain}                         ║
@@ -488,6 +641,8 @@ case "${1:-}" in
   password) password ;;
   port) set_port ;;
   settings) settings ;;
+  # 只打印后台地址。install.sh 装完后靠它显示地址,算法只留这一份(install.sh 永远是 main 上的,这个脚本跟着发布包走)
+  address) need_root; panel_url ;;
   ssl) shift; ssl_cmd "$@" ;;
   backup) backup "${2:-}" ;;
   restore) restore "${2:-}" ;;
