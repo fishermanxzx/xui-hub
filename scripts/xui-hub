@@ -51,6 +51,15 @@ port() { local p; p="$(env_get HOST_PORT)"; echo "${p:-8788}"; }
 scheme() { [ -n "$(env_get TLS_CERT_FILE)" ] && echo https || echo http; }
 public_ip() { curl -4fsS --max-time 3 https://api4.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}'; }
 
+# 后台地址里的主机名:配了证书就用证书签给的名字(域名或 IP;通配符证书取它的主域名),按 IP 访问会报证书不符;没配证书用公网 IP
+cert_host() {
+  local f="$1" names
+  [ -f "$f" ] || return 1
+  names="$(openssl x509 -in "$f" -noout -text 2>/dev/null | sed -n '/Subject Alternative Name/{n;p;}' | tr ',' '\n' | sed -e 's/^ *//' -e 's/^DNS://' -e 's/^IP Address://' | grep -v '^\*\.' | sed -n 1p)"
+  [ -n "$names" ] && printf '%s\n' "$names"
+}
+panel_host() { cert_host "$(env_get TLS_CERT_FILE)" || public_ip; }
+
 run_installer() {
   need_root
   local tmp
@@ -112,13 +121,13 @@ set_port() {
   env_set HOST_PORT "$p"
   systemctl restart "$SERVICE"
   open_firewall "$p"
-  ok "端口已改为 $p,后台地址 $(scheme)://$(public_ip):$p(云服务器记得放行安全组)"
+  ok "端口已改为 $p,后台地址 $(scheme)://$(panel_host):$p(云服务器记得放行安全组)"
 }
 
 settings() {
   check_install || return 1
   echo "版本:$(version)"
-  echo "后台地址:$(scheme)://$(public_ip):$(port)"
+  echo "后台地址:$(scheme)://$(panel_host):$(port)"
   if [ -n "$(env_get TLS_CERT_FILE)" ]; then echo "HTTPS 证书:$(env_get TLS_CERT_FILE)($(cert_summary "$(env_get TLS_CERT_FILE)"))"; else echo "HTTPS:未开启(xui-hub ssl 可申请证书)"; fi
   echo "监听地址:$(env_get LISTEN_ADDR | grep . || echo 0.0.0.0)"
   echo "程序目录:$DIR"
@@ -359,7 +368,7 @@ ssl_set_paths() {
     # 最小化安装的系统不一定有 sudo,用 runuser(util-linux 自带)
     runuser -u "$RUN_USER" -- test -r "$cf" -a -r "$kf" 2>/dev/null || warn "注意:服务用户 $RUN_USER 读不到这两个文件,起不来的话给它读权限(chgrp $RUN_USER 并 chmod 640)"
     env_set TLS_CERT_FILE "$cf"; env_set TLS_KEY_FILE "$kf"; systemctl restart "$SERVICE"; sleep 2
-    if systemctl is-active -q "$SERVICE"; then ok "已切到 HTTPS:https://$(public_ip):$(port)"; else err "xui-hub 没起来:xui-hub log"; fi
+    if systemctl is-active -q "$SERVICE"; then ok "已切到 HTTPS:https://$(panel_host):$(port)"; else err "xui-hub 没起来:xui-hub log"; fi
     return
   fi
   name="$(pick_cert_name)" || return 1

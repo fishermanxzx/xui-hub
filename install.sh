@@ -85,6 +85,15 @@ public_ip() {
   hostname -I 2>/dev/null | awk '{print $1}'
 }
 
+# 后台地址里的主机名:配了证书就用证书签给的名字(域名或 IP;通配符证书取它的主域名),按 IP 访问会报证书不符;没配证书用公网 IP
+cert_host() {
+  local f="$1" names
+  [ -f "$f" ] || return 1
+  names="$(openssl x509 -in "$f" -noout -text 2>/dev/null | sed -n '/Subject Alternative Name/{n;p;}' | tr ',' '\n' | sed -e 's/^ *//' -e 's/^DNS://' -e 's/^IP Address://' | grep -v '^\*\.' | sed -n 1p)"
+  [ -n "$names" ] && printf '%s\n' "$names"
+}
+panel_host() { cert_host "$(env_get TLS_CERT_FILE)" || public_ip; }
+
 open_firewall() {
   local p="$1"
   # 管道里不用 grep -q:它匹配到就退出,上游被 SIGPIPE 打断,pipefail 下整条算失败(明明开着防火墙却判成没开)
@@ -180,7 +189,7 @@ install_xui_hub() {
 
   echo
   echo -e "${green}xui-hub $tag 安装完成,正在运行${plain}"
-  echo -e "  后台地址:${green}$scheme://$(public_ip):$port${plain}"
+  echo -e "  后台地址:${green}$scheme://$(panel_host):$port${plain}"
   if [ -n "$NEW_PASSWORD" ]; then
     echo -e "  后台密码:${green}$NEW_PASSWORD${plain}   (已写入 $ENV_FILE)"
   else
