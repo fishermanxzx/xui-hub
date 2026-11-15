@@ -238,6 +238,15 @@ export interface ApiToken {
   token?: string;
 }
 
+/** 经 OAuth 授权过的 MCP 应用 */
+export interface OAuthGrant {
+  id: number;
+  client_id: string;
+  client_name: string;
+  created_at: number;
+  last_used_at: number | null;
+}
+
 export interface BackupInfo {
   version: number;
   panels: number;

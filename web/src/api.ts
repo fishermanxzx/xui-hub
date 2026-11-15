@@ -1,4 +1,4 @@
-import type { ApiToken, BackupInfo, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus } from './types';
+import type { ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus } from './types';
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -82,6 +82,9 @@ export const api = {
   tokens: () => call<ApiToken[]>('GET', '/api/tokens'),
   createToken: (name: string) => call<ApiToken>('POST', '/api/tokens', { name }),
   deleteToken: (id: number) => call('DELETE', `/api/tokens/${id}`),
+  oauthGrants: () => call<OAuthGrant[]>('GET', '/api/oauth-grants'),
+  /** 撤销一个 MCP 应用的授权,它手里的令牌立即失效 */
+  revokeGrant: (id: number) => call('DELETE', `/api/oauth-grants/${id}`),
   /** 下载备份直接用这个地址 */
   backupUrl: '/api/backup',
   /** 上传一份 hub.db 整个换掉;成功后服务会重启 */

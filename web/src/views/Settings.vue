@@ -5,7 +5,7 @@ import { api } from '../api';
 import { toast, toastError } from '../toast';
 import { copyText } from '../clipboard';
 import { fmtAgo } from '../format';
-import type { ApiToken, Settings } from '../types';
+import type { ApiToken, OAuthGrant, Settings } from '../types';
 
 const s = ref<Settings | null>(null);
 const saving = ref(false);
@@ -84,6 +84,29 @@ async function test() {
     toastError(e);
   } finally {
     testing.value = false;
+  }
+}
+
+// ---------- MCP ----------
+const mcpUrl = `${origin}/mcp`;
+const grants = ref<OAuthGrant[]>([]);
+
+async function loadGrants() {
+  try {
+    grants.value = await api.oauthGrants();
+  } catch (e) {
+    toastError(e);
+  }
+}
+onMounted(loadGrants);
+
+async function revoke(g: OAuthGrant) {
+  if (!confirm(`撤销「${g.client_name}」的授权?它会立刻连不上,要用得重新授权。`)) return;
+  try {
+    await api.revokeGrant(g.id);
+    await loadGrants();
+  } catch (e) {
+    toastError(e);
   }
 }
 
@@ -185,6 +208,31 @@ async function restore() {
     </section>
 
     <section class="sheet block">
+      <h3>MCP</h3>
+      <p class="muted small">让 Claude、Cursor 这类 AI 客户端直接管理这里的客户和线路(查客户、建客户、续期、开线路、看设备等;改不了这页的设置)。在客户端里添加下面这个地址,两种方式任选:</p>
+      <div class="row">
+        <input readonly :value="mcpUrl" class="grow mono" aria-label="MCP 地址" @focus="($event.target as HTMLInputElement).select()" />
+        <button type="button" @click="copyText(mcpUrl, 'MCP 地址已复制')">复制</button>
+      </div>
+      <ul class="ways small">
+        <li><strong>OAuth 授权</strong>:只填地址,客户端会打开一个授权页,输入后台密码点「允许」即可。授权过的应用列在下面,随时可以撤销。客户端在外网(如 claude.ai)时,这个地址要能从公网用 HTTPS 访问。</li>
+        <li><strong>API 令牌</strong>:在上面「开放 API」生成一个令牌,客户端里把它配成请求头 <code>Authorization: Bearer 令牌</code>。例如 Claude Code:<code>claude mcp add --transport http xui-hub {{ mcpUrl }} --header "Authorization: Bearer xh_…"</code></li>
+      </ul>
+      <table v-if="grants.length" class="tokens">
+        <thead><tr><th>已授权的应用</th><th>授权时间</th><th>上次使用</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="g in grants" :key="g.id">
+            <td :title="g.client_id">{{ g.client_name }}</td>
+            <td class="muted small">{{ fmtAgo(g.created_at) }}</td>
+            <td class="muted small">{{ g.last_used_at ? fmtAgo(g.last_used_at) : '还没用过' }}</td>
+            <td><button type="button" class="link danger" @click="revoke(g)">撤销</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="muted small">还没有应用通过 OAuth 授权。</p>
+    </section>
+
+    <section class="sheet block">
       <h3>备份与恢复</h3>
       <p class="muted small">整个后台的数据(面板、客户、线路、订阅链接、设置)都在一个数据库文件里;面板上的客户端不在里面,它们本来就在面板上。</p>
       <div class="row actions">
@@ -266,6 +314,19 @@ code {
 }
 .btn:hover {
   background: var(--hover);
+}
+.ways {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ways code {
+  word-break: break-all;
+}
+.block > .row {
+  gap: 8px;
 }
 .grow {
   flex: 1;

@@ -163,6 +163,30 @@ export const MIGRATIONS: string[] = [
     UNIQUE (customer_id, key)
   );
   `,
+  `
+  -- MCP 的 OAuth:动态注册的客户端;用户授权过的应用(每次授权一条,带当前的刷新令牌);访问令牌。令牌只存 SHA-256
+  CREATE TABLE oauth_clients (
+    client_id     TEXT PRIMARY KEY,
+    client_name   TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,
+    created_at    INTEGER NOT NULL
+  );
+  CREATE TABLE oauth_grants (
+    id                 INTEGER PRIMARY KEY,
+    client_id          TEXT NOT NULL,
+    client_name        TEXT NOT NULL,
+    created_at         INTEGER NOT NULL,
+    last_used_at       INTEGER,
+    refresh_hash       TEXT,
+    refresh_expires_at INTEGER
+  );
+  CREATE INDEX oauth_grants_refresh ON oauth_grants(refresh_hash);
+  CREATE TABLE oauth_access (
+    hash       TEXT PRIMARY KEY,
+    grant_id   INTEGER NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL
+  );
+  `,
 ];
 
 export function openDb(file: string): DB {

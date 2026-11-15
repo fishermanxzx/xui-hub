@@ -48,4 +48,4 @@ export function verifyToken(db: DB, header: string | undefined, now = Date.now()
 }
 
 /** 令牌碰不了的接口:设置(里面有 Telegram token)、备份恢复(整库)、令牌管理 */
-export const TOKEN_BLOCKED = /^\/(settings|backup|restore|tokens)(\/|$)/;
+export const TOKEN_BLOCKED = /^\/(settings|backup|restore|tokens|oauth-grants)(\/|$)/;

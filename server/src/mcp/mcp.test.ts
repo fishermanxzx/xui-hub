@@ -1,0 +1,241 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { test } from 'node:test';
+import express from 'express';
+import type { AddressInfo } from 'node:net';
+import type { DB } from '../db';
+import { apiRouter } from '../http/routes';
+import { createToken } from '../http/tokens';
+import { addPanel, fakePanels, memoryDb, vlessInbound, type FakePanel } from '../testUtil';
+import { listGrants, oauthRouter, pkceMatches, redirectAllowed, revokeGrant, validRedirectUri, type DocFetcher } from './oauth';
+import { mcpRouter } from './server';
+import type { ApiCall } from './tools';
+
+async function serve(db: DB, data: Record<string, FakePanel> = {}, adminPassword = 'pw', fetchClientDoc?: DocFetcher) {
+  const app = express();
+  let base = '';
+  const api: ApiCall = async (method, path, body) => {
+    const res = await fetch(`${base}/internal/api${path}`, { method, headers: body === undefined ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  };
+  app.use(oauthRouter({ db, adminPassword, fetchClientDoc }));
+  app.use(mcpRouter({ db, adminPassword, api, version: '1.2.3' }));
+  app.use('/internal/api', express.json(), apiRouter({ db, adminPassword: '', clientFor: fakePanels(data), subBaseUrl: '', subLogDays: 7 }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  /** 握手协议的请求 */
+  const rpc = async (auth: string | null, method: string, params?: unknown, headers: Record<string, string> = {}, id: number | null = 1) => {
+    const res = await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...headers },
+      body: JSON.stringify({ jsonrpc: '2.0', ...(id === null ? {} : { id }), method, ...(params === undefined ? {} : { params }) }),
+    });
+    const text = await res.text();
+    return { status: res.status, headers: res.headers, body: text ? JSON.parse(text) : null };
+  };
+  /** 2026-07-28 的请求:版本放 _meta,带 Mcp-* 头 */
+  const modern = (auth: string, method: string, params: any = {}, headerOver: Record<string, string> = {}) =>
+    rpc(auth, method, { ...params, _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} } }, { 'MCP-Protocol-Version': '2026-07-28', 'Mcp-Method': method, ...(params.name ? { 'Mcp-Name': params.name } : {}), ...headerOver });
+  return { base, rpc, modern, close: () => new Promise((r) => server.close(r)) };
+}
+
+const panel = (): FakePanel => ({ inbounds: [vlessInbound(7, 443)], clients: [], xray: {}, restarts: 0 });
+const toolJson = (r: any) => JSON.parse(r.body.result.content[0].text);
+
+test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路续期;没带 / 带错令牌 401 并指向 OAuth 元数据', async () => {
+  const db = memoryDb();
+  addPanel(db, 'p1');
+  const data = { p1: panel() };
+  const token = createToken(db, { name: 'mcp' }).token;
+  const { base, rpc, close } = await serve(db, data);
+  try {
+    const anon = await rpc(null, 'initialize', {});
+    assert.equal(anon.status, 401);
+    assert.equal(anon.headers.get('www-authenticate'), `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource/mcp", scope="mcp"`);
+    const wrong = await rpc('xh_nope', 'tools/list');
+    assert.deepEqual([wrong.status, /error="invalid_token"/.test(wrong.headers.get('www-authenticate') ?? '')], [401, true]);
+    assert.equal((await fetch(`${base}/mcp`, { headers: { Authorization: `Bearer ${token}` } })).status, 405);
+
+    const init = await rpc(token, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+    assert.deepEqual([init.status, init.body.result.protocolVersion, init.body.result.serverInfo.name, init.body.result.capabilities], [200, '2025-06-18', 'xui-hub', { tools: {} }]);
+    assert.equal(init.headers.get('mcp-session-id'), null);
+    assert.equal((await rpc(token, 'initialize', { protocolVersion: '1999-01-01' })).body.result.protocolVersion, '2025-11-25');
+    assert.deepEqual([(await rpc(token, 'notifications/initialized', undefined, {}, null)).status, (await rpc(token, 'ping')).body.result], [202, {}]);
+
+    const tools = (await rpc(token, 'tools/list', {}, { 'MCP-Protocol-Version': '2025-06-18' })).body.result.tools;
+    assert.ok(tools.length >= 15);
+    assert.ok(tools.every((t: any) => t.name && t.description && t.inputSchema.type === 'object'));
+    assert.deepEqual(tools.find((t: any) => t.name === 'list_customers').annotations, { readOnlyHint: true });
+
+    const call = (name: string, args: unknown = {}) => rpc(token, 'tools/call', { name, arguments: args });
+    assert.deepEqual(toolJson(await call('list_panels')).map((p: any) => [p.id, p.name]), [[1, 'p1']]);
+    const c = toolJson(await call('create_customer', { name: '小王', quota_gb: 100, expire_in_days: 30 }));
+    assert.deepEqual([c.name, c.quota_gb, c.state], ['小王', 100, 'active']);
+    assert.match(c.sub_url, new RegExp(`^${base}/sub/[\\w-]+$`));
+    const line = toolJson(await call('open_line', { customer_id: c.id, kind: 'direct', panel_id: 1 }));
+    assert.deepEqual([line.email, line.links.length, data.p1.clients.map((x) => x.email)], ['小王', 1, ['小王']]);
+    const renewed = toolJson(await call('renew_customer', { customer_id: c.id, days: 30 }));
+    assert.ok(Math.abs(Date.parse(renewed.expire_at) - Date.parse(c.expire_at) - 30 * 86_400_000) < 1000);
+    assert.equal(toolJson(await call('update_customer', { customer_id: c.id, limit_devices: 2, expire_at: '' })).expire_at, null);
+    assert.deepEqual(toolJson(await call('list_devices', { customer_id: c.id })), { devices: [], recent_fetches: [] });
+
+    // 业务上的失败放在结果里;不认识的工具 / 方法是协议错误
+    const bad = await call('open_line', { customer_id: c.id, kind: 'relay', panel_id: 1 });
+    assert.deepEqual([bad.body.result.isError, /出口/.test(bad.body.result.content[0].text)], [true, true]);
+    assert.equal((await call('renew_customer', { customer_id: 999, days: 1 })).body.result.isError, true);
+    assert.equal((await call('nope')).body.error.code, -32602);
+    assert.equal((await rpc(token, 'resources/list')).body.error.code, -32601);
+
+    assert.equal(toolJson(await call('delete_customer', { customer_id: c.id })).deleted, true);
+    assert.deepEqual(data.p1.clients, []);
+  } finally {
+    await close();
+  }
+});
+
+test('MCP 2026-07-28(无握手):server/discover、工具调用带 resultType;版本不支持、头和正文对不上、未知方法各有各的错', async () => {
+  const db = memoryDb();
+  const token = createToken(db, { name: 'mcp' }).token;
+  const { rpc, modern, close } = await serve(db);
+  try {
+    const d = await modern(token, 'server/discover');
+    assert.deepEqual([d.status, d.body.result.resultType, d.body.result.supportedVersions[0], d.body.result.capabilities], [200, 'complete', '2026-07-28', { tools: {} }]);
+    assert.deepEqual(d.body.result._meta['io.modelcontextprotocol/serverInfo'], { name: 'xui-hub', title: 'xui-hub', version: '1.2.3' });
+    const list = (await modern(token, 'tools/list')).body.result;
+    assert.deepEqual([list.resultType, list.cacheScope, typeof list.ttlMs, list.tools.length > 10], ['complete', 'public', 'number', true]);
+    const called = await modern(token, 'tools/call', { name: 'list_customers', arguments: {} });
+    assert.deepEqual([called.status, called.body.result.resultType, called.body.result.isError, toolJson(called)], [200, 'complete', false, []]);
+
+    const meta = (v: string) => ({ _meta: { 'io.modelcontextprotocol/protocolVersion': v } });
+    const old = await rpc(token, 'tools/list', meta('2030-01-01'), { 'MCP-Protocol-Version': '2030-01-01', 'Mcp-Method': 'tools/list' });
+    assert.deepEqual([old.status, old.body.error.code, old.body.error.data.requested, old.body.error.data.supported.includes('2026-07-28')], [400, -32022, '2030-01-01', true]);
+    const noHeader = await rpc(token, 'tools/list', meta('2026-07-28'));
+    assert.deepEqual([noHeader.status, noHeader.body.error.code], [400, -32020]);
+    const wrongMethod = await modern(token, 'tools/list', {}, { 'Mcp-Method': 'tools/call' });
+    assert.deepEqual([wrongMethod.status, wrongMethod.body.error.code], [400, -32020]);
+    const wrongName = await modern(token, 'tools/call', { name: 'list_customers' }, { 'Mcp-Name': 'delete_customer' });
+    assert.deepEqual([wrongName.status, wrongName.body.error.code], [400, -32020]);
+    const b64 = await modern(token, 'tools/call', { name: 'list_customers' }, { 'Mcp-Name': `=?base64?${Buffer.from('list_customers').toString('base64')}?=` });
+    assert.equal(b64.status, 200);
+    const unknown = await modern(token, 'ping');
+    assert.deepEqual([unknown.status, unknown.body.error.code], [404, -32601]);
+  } finally {
+    await close();
+  }
+});
+
+test('OAuth:发现文档、动态注册、授权页要后台密码、PKCE 换令牌、刷新轮换、撤销;各种不对的请求都被拒', async () => {
+  const db = memoryDb();
+  const { base, rpc, close } = await serve(db);
+  const form = (path: string, body: Record<string, string>) => fetch(base + path, { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body) });
+  try {
+    const prm = await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json();
+    assert.deepEqual([prm.resource, prm.authorization_servers], [`${base}/mcp`, [base]]);
+    const as = await (await fetch(`${base}/.well-known/oauth-authorization-server`)).json();
+    assert.deepEqual([as.issuer, as.code_challenge_methods_supported, as.token_endpoint_auth_methods_supported, as.client_id_metadata_document_supported], [base, ['S256'], ['none'], true]);
+
+    const reg = await fetch(as.registration_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_name: 'Claude', redirect_uris: ['http://127.0.0.1:3000/callback'], application_type: 'native' }) });
+    const client = await reg.json();
+    assert.deepEqual([reg.status, client.token_endpoint_auth_method, 'client_secret' in client], [201, 'none', false]);
+    assert.equal((await fetch(as.registration_endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: ['javascript:alert(1)'] }) })).status, 400);
+
+    const verifier = 'v'.repeat(50);
+    const challenge = createHash('sha256').update(verifier).digest('base64url');
+    // 桌面客户端回调的端口每次不一样
+    const redirect_uri = 'http://127.0.0.1:51234/callback';
+    const params = { client_id: client.client_id, redirect_uri, response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256', state: 'st', scope: 'mcp', resource: `${base}/mcp` };
+    const page = await fetch(`${as.authorization_endpoint}?${new URLSearchParams(params)}`);
+    const html = await page.text();
+    assert.deepEqual([page.status, html.includes('「Claude」想连接你的 xui-hub'), html.includes('name="password"'), page.headers.get('x-frame-options')], [200, true, true, 'DENY']);
+    // 回调地址 / client 不对:出错误页,不跳转
+    assert.equal((await fetch(`${as.authorization_endpoint}?${new URLSearchParams({ ...params, redirect_uri: 'https://evil.example/cb' })}`, { redirect: 'manual' })).status, 400);
+    assert.equal((await fetch(`${as.authorization_endpoint}?${new URLSearchParams({ ...params, client_id: 'nope' })}`, { redirect: 'manual' })).status, 400);
+    // 没有 PKCE:带着 error 跳回客户端
+    const noPkce = await fetch(`${as.authorization_endpoint}?${new URLSearchParams({ ...params, code_challenge: '' })}`, { redirect: 'manual' });
+    assert.deepEqual([noPkce.status, new URL(noPkce.headers.get('location')!).searchParams.get('error')], [302, 'invalid_request']);
+
+    assert.equal((await form('/oauth/authorize', { ...params, action: 'allow', password: 'wrong' })).status, 401);
+    const denied = await form('/oauth/authorize', { ...params, action: 'deny' });
+    assert.equal(new URL(denied.headers.get('location')!).searchParams.get('error'), 'access_denied');
+    const ok = await form('/oauth/authorize', { ...params, action: 'allow', password: 'pw' });
+    const back = new URL(ok.headers.get('location')!);
+    assert.deepEqual([ok.status, back.origin + back.pathname, back.searchParams.get('state'), back.searchParams.get('iss')], [302, redirect_uri, 'st', base]);
+    const code = back.searchParams.get('code')!;
+
+    const exchange = (over: Record<string, string> = {}) => form('/oauth/token', { grant_type: 'authorization_code', code, redirect_uri, client_id: client.client_id, code_verifier: verifier, ...over });
+    // 验证码不对:拒绝,而且这个授权码就此作废
+    assert.equal((await exchange({ code_verifier: 'x'.repeat(50) })).status, 400);
+    assert.equal((await exchange()).status, 400);
+    const code2 = new URL((await form('/oauth/authorize', { ...params, action: 'allow', password: 'pw' })).headers.get('location')!).searchParams.get('code')!;
+    const tokRes = await exchange({ code: code2 });
+    const tok = await tokRes.json();
+    assert.deepEqual([tokRes.status, tok.token_type, tok.expires_in, tokRes.headers.get('cache-control')], [200, 'Bearer', 3600, 'no-store']);
+    assert.match(tok.access_token, /^xho_/);
+    assert.equal((await exchange({ code: code2 })).status, 400);
+    assert.ok(!JSON.stringify(db.prepare('SELECT * FROM oauth_access').all()).includes(tok.access_token));
+
+    assert.equal((await rpc(tok.access_token, 'tools/list')).status, 200);
+    assert.deepEqual(listGrants(db).map((g) => [g.client_name, !!g.last_used_at]), [['Claude', true]]);
+
+    // 刷新:换新的一对,旧的刷新令牌作废
+    const refreshed = await (await form('/oauth/token', { grant_type: 'refresh_token', refresh_token: tok.refresh_token, client_id: client.client_id })).json();
+    assert.match(refreshed.access_token, /^xho_/);
+    assert.equal((await form('/oauth/token', { grant_type: 'refresh_token', refresh_token: tok.refresh_token })).status, 400);
+    assert.equal((await rpc(refreshed.access_token, 'tools/list')).status, 200);
+
+    // 撤销:访问令牌和刷新令牌一起失效
+    revokeGrant(db, listGrants(db)[0].id);
+    assert.equal((await rpc(refreshed.access_token, 'tools/list')).status, 401);
+    assert.equal((await form('/oauth/token', { grant_type: 'refresh_token', refresh_token: refreshed.refresh_token })).status, 400);
+    assert.equal((await form('/oauth/token', { grant_type: 'password' })).status, 400);
+  } finally {
+    await close();
+  }
+});
+
+test('OAuth:client_id 是 https 地址时现取元数据文档;文档里的 client_id 对不上、内网地址都不认', async () => {
+  const db = memoryDb();
+  const id = 'https://app.example/oauth/client.json';
+  const docs: Record<string, unknown> = {
+    [id]: { client_id: id, client_name: 'Example App', redirect_uris: ['https://app.example/cb'] },
+    'https://bad.example/c.json': { client_id: 'https://other.example/c.json', redirect_uris: ['https://bad.example/cb'] },
+  };
+  const { base, close } = await serve(db, {}, 'pw', async (url) => (docs[url] ? { status: 200, body: JSON.stringify(docs[url]) } : { status: 404, body: '' }));
+  const page = (client_id: string, redirect_uri: string) => fetch(`${base}/oauth/authorize?${new URLSearchParams({ client_id, redirect_uri, response_type: 'code', code_challenge: 'c'.repeat(43), code_challenge_method: 'S256' })}`, { redirect: 'manual' });
+  try {
+    const ok = await page(id, 'https://app.example/cb');
+    assert.deepEqual([ok.status, (await ok.text()).includes('「Example App」')], [200, true]);
+    assert.equal((await page(id, 'https://evil.example/cb')).status, 400);
+    assert.equal((await page('https://bad.example/c.json', 'https://bad.example/cb')).status, 400);
+    assert.equal((await page('https://gone.example/c.json', 'https://gone.example/cb')).status, 400);
+    assert.equal((await page('https://127.0.0.1/c.json', 'https://127.0.0.1/cb')).status, 400);
+    assert.equal((await page('http://app.example/c.json', 'https://app.example/cb')).status, 400);
+  } finally {
+    await close();
+  }
+});
+
+test('OAuth 小件:回调地址的校验和匹配、PKCE', () => {
+  assert.equal(validRedirectUri('cursor://anysphere.cursor-mcp/oauth/callback'), 'cursor://anysphere.cursor-mcp/oauth/callback');
+  for (const bad of ['http://example.com/cb', 'javascript:alert(1)', 'data:text/html,x', 'https://a.example/cb#frag', 'not a url']) assert.throws(() => validRedirectUri(bad));
+  assert.ok(redirectAllowed(['http://localhost:1/cb'], 'http://localhost:9999/cb'));
+  assert.ok(!redirectAllowed(['http://localhost:1/cb'], 'http://localhost:9999/other'));
+  assert.ok(!redirectAllowed(['http://localhost:1/cb'], 'http://127.0.0.1:1/cb'));
+  assert.ok(!redirectAllowed(['https://a.example/cb'], 'https://a.example:8443/cb'));
+  const v = 'a'.repeat(43);
+  assert.ok(pkceMatches(createHash('sha256').update(v).digest('base64url'), v));
+  assert.ok(!pkceMatches(createHash('sha256').update(v).digest('base64url'), 'b'.repeat(43)));
+  assert.ok(!pkceMatches('x', 'short'));
+});
+
+test('没设后台密码(只监听本机)时 /mcp 不鉴权,但别的网页带来的 Origin 一律拒绝', async () => {
+  const { base, rpc, close } = await serve(memoryDb(), {}, '');
+  try {
+    assert.equal((await rpc(null, 'tools/list')).status, 200);
+    assert.equal((await rpc(null, 'tools/list', {}, { Origin: 'https://evil.example' })).status, 403);
+    assert.equal((await rpc(null, 'tools/list', {}, { Origin: base })).status, 200);
+  } finally {
+    await close();
+  }
+});

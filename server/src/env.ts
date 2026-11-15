@@ -1,5 +1,6 @@
 // 运行配置,全部来自环境变量。
 
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,7 +30,17 @@ function tlsFiles(): { cert: string; key: string } | null {
 
 const internalPort = positiveInt('INTERNAL_PORT', 8789);
 
+/** 版本号:一键脚本装的读程序目录下的 VERSION 文件,Docker 镜像构建时写进环境变量 */
+function appVersion(): string {
+  try {
+    return readFileSync(resolve(PROJECT_ROOT, 'VERSION'), 'utf8').trim().replace(/^v/, '') || 'dev';
+  } catch {
+    return (process.env.XUIHUB_VERSION?.trim() || 'dev').replace(/^v/, '');
+  }
+}
+
 export const env = {
+  version: appVersion(),
   host: process.env.HOST?.trim() || '127.0.0.1',
   port: positiveInt('PORT', 8788),
   dataDir: resolve(process.env.DATA_DIR?.trim() || resolve(PROJECT_ROOT, 'data')),

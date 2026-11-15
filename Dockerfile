@@ -11,10 +11,11 @@ RUN cd web && npm run build \
  && cd ../server && npm run build && npm prune --omit=dev
 
 FROM node:22-bookworm-slim
+ARG VERSION=dev
 LABEL org.opencontainers.image.source="https://github.com/fishermanxzx/xui-hub" \
       org.opencontainers.image.description="把多台 3x-ui 面板接到一个后台,按客户统一管理线路、额度、到期和订阅" \
       org.opencontainers.image.licenses="MIT"
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=8788 DATA_DIR=/data INTERNAL_HOST=0.0.0.0 INTERNAL_PORT=8789
+ENV XUIHUB_VERSION=$VERSION NODE_ENV=production HOST=0.0.0.0 PORT=8788 DATA_DIR=/data INTERNAL_HOST=0.0.0.0 INTERNAL_PORT=8789
 WORKDIR /app
 COPY --from=build /app/server/package.json server/
 COPY --from=build /app/server/node_modules server/node_modules

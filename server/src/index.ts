@@ -14,6 +14,9 @@ import { pruneDevices } from './subscription/devices';
 import { openDb } from './db';
 import { env, isLoopbackHost, PROJECT_ROOT } from './env';
 import { apiRouter } from './http/routes';
+import { oauthRouter } from './mcp/oauth';
+import { mcpRouter } from './mcp/server';
+import type { ApiCall } from './mcp/tools';
 import { subscriptionRouter } from './http/subscription';
 import { subconverterClient } from './subscription/convert';
 import { pruneSubFetches } from './subscription/fetchLog';
@@ -47,35 +50,47 @@ app.disable('x-powered-by');
 app.set('etag', false);
 // 反代经本机 / Docker 内网访问时取真实客户端 IP(登录限流按它计数)
 app.set('trust proxy', ['loopback', 'uniquelocal']);
-app.use(express.json({ limit: '1mb' }));
+app.use('/api', express.json({ limit: '1mb' }));
 // 订阅 /sub/<token>(公开,凭客户各自的 token);Clash / Surge 由内部 subconverter 转换,它带内部密钥回源 /internal/nodes/:id 取节点
+const internalSecret = randomBytes(18).toString('base64url');
 const subRouter = subscriptionRouter({
   db,
   fetcher: defaultFetcher({ timeoutMs: 6000 }),
   convert: env.subconverterUrl ? subconverterClient(env.subconverterUrl) : null,
   internalBaseUrl: env.appInternalUrl,
-  internalSecret: randomBytes(18).toString('base64url'),
+  internalSecret,
   mihomoTemplate: mihomoTemplateMatcher(env.mihomoTemplate),
   subBaseUrl: env.subBaseUrl,
 });
 app.use(subRouter);
-app.use(
-  '/api',
-  apiRouter({
-    db,
-    adminPassword: env.adminPassword,
-    clientFor,
-    probe: tcpOpen,
-    subBaseUrl: env.subBaseUrl,
-    subLogDays: env.subLogDays,
-    dataDir: env.dataDir,
-    // 恢复备份:退出让 systemd / Docker 拉起,起来时换库
-    onRestore: () => {
-      console.log('恢复备份:重启服务');
-      shutdown();
-    },
-  }),
-);
+const apiDeps = {
+  db,
+  adminPassword: env.adminPassword,
+  clientFor,
+  probe: tcpOpen,
+  subBaseUrl: env.subBaseUrl,
+  subLogDays: env.subLogDays,
+  dataDir: env.dataDir,
+  // 恢复备份:退出让 systemd / Docker 拉起,起来时换库
+  onRestore: () => {
+    console.log('恢复备份:重启服务');
+    shutdown();
+  },
+};
+app.use('/api', apiRouter(apiDeps));
+
+// MCP:/mcp 端点 + OAuth 授权。工具经内部监听调同一套 /api(凭随机密钥,只在本机 / 容器内网可达),逻辑和后台页面完全一致
+const internalApiBase = `http://${isLoopbackHost(env.internalHost) || env.internalHost === '0.0.0.0' || env.internalHost === '::' ? '127.0.0.1' : env.internalHost}:${env.internalPort}/internal/api`;
+const internalApi: ApiCall = async (method, path, body) => {
+  const res = await fetch(internalApiBase + path, {
+    method,
+    headers: { 'x-internal-key': internalSecret, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+};
+app.use(oauthRouter({ db, adminPassword: env.adminPassword }));
+app.use(mcpRouter({ db, adminPassword: env.adminPassword, api: internalApi, version: env.version }));
 
 const dist = resolve(PROJECT_ROOT, 'web/dist');
 if (existsSync(dist)) {
@@ -93,6 +108,13 @@ const internalApp = express();
 internalApp.disable('x-powered-by');
 internalApp.use((req, res, next) => (req.path.startsWith('/internal/') ? next() : res.status(404).end()));
 internalApp.use(subRouter);
+// MCP 工具用的 /api:不走登录,凭内部密钥
+internalApp.use(
+  '/internal/api',
+  (req, res, next) => (internalSecret && req.get('x-internal-key') === internalSecret ? next() : res.status(404).end()),
+  express.json({ limit: '1mb' }),
+  apiRouter({ ...apiDeps, adminPassword: '', dataDir: undefined, onRestore: undefined }),
+);
 const internalServer = createHttpServer(internalApp);
 internalServer.listen(env.internalPort, env.internalHost);
 

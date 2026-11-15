@@ -29,6 +29,7 @@ import { checkCustomTemplate, DEFAULT_TEMPLATE, isCustomTemplate, TEMPLATES, val
 import { listSubFetches, subClientCounts, subIpsSince } from '../subscription/fetchLog';
 import { deleteDevice, deviceCounts, listDevices } from '../subscription/devices';
 import { createToken, deleteToken, listTokens, TOKEN_BLOCKED, verifyToken } from './tokens';
+import { listGrants, revokeGrant } from '../mcp/oauth';
 import { enforceCustomers } from '../lines/enforce';
 import { openLine, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
 import { checkSocks } from '../socks/check';
@@ -471,6 +472,9 @@ export function apiRouter(deps: RouteDeps): Router {
   r.get('/tokens', wrap(() => listTokens(db)));
   r.post('/tokens', wrap((req) => createToken(db, req.body ?? {})));
   r.delete('/tokens/:id', wrap((req) => void deleteToken(db, idParam(req))));
+  // 经 OAuth 授权过的 MCP 应用;撤销后它手里的令牌立即失效
+  r.get('/oauth-grants', wrap(() => listGrants(db)));
+  r.delete('/oauth-grants/:id', wrap((req) => void revokeGrant(db, idParam(req))));
 
   // ---------- 备份 / 恢复 ----------
   r.get(

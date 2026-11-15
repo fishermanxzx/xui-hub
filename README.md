@@ -59,6 +59,7 @@
 **开放 API**
 
 - 「设置」页生成 API 令牌,发卡站或机器人带着令牌就能建客户、续期、开线路、取订阅链接。接口说明见 [docs/api.md](docs/api.md)。
+- 自带 MCP 服务(`/mcp`):Claude、Cursor 等 AI 客户端可以直接查客户、建客户、续期、开线路。支持 OAuth 授权和 API 令牌两种接入方式,见 [docs/mcp.md](docs/mcp.md)。
 
 **备份**
 
