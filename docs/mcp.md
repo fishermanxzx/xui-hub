@@ -3,7 +3,7 @@
 xui-hub 自带一个 [MCP](https://modelcontextprotocol.io) 服务,让 Claude、Cursor 这类 AI 客户端直接管理客户和线路。
 
 - 地址:`https://<后台地址>/mcp`(Streamable HTTP)
-- 协议由官方 SDK(`@modelcontextprotocol/sdk`)处理,支持的版本跟着 SDK 走,目前到 `2025-11-25`
+- 协议由官方 SDK v2(`@modelcontextprotocol/server`)处理:`2026-07-28`(无握手)和 2025 年各版(握手)都支持
 - 没设后台密码(只监听本机)时不需要鉴权
 
 ## 接入方式一:OAuth

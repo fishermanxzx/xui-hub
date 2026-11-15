@@ -1,18 +1,18 @@
-// MCP 服务端点 POST /mcp。协议本身(握手、版本协商、消息格式、工具列表和调用的收发)用官方 SDK(@modelcontextprotocol/sdk),
-// 这里只做三件事:鉴权、把工具接到 SDK 上、每个请求起一对无状态的 Server + Transport(不存会话,只回 JSON,不开 SSE 流)。
-// 支持的协议版本以 SDK 为准(目前到 2025-11-25)。
+// MCP 服务端点 POST /mcp。协议本身用官方 SDK v2(@modelcontextprotocol/server):createMcpHandler 一个入口同时接
+// 2026-07-28 的无握手协议和 2025 年各版的握手协议(无状态:每个请求新建一个 McpServer,不存会话),
+// 握手、版本协商、请求头和消息的校验、工具参数按 JSON Schema 的校验都由 SDK 做。
+// 这里只做两件事:鉴权,和把 tools.ts 里的工具注册到 SDK 上。
 // 鉴权:Authorization: Bearer 带 API 令牌(xh_…,后台「设置」里生成)或 OAuth 访问令牌(xho_…,见 oauth.ts)。
 // 没带或无效回 401,WWW-Authenticate 里指向受保护资源的元数据,客户端据此走 OAuth。
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { toNodeHandler } from '@modelcontextprotocol/node';
+import { createMcpHandler, fromJsonSchema, McpServer } from '@modelcontextprotocol/server';
 import express, { Router, type Request, type Response } from 'express';
 import type { DB } from '../db';
 import { LoginLimiter } from '../http/auth';
 import { verifyToken } from '../http/tokens';
 import { baseUrlOf, resourceMetadataUrl, SCOPE, verifyAccessToken } from './oauth';
-import { callTool, hasTool, INSTRUCTIONS, toolList, type ApiCall, type ToolContext } from './tools';
+import { INSTRUCTIONS, runTool, TOOLS, type ApiCall } from './tools';
 
 export interface McpDeps {
   db: DB;
@@ -22,6 +22,9 @@ export interface McpDeps {
   version: string;
 }
 
+/** 把这次请求看到的后台地址带给工具(拼订阅链接用);进来的同名头一律覆盖掉 */
+const BASE_HEADER = 'x-xuihub-base';
+
 const rpcError = (code: number, message: string) => ({ jsonrpc: '2.0', id: null, error: { code, message } });
 
 export function mcpRouter(deps: McpDeps): Router {
@@ -30,22 +33,26 @@ export function mcpRouter(deps: McpDeps): Router {
   const limiter = new LoginLimiter();
   const r = Router();
 
-  /** 一个接好工具的 SDK Server;每个请求新建一个,用完即关 */
-  const newServer = (ctx: ToolContext) => {
-    const server = new Server({ name: 'xui-hub', title: 'xui-hub', version: deps.version }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: toolList() }));
-    server.setRequestHandler(CallToolRequestSchema, async (req) => {
-      const { name, arguments: args } = req.params;
-      if (!hasTool(name)) throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${name}`);
-      return callTool(name, args, ctx);
-    });
-    return server;
-  };
+  const handler = createMcpHandler(
+    (ctx) => {
+      const baseUrl = ctx.requestInfo?.headers.get(BASE_HEADER) ?? '';
+      const server = new McpServer({ name: 'xui-hub', title: 'xui-hub', version: deps.version }, { instructions: INSTRUCTIONS });
+      for (const tool of TOOLS) {
+        server.registerTool(tool.name, { title: tool.title, description: tool.description, inputSchema: fromJsonSchema(tool.inputSchema as never), annotations: tool.annotations }, (args: unknown) =>
+          runTool(tool, args, { api: deps.api, baseUrl }),
+        );
+      }
+      return server;
+    },
+    // 2025 年的握手协议走 SDK 的无状态兼容;响应是 JSON 还是 SSE 由 SDK 定(两种客户端都必须支持)
+    { legacy: 'stateless' },
+  );
+  const serve = toNodeHandler(handler, { onerror: (e) => console.error(e) });
 
   r.use('/mcp', (req, res, next) => {
     res.set({
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, MCP-Protocol-Version, Mcp-Session-Id, Last-Event-ID',
+      'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, MCP-Protocol-Version, Mcp-Method, Mcp-Name, Mcp-Session-Id, Last-Event-ID',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Expose-Headers': 'WWW-Authenticate',
     });
@@ -72,15 +79,9 @@ export function mcpRouter(deps: McpDeps): Router {
   });
 
   r.post('/mcp', express.json({ limit: '1mb', type: () => true }), async (req: Request, res: Response) => {
-    const server = newServer({ api: deps.api, baseUrl: baseUrlOf(req) });
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    res.on('close', () => {
-      void transport.close().catch(() => {});
-      void server.close().catch(() => {});
-    });
+    req.headers[BASE_HEADER] = baseUrlOf(req);
     try {
-      await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      await serve(req, res as never, req.body);
     } catch (e) {
       console.error(e);
       if (!res.headersSent) res.status(500).json(rpcError(-32603, 'Internal error'));

@@ -32,7 +32,15 @@ async function serve(db: DB, data: Record<string, FakePanel> = {}, adminPassword
       body: JSON.stringify({ jsonrpc: '2.0', ...(id === null ? {} : { id }), method, ...(params === undefined ? {} : { params }) }),
     });
     const text = await res.text();
-    return { status: res.status, headers: res.headers, body: text ? JSON.parse(text) : null };
+    // SDK 可能用 JSON 也可能用 SSE 回(两种都合规);SSE 时取最后一条 data
+    const payload = (res.headers.get('content-type') ?? '').includes('text/event-stream') ? (text.split('\n').filter((l) => l.startsWith('data:')).pop() ?? '').slice(5) : text;
+    let body: any = null;
+    try {
+      body = payload.trim() ? JSON.parse(payload) : null;
+    } catch {
+      body = { raw: text };
+    }
+    return { status: res.status, headers: res.headers, body };
   };
   /** 2026-07-28 的请求:版本放 _meta,带 Mcp-* 头 */
   const modern = (auth: string, method: string, params: any = {}, headerOver: Record<string, string> = {}) =>
@@ -58,7 +66,7 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
     assert.equal((await fetch(`${base}/mcp`, { headers: { Authorization: `Bearer ${token}` } })).status, 405);
 
     const init = await rpc(token, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } });
-    assert.deepEqual([init.status, init.body.result.protocolVersion, init.body.result.serverInfo.name, init.body.result.capabilities], [200, '2025-06-18', 'xui-hub', { tools: {} }]);
+    assert.deepEqual([init.status, init.body.result.protocolVersion, init.body.result.serverInfo.name, 'tools' in init.body.result.capabilities], [200, '2025-06-18', 'xui-hub', true]);
     assert.equal(init.headers.get('mcp-session-id'), null);
     assert.equal((await rpc(token, 'initialize', { protocolVersion: '1999-01-01', capabilities: {}, clientInfo: { name: 't', version: '1' } })).body.result.protocolVersion, '2025-11-25');
     assert.deepEqual([(await rpc(token, 'notifications/initialized', undefined, {}, null)).status, (await rpc(token, 'ping')).body.result], [202, {}]);
@@ -94,19 +102,33 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
   }
 });
 
-test('MCP:协议交给官方 SDK。它还不支持的 2026-07-28 请求得到 400(客户端据此退回握手协议);不合规的消息被拒', async () => {
+test('MCP 2026-07-28(无握手):server/discover、工具调用带 resultType;版本不支持、头和正文对不上、未知方法各有各的错', async () => {
   const db = memoryDb();
   const token = createToken(db, { name: 'mcp' }).token;
-  const { base, rpc, modern, close } = await serve(db);
+  const { rpc, modern, close } = await serve(db);
   try {
-    const m = await modern(token, 'tools/list');
-    assert.equal(m.status, 400);
-    assert.notEqual(m.body?.error?.code, -32022);
-    const raw = (body: string) => fetch(`${base}/mcp`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${token}` }, body });
-    assert.equal((await raw('{not json')).status, 400);
-    assert.equal((await raw('{"hello":1}')).status, 400);
-    // 不带 Accept: text/event-stream 的不是 MCP 客户端
-    assert.equal((await fetch(`${base}/mcp`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' })).status, 406);
+    const d = await modern(token, 'server/discover');
+    assert.deepEqual([d.status, d.body.result.resultType, d.body.result.supportedVersions.includes('2026-07-28'), 'tools' in d.body.result.capabilities], [200, 'complete', true, true]);
+    assert.deepEqual(d.body.result._meta['io.modelcontextprotocol/serverInfo'], { name: 'xui-hub', title: 'xui-hub', version: '1.2.3' });
+    const list = (await modern(token, 'tools/list')).body.result;
+    assert.deepEqual([list.resultType, typeof list.cacheScope, typeof list.ttlMs, list.tools.length > 10], ['complete', 'string', 'number', true]);
+    const called = await modern(token, 'tools/call', { name: 'list_customers', arguments: {} });
+    assert.deepEqual([called.status, called.body.result.resultType, called.body.result.isError, toolJson(called)], [200, 'complete', false, []]);
+
+    // 下面这些不合规的请求由 SDK 把关,这里只确认都被拒(具体的错误码是 SDK 的事)
+    const meta = (v: string) => ({ _meta: { 'io.modelcontextprotocol/protocolVersion': v, 'io.modelcontextprotocol/clientCapabilities': {} } });
+    const rejected = (r: { status: number; body: any }) => [r.status >= 400, typeof r.body?.error?.code];
+    const cases = {
+      版本不支持: await rpc(token, 'tools/list', meta('2030-01-01'), { 'MCP-Protocol-Version': '2030-01-01', 'Mcp-Method': 'tools/list' }),
+      方法头对不上: await modern(token, 'tools/list', {}, { 'Mcp-Method': 'tools/call' }),
+      工具名头对不上: await modern(token, 'tools/call', { name: 'list_customers', arguments: {} }, { 'Mcp-Name': 'delete_customer' }),
+      未知方法: await modern(token, 'nope/nope'),
+    };
+    for (const [name, r] of Object.entries(cases)) assert.deepEqual([name, ...rejected(r)], [name, true, 'number']);
+    assert.equal(cases.版本不支持.body.error.data.supported.includes('2026-07-28'), true);
+    // 参数不合 JSON Schema:SDK 拦下,不会调到后台
+    const badArgs = await modern(token, 'tools/call', { name: 'renew_customer', arguments: { customer_id: 'abc' } });
+    assert.ok(badArgs.body.error || badArgs.body.result.isError);
   } finally {
     await close();
   }

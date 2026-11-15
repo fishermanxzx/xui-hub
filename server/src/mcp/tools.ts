@@ -9,7 +9,7 @@ export interface ToolContext {
   baseUrl: string;
 }
 
-interface ToolDef {
+export interface ToolDef {
   name: string;
   title: string;
   description: string;
@@ -268,15 +268,8 @@ export const TOOLS: ToolDef[] = [
   },
 ];
 
-const byName = new Map(TOOLS.map((t) => [t.name, t]));
-
-export const toolList = () => TOOLS.map(({ name, title, description, inputSchema, annotations }) => ({ name, title, description, inputSchema, annotations }));
-
-export const hasTool = (name: unknown) => typeof name === 'string' && byName.has(name);
-
-/** 调一个工具;业务上的失败(参数不对、面板连不上)放在结果里(isError),不抛 */
-export async function callTool(name: string, args: unknown, ctx: ToolContext): Promise<{ content: { type: 'text'; text: string }[]; isError: boolean }> {
-  const tool = byName.get(name)!;
+/** 跑一个工具;业务上的失败(参数不对、面板连不上)放在结果里(isError),不抛 */
+export async function runTool(tool: ToolDef, args: unknown, ctx: ToolContext): Promise<{ content: { type: 'text'; text: string }[]; isError: boolean }> {
   try {
     const out = await tool.run(args && typeof args === 'object' ? args : {}, ctx);
     return { content: [{ type: 'text', text: JSON.stringify(out ?? { ok: true }, null, 1) }], isError: false };
