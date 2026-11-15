@@ -60,7 +60,7 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
     const init = await rpc(token, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } });
     assert.deepEqual([init.status, init.body.result.protocolVersion, init.body.result.serverInfo.name, init.body.result.capabilities], [200, '2025-06-18', 'xui-hub', { tools: {} }]);
     assert.equal(init.headers.get('mcp-session-id'), null);
-    assert.equal((await rpc(token, 'initialize', { protocolVersion: '1999-01-01' })).body.result.protocolVersion, '2025-11-25');
+    assert.equal((await rpc(token, 'initialize', { protocolVersion: '1999-01-01', capabilities: {}, clientInfo: { name: 't', version: '1' } })).body.result.protocolVersion, '2025-11-25');
     assert.deepEqual([(await rpc(token, 'notifications/initialized', undefined, {}, null)).status, (await rpc(token, 'ping')).body.result], [202, {}]);
 
     const tools = (await rpc(token, 'tools/list', {}, { 'MCP-Protocol-Version': '2025-06-18' })).body.result.tools;
@@ -94,32 +94,19 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
   }
 });
 
-test('MCP 2026-07-28(无握手):server/discover、工具调用带 resultType;版本不支持、头和正文对不上、未知方法各有各的错', async () => {
+test('MCP:协议交给官方 SDK。它还不支持的 2026-07-28 请求得到 400(客户端据此退回握手协议);不合规的消息被拒', async () => {
   const db = memoryDb();
   const token = createToken(db, { name: 'mcp' }).token;
-  const { rpc, modern, close } = await serve(db);
+  const { base, rpc, modern, close } = await serve(db);
   try {
-    const d = await modern(token, 'server/discover');
-    assert.deepEqual([d.status, d.body.result.resultType, d.body.result.supportedVersions[0], d.body.result.capabilities], [200, 'complete', '2026-07-28', { tools: {} }]);
-    assert.deepEqual(d.body.result._meta['io.modelcontextprotocol/serverInfo'], { name: 'xui-hub', title: 'xui-hub', version: '1.2.3' });
-    const list = (await modern(token, 'tools/list')).body.result;
-    assert.deepEqual([list.resultType, list.cacheScope, typeof list.ttlMs, list.tools.length > 10], ['complete', 'public', 'number', true]);
-    const called = await modern(token, 'tools/call', { name: 'list_customers', arguments: {} });
-    assert.deepEqual([called.status, called.body.result.resultType, called.body.result.isError, toolJson(called)], [200, 'complete', false, []]);
-
-    const meta = (v: string) => ({ _meta: { 'io.modelcontextprotocol/protocolVersion': v } });
-    const old = await rpc(token, 'tools/list', meta('2030-01-01'), { 'MCP-Protocol-Version': '2030-01-01', 'Mcp-Method': 'tools/list' });
-    assert.deepEqual([old.status, old.body.error.code, old.body.error.data.requested, old.body.error.data.supported.includes('2026-07-28')], [400, -32022, '2030-01-01', true]);
-    const noHeader = await rpc(token, 'tools/list', meta('2026-07-28'));
-    assert.deepEqual([noHeader.status, noHeader.body.error.code], [400, -32020]);
-    const wrongMethod = await modern(token, 'tools/list', {}, { 'Mcp-Method': 'tools/call' });
-    assert.deepEqual([wrongMethod.status, wrongMethod.body.error.code], [400, -32020]);
-    const wrongName = await modern(token, 'tools/call', { name: 'list_customers' }, { 'Mcp-Name': 'delete_customer' });
-    assert.deepEqual([wrongName.status, wrongName.body.error.code], [400, -32020]);
-    const b64 = await modern(token, 'tools/call', { name: 'list_customers' }, { 'Mcp-Name': `=?base64?${Buffer.from('list_customers').toString('base64')}?=` });
-    assert.equal(b64.status, 200);
-    const unknown = await modern(token, 'ping');
-    assert.deepEqual([unknown.status, unknown.body.error.code], [404, -32601]);
+    const m = await modern(token, 'tools/list');
+    assert.equal(m.status, 400);
+    assert.notEqual(m.body?.error?.code, -32022);
+    const raw = (body: string) => fetch(`${base}/mcp`, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${token}` }, body });
+    assert.equal((await raw('{not json')).status, 400);
+    assert.equal((await raw('{"hello":1}')).status, 400);
+    // 不带 Accept: text/event-stream 的不是 MCP 客户端
+    assert.equal((await fetch(`${base}/mcp`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' })).status, 406);
   } finally {
     await close();
   }
