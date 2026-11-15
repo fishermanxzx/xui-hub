@@ -10,6 +10,7 @@ export interface ClientSnapshot {
   up: number;
   down: number;
   lastOnline: number;
+  limitIp: number;
 }
 
 function num(value: unknown): number {
@@ -68,6 +69,7 @@ export function normalizeClients(clients: any[], inbounds: any[] = []): ClientSn
       up: num(traffic.up),
       down: num(traffic.down),
       lastOnline: ms(traffic.lastOnline),
+      limitIp: num(c.limitIp),
     });
   }
   return out;

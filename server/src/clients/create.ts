@@ -68,7 +68,7 @@ export function emailFor(name: unknown, taken: Set<string>): string {
   return email;
 }
 
-export function newClient(email: string, inbound: any) {
+export function newClient(email: string, inbound: any, limitIp = 0) {
   const stream = decodeJson(inbound.streamSettings) ?? {};
   const vision = inbound.protocol === 'vless' && stream.network === 'tcp' && (stream.security === 'reality' || stream.security === 'tls');
   const id = randomUUID();
@@ -78,7 +78,7 @@ export function newClient(email: string, inbound: any) {
     password: id,
     auth: randomBytes(12).toString('hex'),
     flow: vision ? 'xtls-rprx-vision' : '',
-    limitIp: 0,
+    limitIp,
     totalGB: 0,
     expiryTime: 0,
     enable: true,
@@ -191,9 +191,9 @@ export async function freeEmail(admin: ClientAdmin, name: unknown, taken: Iterab
 }
 
 /** 在入站上新建一个客户端(email 用 freeEmail 挑好的),读回核对,返回分享链接。不关闭 admin */
-export async function addClientTo(admin: ClientAdmin, inbound: any, email: string): Promise<string[]> {
+export async function addClientTo(admin: ClientAdmin, inbound: any, email: string, limitIp = 0): Promise<string[]> {
   const inboundId = Number(inbound.id);
-  await admin.addClient(newClient(email, inbound), [inboundId]);
+  await admin.addClient(newClient(email, inbound, limitIp), [inboundId]);
   const back = (await admin.listClients()).find((c) => c.email === email);
   if (!back || !(back.inboundIds ?? []).map(Number).includes(inboundId)) throw new Error('client 建好后读回没找到,或没挂到入站上');
   return admin.clientLinks(email);

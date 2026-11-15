@@ -1,4 +1,4 @@
-import type { BackupInfo, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubFetch, SubTemplate, UpdateStatus } from './types';
+import type { ApiToken, BackupInfo, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubFetch, SubTemplate, UpdateStatus } from './types';
 
 let onUnauthorized: (() => void) | null = null;
 
@@ -54,7 +54,7 @@ export const api = {
   customers: () => call<Customer[]>('GET', '/api/customers'),
   createCustomer: (body: CustomerInput) => call<Customer>('POST', '/api/customers', body),
   /** 改了额度 / 到期会立刻执行停用 / 恢复,ops 是到面板上的操作结果 */
-  updateCustomer: (id: number, body: CustomerInput) => call<Customer & { ops: EnforceOp[] }>('PATCH', `/api/customers/${id}`, body),
+  updateCustomer: (id: number, body: CustomerInput) => call<Customer & { ops: EnforceOp[]; limit_failed: { line: string; error: string }[] }>('PATCH', `/api/customers/${id}`, body),
   /** 清零已用:各线路客户端在面板上的流量清零,超额停掉的随之恢复 */
   resetUsage: (id: number) => call<Customer & { failed: { line: string; error: string }[]; ops: EnforceOp[] }>('POST', `/api/customers/${id}/reset-usage`),
   /** 重置订阅链接(换 token,旧链接立即失效) */
@@ -76,6 +76,9 @@ export const api = {
   settings: () => call<Settings>('GET', '/api/settings'),
   updateSettings: (body: Partial<Settings>) => call<Settings>('PATCH', '/api/settings', body),
   testNotify: () => call<{ results: { channel: string; ok: boolean; error?: string }[] }>('POST', '/api/settings/test'),
+  tokens: () => call<ApiToken[]>('GET', '/api/tokens'),
+  createToken: (name: string) => call<ApiToken>('POST', '/api/tokens', { name }),
+  deleteToken: (id: number) => call('DELETE', `/api/tokens/${id}`),
   /** 下载备份直接用这个地址 */
   backupUrl: '/api/backup',
   /** 上传一份 hub.db 整个换掉;成功后服务会重启 */

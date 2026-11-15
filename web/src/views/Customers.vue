@@ -41,7 +41,7 @@ const proto = (p: string) => PROTOCOL[p] ?? p;
 const editing = ref<Customer | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', remark: '', quotaGb: '', expire: '', resetDay: '', template: '', customTemplate: '' });
+const form = ref({ name: '', remark: '', quotaGb: '', expire: '', resetDay: '', limitIp: '', template: '', customTemplate: '' });
 /** 内置的 Clash 订阅模板;第一次打开表单时取 */
 const templates = ref<SubTemplate[]>([]);
 const templateName = (v: string) => templates.value.find((t) => t.id === v)?.name ?? (v ? '自定义模板' : '');
@@ -50,7 +50,7 @@ function openForm(c: Customer | null) {
   editing.value = c;
   const tpl = c?.sub_template ?? '';
   const custom = /^https:/.test(tpl);
-  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', resetDay: c?.reset_day ? String(c.reset_day) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '' };
+  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', resetDay: c?.reset_day ? String(c.reset_day) : '', limitIp: c?.limit_ip ? String(c.limit_ip) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '' };
   showForm.value = true;
 }
 
@@ -75,12 +75,13 @@ function opsNote(ops: EnforceOp[]): string {
 
 async function submit() {
   saving.value = true;
-  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.resetDay === '' ? 0 : Number(form.value.resetDay), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template };
+  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.resetDay === '' ? 0 : Number(form.value.resetDay), limit_ip: form.value.limitIp === '' ? 0 : Number(form.value.limitIp), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template };
   try {
     const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
     showForm.value = false;
-    const note = opsNote((saved as { ops?: EnforceOp[] }).ops ?? []);
-    toast(note ? `已保存,${note}` : '已保存', note.includes('失败') ? 'err' : 'ok');
+    const limitFailed = (saved as { limit_failed?: { line: string; error: string }[] }).limit_failed ?? [];
+    const note = [opsNote((saved as { ops?: EnforceOp[] }).ops ?? []), limitFailed.length ? `${limitFailed.length} 个客户端的在线 IP 数没写成:${limitFailed.map((f) => `${f.line}(${f.error})`).join('、')}` : ''].filter(Boolean).join(';');
+    toast(note ? `已保存,${note}` : '已保存', note.includes('失败') || limitFailed.length ? 'err' : 'ok');
     await load();
     // 新建完直接进开线路
     if (!editing.value) openLineFor(customers.value.find((c) => c.id === saved.id) ?? saved);
@@ -123,6 +124,16 @@ const topoFor = ref<Customer | null>(null);
 // ---------- 订阅 ----------
 const qrFor = ref<Customer | null>(null);
 const fetchesFor = ref<{ customer: Customer; days: number; rows: SubFetch[] } | null>(null);
+/** 「疑似分享」的门槛(设置页里的 IP 个数);没开这项提醒就是 0,不标 */
+const shareIps = ref(0);
+onMounted(async () => {
+  try {
+    const s = (await api.settings()).notify;
+    shareIps.value = s.sub_share ? s.sub_share_ips : 0;
+  } catch {
+    /* 取不到就不标 */
+  }
+});
 
 async function resetLink(c: Customer) {
   if (!confirm(`重置「${c.name}」的订阅链接?客户手里的旧链接立即失效,需要把新链接发给他。`)) return;
@@ -313,6 +324,7 @@ function exitText(l: Line): string {
             {{ fmtDue(c.expire_at) }}
           </span>
           <span v-if="c.sub_template" class="muted small" :title="c.sub_template">模板:{{ templateName(c.sub_template) }}</span>
+          <span v-if="c.limit_ip" class="muted small" title="每条线路同时在线的 IP 数上限">限 {{ c.limit_ip }} 个 IP</span>
           <span v-if="c.reset_day" class="muted small" :title="c.last_reset_at ? `上次清零 ${fmtDateTime(c.last_reset_at)}` : '还没清过'">每月 {{ c.reset_day }} 号清零</span>
         </div>
         <div class="ops">
@@ -331,6 +343,7 @@ function exitText(l: Line): string {
         <button class="link" @click="resetLink(c)">重置链接</button>
         <span class="muted small sub-meta" :title="c.sub_fetched_ua ?? ''">
           <template v-if="c.sub_fetched_at">上次拉取 {{ fmtAgo(c.sub_fetched_at) }}<template v-if="c.sub_fetched_ua">,{{ shortUa(c.sub_fetched_ua) }}</template>;{{ c.sub_clients }} 个客户端 / {{ c.sub_ips }} 个 IP</template>
+          <span v-if="shareIps && c.sub_ips_day >= shareIps" class="text-warn" :title="`订阅近 24 小时被 ${c.sub_ips_day} 个不同 IP 拉取,可能被转给别人用了。点「记录」看明细,确认的话点「重置链接」`">24 小时 {{ c.sub_ips_day }} 个 IP,疑似分享</span>
           <template v-else>还没被拉取过</template>
           <button class="link small" @click="showFetches(c)">记录</button>
         </span>
@@ -366,7 +379,10 @@ function exitText(l: Line): string {
         <label class="field">总额度(GB,空 = 不限)<input v-model="form.quotaGb" type="number" min="0" step="1" /></label>
         <label class="field">每月清零日(1-28,空 = 不清零)<input v-model="form.resetDay" type="number" min="1" max="28" step="1" placeholder="如 1" /></label>
       </div>
-      <label class="field">到期日(空 = 不限期)<input v-model="form.expire" type="date" /></label>
+      <div class="two">
+        <label class="field">到期日(空 = 不限期)<input v-model="form.expire" type="date" /></label>
+        <label class="field">每条线路同时在线 IP 数(空 = 不限)<input v-model="form.limitIp" type="number" min="1" max="100" step="1" placeholder="如 2" /></label>
+      </div>
       <div class="row extend">
         <span class="muted small">续期</span>
         <button type="button" class="link" @click="extend(30)">+30 天</button>
@@ -383,7 +399,7 @@ function exitText(l: Line): string {
         </select>
       </label>
       <label v-if="form.template === 'custom'" class="field">模板地址<input v-model="form.customTemplate" required placeholder="https://… subconverter 的 ini 模板" /></label>
-      <p class="muted small hint">流量按客户所有线路加总,每分钟从面板同步一次;超额或到期后自动停用他的全部客户端,改大额度、延后到期或清零流量会自动恢复。设了清零日,每月这天 0 点自动把他的流量清零。</p>
+      <p class="muted small hint">流量按客户所有线路加总,每分钟从面板同步一次;超额或到期后自动停用他的全部客户端,改大额度、延后到期或清零流量会自动恢复。设了清零日,每月这天 0 点自动把他的流量清零。同时在线 IP 数写到面板的客户端上,由面板执行(面板那台机器要装了 fail2ban,3x-ui 的 Docker 版自带)。</p>
     </form>
     <template #footer>
       <span class="spacer" />

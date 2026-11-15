@@ -35,8 +35,9 @@
 - 中转线路:选中转面板和出口。出口可以是落地面板上的 socks 入站(没有就自动新建),也可以是 SOCKS 页登记的代理。路由按客户端区分,同一入站上的客户端可以走不同出口。
 - 额度和到期按客户计算,流量是各线路之和,每分钟同步一次。超额或到期自动停用他的全部客户端,调整额度、续期或清零流量后自动恢复。
 - 每位客户一条订阅链接,包含他的全部线路,按客户端自动给出格式:Clash / Mihomo / Stash / Shadowrocket、sing-box / Hiddify、Surge、Quantumult X、Loon、v2rayN(base64),也可用 `?target=` 指定。链接可重置,可查看拉取记录。
-- Clash 系客户端的分组和规则可以按客户选模板:内置 ACL4SSR 的精简(默认)/ 标准 / 完整及其无自动测速、多模式、按地区等变体,也可以填自己的模板地址。
+- Clash 系客户端的分组和规则可以按客户选模板:内置 ACL4SSR 的精简(默认)/ 标准 / 完整及其无自动测速、多模式、按地区等变体,也可以填自己的模板地址(保存时会试拉一次,取不到或不是模板不让存)。
 - 可设每月清零日,到日子自动把他的流量清零;编辑时可一键续期 30 / 90 / 180 / 365 天。
+- 可限制每条线路同时在线的 IP 数(写到面板客户端的 limitIp,由面板执行,面板所在机器需要有 fail2ban)。
 - 客户用浏览器打开订阅链接是一个自助页:剩余流量、到期日、二维码和各客户端的一键导入按钮。
 - 每条线路可看分享链接和二维码,每位客户可看网络拓扑图。
 
@@ -53,7 +54,11 @@
 
 **通知**
 
-- Telegram Bot 或 Webhook:面板掉线 / 恢复、客户超额或到期被停用 / 恢复、客户快到期、流量用到额度的某个百分比、按月清零完成。「设置」页配置。
+- Telegram Bot 或 Webhook:面板掉线 / 恢复、客户超额或到期被停用 / 恢复、客户快到期、流量用到额度的某个百分比、按月清零完成、订阅疑似被分享(24 小时内被多个 IP 拉取)。「设置」页配置。
+
+**开放 API**
+
+- 「设置」页生成 API 令牌,发卡站或机器人带着令牌就能建客户、续期、开线路、取订阅链接。接口说明见 [docs/api.md](docs/api.md)。
 
 **备份**
 
@@ -121,7 +126,11 @@ docker compose pull && docker compose up -d
 默认是 HTTP。
 
 - 一键脚本:运行 `xui-hub ssl`,可给域名或 IP 申请 Let's Encrypt 证书并自动续期。
-- Docker:在 compose 里挂载证书目录,并在 `.env` 填 `TLS_CERT_FILE` 和 `TLS_KEY_FILE`。
+- Docker:在放 `docker-compose.yml` 的目录里运行下面的命令,同样可给域名或 IP 申请证书并自动续期(证书放在 `./cert`)。也可以自己把证书放进 `./cert`,在 `.env` 填 `TLS_CERT_FILE=/cert/fullchain.pem` 和 `TLS_KEY_FILE=/cert/privkey.pem`。
+
+  ```bash
+  bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/scripts/docker-ssl.sh)
+  ```
 - 也可以在前面放 Caddy / Nginx 反代。
 
 ### 环境变量

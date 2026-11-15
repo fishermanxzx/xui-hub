@@ -49,6 +49,8 @@ export interface Customer {
   last_reset_at: number;
   /** Clash 订阅模板:'' = 默认,内置模板 id,或自定义 https 地址 */
   sub_template: string;
+  /** 每条线路同时在线的 IP 数上限,0 = 不限 */
+  limit_ip: number;
   /** 订阅链接 /sub/<token> 里的 token,每个客户一个;重置后旧链接失效 */
   sub_token: string;
   /** 上次拉取订阅的时间和客户端(User-Agent) */
@@ -73,6 +75,7 @@ export interface CustomerInput {
   expire_at?: unknown;
   reset_day?: unknown;
   sub_template?: unknown;
+  limit_ip?: unknown;
 }
 
 /** 客户状态:到期 > 超额 > 正常 */
@@ -93,6 +96,13 @@ function validResetDay(value: unknown): number {
   if (value == null || value === '') return 0;
   const n = Number(value);
   if (!Number.isInteger(n) || n < 0 || n > 28) throw new InputError('每月清零日只能是 1 到 28,留空 = 不清零');
+  return n;
+}
+
+function validLimitIp(value: unknown): number {
+  if (value == null || value === '') return 0;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > 100) throw new InputError('同时在线 IP 数只能是 0 到 100,0 = 不限');
   return n;
 }
 
@@ -174,8 +184,8 @@ const newSubToken = () => randomBytes(18).toString('base64url');
 
 export function createCustomer(db: DB, input: CustomerInput, now = Date.now()): number {
   const info = db
-    .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_template, sub_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, validTemplate(input.sub_template), newSubToken(), now, now);
+    .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_template, limit_ip, sub_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, validTemplate(input.sub_template), validLimitIp(input.limit_ip), newSubToken(), now, now);
   return Number(info.lastInsertRowid);
 }
 
@@ -196,7 +206,7 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
   const cur = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as any;
   if (!cur) throw new InputError('客户不存在');
   const resetDay = input.reset_day === undefined ? cur.reset_day : validResetDay(input.reset_day);
-  db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, reset_day = ?, last_reset_at = ?, sub_template = ?, updated_at = ? WHERE id = ?').run(
+  db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, reset_day = ?, last_reset_at = ?, sub_template = ?, limit_ip = ?, updated_at = ? WHERE id = ?').run(
     input.name === undefined ? cur.name : validName(input.name),
     input.remark === undefined ? cur.remark : String(input.remark ?? '').trim(),
     input.quota_bytes === undefined ? cur.quota_bytes : nonNegativeInt(input.quota_bytes, '额度'),
@@ -205,6 +215,7 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
     // 刚设上 / 改了清零日:从现在起算,下一个清零日才清,不会设完马上把这期清掉
     resetDay !== cur.reset_day ? now : cur.last_reset_at,
     input.sub_template === undefined ? cur.sub_template : validTemplate(input.sub_template),
+    input.limit_ip === undefined ? cur.limit_ip : validLimitIp(input.limit_ip),
     now,
     id,
   );

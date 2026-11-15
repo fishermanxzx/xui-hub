@@ -6,6 +6,7 @@ import type { DB } from '../db';
 import type { EnforceResult } from '../lines/enforce';
 import type { Panel } from '../panels/repo';
 import type { Settings } from '../settings';
+import { subIpsSince } from '../subscription/fetchLog';
 import type { Message } from './send';
 
 export function alreadyNotified(db: DB, key: string): boolean {
@@ -94,4 +95,25 @@ export function resetEvent(c: CustomerView, failed: number, now: number): Messag
     text: `每月 ${c.reset_day} 号清零,本期之前已用 ${gb(c.used)}` + (failed ? `;${failed} 个客户端没清成,下轮再试` : ''),
     at: now,
   };
+}
+
+/** 订阅疑似被分享:24 小时内从 N 个以上不同 IP 拉过。每位客户每天最多提醒一次 */
+export function shareEvents(db: DB, s: Settings['notify'], now: number, customers = listCustomers(db)): Message[] {
+  if (!s.sub_share) return [];
+  const ips = subIpsSince(db, now - 86_400_000);
+  const out: Message[] = [];
+  for (const c of customers) {
+    const list = ips.get(c.id) ?? [];
+    if (list.length < s.sub_share_ips) continue;
+    const key = `share:${c.id}:${fmtDate(now)}`;
+    if (alreadyNotified(db, key)) continue;
+    markNotified(db, key, now);
+    out.push({
+      event: 'sub_shared',
+      title: `客户「${c.name}」的订阅 24 小时内被 ${list.length} 个 IP 拉取`,
+      text: `可能被转给别人用了:${list.slice(0, 10).join('、')}${list.length > 10 ? ' 等' : ''}\n确认是分享的话,在后台重置他的订阅链接`,
+      at: now,
+    });
+  }
+  return out;
 }

@@ -145,6 +145,8 @@ export interface Customer {
   last_reset_at: number;
   /** Clash 订阅模板:'' = 默认,内置模板 id,或自定义 https 地址 */
   sub_template: string;
+  /** 每条线路同时在线的 IP 数上限,0 = 不限 */
+  limit_ip: number;
   /** 订阅链接 /sub/<token> 里的 token */
   sub_token: string;
   /** 订阅链接;未配置 SUB_BASE_URL 时为 null,前端用当前地址拼 */
@@ -154,6 +156,8 @@ export interface Customer {
   /** 近几天拉订阅用过几个客户端(按 UA 区分)、来自几个 IP */
   sub_clients: number;
   sub_ips: number;
+  /** 近 24 小时拉订阅的 IP 数 */
+  sub_ips_day: number;
   created_at: number;
   updated_at: number;
   lines: Line[];
@@ -179,6 +183,7 @@ export interface CustomerInput {
   expire_at?: number;
   reset_day?: number;
   sub_template?: string;
+  limit_ip?: number;
 }
 
 export interface SubTemplate {
@@ -205,8 +210,20 @@ export interface Settings {
     quota_warn: boolean;
     quota_warn_pct: number;
     monthly_reset: boolean;
+    sub_share: boolean;
+    sub_share_ips: number;
   };
   backup: { daily: boolean };
+}
+
+/** 开放 API 的令牌;token(明文)只在创建时返回 */
+export interface ApiToken {
+  id: number;
+  name: string;
+  hint: string;
+  created_at: number;
+  last_used_at: number | null;
+  token?: string;
 }
 
 export interface BackupInfo {

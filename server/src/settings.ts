@@ -19,6 +19,9 @@ export interface Settings {
     quota_warn_pct: number;
     /** 按月清零完成 */
     monthly_reset: boolean;
+    /** 订阅疑似被分享:24 小时内从几个以上不同 IP 拉过 */
+    sub_share: boolean;
+    sub_share_ips: number;
   };
   backup: {
     /** 每天把数据库备份发到 Telegram */
@@ -29,7 +32,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   telegram: { token: '', chat_id: '' },
   webhook: { url: '' },
-  notify: { panel_down: true, customer_disabled: true, expiring: true, expiring_days: 3, quota_warn: true, quota_warn_pct: 90, monthly_reset: true },
+  notify: { panel_down: true, customer_disabled: true, expiring: true, expiring_days: 3, quota_warn: true, quota_warn_pct: 90, monthly_reset: true, sub_share: true, sub_share_ips: 5 },
   backup: { daily: false },
 };
 
@@ -79,6 +82,8 @@ export function updateSettings(db: DB, input: any): Settings {
       quota_warn: bool(n.quota_warn, cur.notify.quota_warn),
       quota_warn_pct: int(n.quota_warn_pct, cur.notify.quota_warn_pct, 50, 99, '流量百分比'),
       monthly_reset: bool(n.monthly_reset, cur.notify.monthly_reset),
+      sub_share: bool(n.sub_share, cur.notify.sub_share),
+      sub_share_ips: int(n.sub_share_ips, cur.notify.sub_share_ips, 2, 50, 'IP 个数'),
     },
     backup: { daily: bool(b.daily, cur.backup.daily) },
   };

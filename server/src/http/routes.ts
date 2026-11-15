@@ -25,18 +25,21 @@ import { importClients } from '../lines/import';
 import { resetCustomerUsage } from '../lines/reset';
 import { broadcast, channelsFor } from '../notify/send';
 import { getSettings, updateSettings } from '../settings';
-import { DEFAULT_TEMPLATE, TEMPLATES } from '../subscription/templates';
-import { listSubFetches, subClientCounts } from '../subscription/fetchLog';
+import { checkCustomTemplate, DEFAULT_TEMPLATE, isCustomTemplate, TEMPLATES, validTemplate, type TemplateFetcher } from '../subscription/templates';
+import { listSubFetches, subClientCounts, subIpsSince } from '../subscription/fetchLog';
+import { applyLimitIp } from '../lines/limit';
+import { createToken, deleteToken, listTokens, TOKEN_BLOCKED, verifyToken } from './tokens';
 import { enforceCustomers } from '../lines/enforce';
 import { openLine, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
 import { checkSocks } from '../socks/check';
 import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, planSocksUpdate, saveCheck, updateSocks } from '../socks/repo';
 import { errorText, mapLimit, panelKey, serial, using } from '../util';
 import { XUIError } from '../xui/client';
-import { LoginLimiter, passwordMatches, readCookie, requireAuth, SESSION_COOKIE, SESSION_MAX_AGE_MS, sessionCookie, sessionKeys, signSession, verifySession } from './auth';
+import { LoginLimiter, passwordMatches, readCookie, SESSION_COOKIE, SESSION_MAX_AGE_MS, sessionCookie, sessionKeys, signSession, verifySession } from './auth';
 
 export interface PanelClient extends ClientAdmin, PanelReader, PanelProbe, LineAdmin {
   setClientsEnabled(emails: string[], enable: boolean): Promise<void>;
+  updateClient(email: string, patch: Record<string, unknown>): Promise<void>;
   resetClientTraffic(email: string): Promise<void>;
   serverStatus(): Promise<{ panelVersion: string; xrayVersion: string; xrayState: string; xrayError: string }>;
   xrayVersions(): Promise<string[]>;
@@ -60,6 +63,8 @@ export interface RouteDeps {
   dataDir?: string;
   /** 恢复文件放好后调用:退出进程让 systemd / Docker 重启 */
   onRestore?: () => void;
+  /** 拉自定义订阅模板(保存前校验用);测试里换成假的 */
+  fetchTemplate?: TemplateFetcher;
 }
 
 type Handler = (req: Request, res: Response) => unknown;
@@ -122,7 +127,22 @@ export function apiRouter(deps: RouteDeps): Router {
     res.json({ ok: true });
   });
 
-  r.use(requireAuth(authEnabled, keys.current));
+  // 登录的会话,或开放 API 的令牌(Authorization: Bearer xh_…)。令牌碰不了设置、备份恢复和令牌管理;带错令牌和输错密码一样计入限流
+  r.use((req, res, next) => {
+    if (loggedIn(req)) return next();
+    const header = req.get('authorization');
+    if (header) {
+      const ip = req.ip ?? 'unknown';
+      if (!limiter.allow(ip)) return res.status(429).json({ error: '尝试次数过多,请 10 分钟后再试' });
+      if (verifyToken(db, header) == null) {
+        limiter.fail(ip);
+        return res.status(401).json({ error: '令牌无效' });
+      }
+      if (TOKEN_BLOCKED.test(req.path)) return res.status(403).json({ error: '这个接口不能用 API 令牌调用,要在后台登录后操作' });
+      return next();
+    }
+    res.status(401).json({ error: '未登录' });
+  });
 
   // ---------- 面板 ----------
   r.get('/panels', wrap(() => listPanels(db).map(view)));
@@ -260,7 +280,15 @@ export function apiRouter(deps: RouteDeps): Router {
   // 订阅链接:{SUB_BASE_URL}/sub/<客户的 token>;近几天拉过订阅的客户端数 / IP 数
   const withSub = (customers: CustomerView[]) => {
     const counts = subClientCounts(db, Date.now() - deps.subLogDays * 86_400_000);
-    return customers.map((c) => ({ ...c, sub_url: deps.subBaseUrl ? `${deps.subBaseUrl}/sub/${c.sub_token}` : null, sub_clients: counts.get(c.id)?.clients ?? 0, sub_ips: counts.get(c.id)?.ips ?? 0 }));
+    const day = subIpsSince(db, Date.now() - 86_400_000);
+    return customers.map((c) => ({
+      ...c,
+      sub_url: deps.subBaseUrl ? `${deps.subBaseUrl}/sub/${c.sub_token}` : null,
+      sub_clients: counts.get(c.id)?.clients ?? 0,
+      sub_ips: counts.get(c.id)?.ips ?? 0,
+      // 近 24 小时拉订阅的 IP 数(疑似分享看这个)
+      sub_ips_day: day.get(c.id)?.length ?? 0,
+    }));
   };
   const plainCustomer = (id: number) => {
     const c = getCustomer(db, id);
@@ -280,14 +308,44 @@ export function apiRouter(deps: RouteDeps): Router {
     }),
   );
   r.get('/customers/:id/sub-fetches', wrap((req) => ({ days: deps.subLogDays, rows: listSubFetches(db, customerOf(idParam(req)).id) })));
-  r.post('/customers', wrap((req) => customerOf(createCustomer(db, req.body ?? {}))));
-  // 改了额度 / 到期马上执行一次停用 / 恢复,不等下一轮同步
+  /** 自定义模板地址(新填的 / 改了的)保存前试拉一次,取不到或不是模板就不让存 */
+  const checkTemplate = async (input: unknown, current = '') => {
+    if (input === undefined) return;
+    const next = validTemplate(input);
+    if (next !== current && isCustomTemplate(next)) await checkCustomTemplate(next, deps.fetchTemplate);
+  };
+  r.post(
+    '/customers',
+    wrap(async (req) => {
+      await checkTemplate(req.body?.sub_template);
+      return customerOf(createCustomer(db, req.body ?? {}));
+    }),
+  );
+  // 改了额度 / 到期马上执行一次停用 / 恢复,不等下一轮同步;改了同时在线 IP 数就写到各线路的客户端上
   r.patch(
     '/customers/:id',
     wrap(async (req) => {
-      updateCustomer(db, idParam(req), req.body ?? {});
-      const ops = await enforceCustomers(db, deps.clientFor, idParam(req));
-      return { ...customerOf(idParam(req)), ops };
+      const before = plainCustomer(idParam(req));
+      await checkTemplate(req.body?.sub_template, before.sub_template);
+      updateCustomer(db, before.id, req.body ?? {});
+      const after = plainCustomer(before.id);
+      const limit_failed = after.limit_ip !== before.limit_ip ? await applyLimitIp(db, after.lines, after.limit_ip, deps.clientFor) : [];
+      const ops = await enforceCustomers(db, deps.clientFor, before.id);
+      return { ...customerOf(before.id), ops, limit_failed };
+    }),
+  );
+  // 续期:在现在的到期日上加 days 天(已过期或没设到期日的从现在起算);reset_usage 顺带把流量清零。给发卡 / 机器人用
+  r.post(
+    '/customers/:id/renew',
+    wrap(async (req) => {
+      const c = plainCustomer(idParam(req));
+      const days = Number(req.body?.days);
+      if (!Number.isInteger(days) || days < 1 || days > 3650) throw new InputError('days 要是 1 到 3650 的整数');
+      const now = Date.now();
+      updateCustomer(db, c.id, { expire_at: Math.max(c.expire_at, now) + days * 86_400_000 });
+      const failed = req.body?.reset_usage ? await resetCustomerUsage(db, c, deps.clientFor) : [];
+      const ops = await enforceCustomers(db, deps.clientFor, c.id);
+      return { ...customerOf(c.id), failed, ops };
     }),
   );
   // 清零已用:把各线路客户端在面板上的流量清零,超额停掉的随之恢复
@@ -305,7 +363,10 @@ export function apiRouter(deps: RouteDeps): Router {
     '/customers/:id/lines/import',
     wrap(async (req) => {
       const r = await importClients(db, idParam(req), req.body ?? {}, deps.clientFor);
-      return { ...r, customer: customerOf(idParam(req)) };
+      // 客户设了同时在线 IP 数的,归进来的客户端也写上(没设就不动面板)
+      const c = plainCustomer(idParam(req));
+      const limit_failed = c.limit_ip > 0 ? await applyLimitIp(db, r.lines, c.limit_ip, deps.clientFor) : [];
+      return { ...r, limit_failed, customer: customerOf(c.id) };
     }),
   );
   // 立即同步全部面板并执行额度 / 到期
@@ -404,6 +465,11 @@ export function apiRouter(deps: RouteDeps): Router {
       return { results: await broadcast(channels, { event: 'test', title: 'xui-hub 测试通知', text: '收到这条说明通知渠道配置正确。', at: Date.now() }) };
     }),
   );
+
+  // ---------- 开放 API 的令牌(只能登录后管理) ----------
+  r.get('/tokens', wrap(() => listTokens(db)));
+  r.post('/tokens', wrap((req) => createToken(db, req.body ?? {})));
+  r.delete('/tokens/:id', wrap((req) => void deleteToken(db, idParam(req))));
 
   // ---------- 备份 / 恢复 ----------
   r.get(

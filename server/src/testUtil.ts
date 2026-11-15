@@ -43,6 +43,7 @@ export function fakePanels(data: Record<string, FakePanel>) {
       addClient: async (client: any, inboundIds) => void d.clients.push({ ...client, inboundIds }),
       deleteClient: async (email) => void (d.clients = d.clients.filter((c) => c.email !== email)),
       setClientsEnabled: async (emails, enable) => d.clients.filter((c) => emails.includes(c.email)).forEach((c) => (c.enable = enable)),
+      updateClient: async (email, patch) => d.clients.filter((c) => c.email === email).forEach((c) => Object.assign(c, patch)),
       resetClientTraffic: async (email) => d.clients.filter((c) => c.email === email).forEach((c) => (c.traffic = { ...c.traffic, up: 0, down: 0 })),
       addInbound: async (body: any) => void d.inbounds.push({ ...structuredClone(body), id: d.inbounds.length + 1, tag: `in-${body.port}` }),
       deleteInbound: async (id) => void (d.inbounds = d.inbounds.filter((i) => i.id !== id)),

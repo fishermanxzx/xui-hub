@@ -19,7 +19,7 @@ import { mihomoTemplateMatcher } from './subscription/mihomo';
 import { defaultFetcher } from './subscription/service';
 import { enforceCustomers } from './lines/enforce';
 import { runMonthlyResets } from './lines/reset';
-import { alreadyNotified, enforceEvents, markNotified, panelEvents, resetEvent, thresholdEvents } from './notify/events';
+import { alreadyNotified, enforceEvents, markNotified, panelEvents, resetEvent, shareEvents, thresholdEvents } from './notify/events';
 import { broadcast, channelsFor, type Message } from './notify/send';
 import { checkAllPanels } from './panels/check';
 import { listPanels, type Panel } from './panels/repo';
@@ -137,6 +137,7 @@ const check = noOverlap(async () => {
     const customers = listCustomers(db);
     if (settings.customer_disabled) messages.push(...enforceEvents(ops, customers, now));
     messages.push(...thresholdEvents(db, settings, now, customers));
+    messages.push(...shareEvents(db, settings, now, customers));
     await notify(messages);
     await dailyBackup(now);
     pruneSubFetches(db, env.subLogDays);

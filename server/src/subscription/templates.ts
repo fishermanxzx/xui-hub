@@ -53,3 +53,34 @@ export function templateUrl(value: string | null | undefined): string {
   if (!value) return byId.get(DEFAULT_TEMPLATE)!.url;
   return byId.get(value)?.url ?? value;
 }
+
+export const isCustomTemplate = (value: string) => !!value && !byId.has(value);
+
+export type TemplateFetcher = (url: string) => Promise<{ status: number; body: string }>;
+
+/** 拉模板:最多等 8 秒、读 512 KB,不跟到别的协议上去 */
+export const fetchTemplate: TemplateFetcher = async (url) => {
+  const res = await fetch(url, { signal: AbortSignal.timeout(8000), redirect: 'follow', headers: { 'User-Agent': 'xui-hub' } });
+  return { status: res.status, body: (await res.text()).slice(0, 512_000) };
+};
+
+/**
+ * 自定义模板地址保存前试拉一次:能取到、看着是 subconverter 的模板(有 custom_proxy_group= 或 ruleset= 行)才让存。
+ * 不然填错了要等客户拉订阅时才报错。内网 / 本机地址不让填
+ */
+export async function checkCustomTemplate(url: string, fetcher: TemplateFetcher = fetchTemplate): Promise<void> {
+  const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|0\.)/.test(host) || host === '::1' || /^f[cde]/i.test(host) && host.includes(':')) {
+    throw new InputError('模板地址不能是本机或内网地址');
+  }
+  let got: { status: number; body: string };
+  try {
+    got = await fetcher(url);
+  } catch (e) {
+    throw new InputError(`模板地址取不到:${e instanceof Error ? e.message : e}。确认这台服务器能访问它`);
+  }
+  if (got.status !== 200) throw new InputError(`模板地址返回 ${got.status},不是一份能用的模板`);
+  if (!/^\s*(custom_proxy_group|ruleset)\s*=/m.test(got.body)) {
+    throw new InputError('这个地址的内容不像 subconverter 的模板(里面没有 custom_proxy_group= 或 ruleset= 行)。要填 .ini 文件的原始地址,不是网页地址');
+  }
+}

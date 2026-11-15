@@ -3,7 +3,9 @@
 import { onMounted, ref } from 'vue';
 import { api } from '../api';
 import { toast, toastError } from '../toast';
-import type { Settings } from '../types';
+import { copyText } from '../clipboard';
+import { fmtAgo } from '../format';
+import type { ApiToken, Settings } from '../types';
 
 const s = ref<Settings | null>(null);
 const saving = ref(false);
@@ -17,6 +19,43 @@ async function load() {
   }
 }
 onMounted(load);
+
+// ---------- API 令牌 ----------
+const tokens = ref<ApiToken[]>([]);
+const tokenName = ref('');
+/** 刚建好的令牌(明文只有这一次) */
+const fresh = ref<ApiToken | null>(null);
+const origin = window.location.origin;
+
+async function loadTokens() {
+  try {
+    tokens.value = await api.tokens();
+  } catch (e) {
+    toastError(e);
+  }
+}
+onMounted(loadTokens);
+
+async function addToken() {
+  try {
+    fresh.value = await api.createToken(tokenName.value);
+    tokenName.value = '';
+    await loadTokens();
+  } catch (e) {
+    toastError(e);
+  }
+}
+
+async function removeToken(t: ApiToken) {
+  if (!confirm(`删除令牌「${t.name}」?用它的程序会立刻调不通。`)) return;
+  try {
+    await api.deleteToken(t.id);
+    if (fresh.value?.id === t.id) fresh.value = null;
+    await loadTokens();
+  } catch (e) {
+    toastError(e);
+  }
+}
 
 async function save(): Promise<boolean> {
   if (!s.value) return false;
@@ -108,11 +147,41 @@ async function restore() {
         <label class="row small"><input v-model="s.notify.expiring" type="checkbox" />客户快到期:提前 <input v-model.number="s.notify.expiring_days" type="number" min="1" max="30" class="num" /> 天提醒一次</label>
         <label class="row small"><input v-model="s.notify.quota_warn" type="checkbox" />客户流量用到额度的 <input v-model.number="s.notify.quota_warn_pct" type="number" min="50" max="99" class="num" /> % 时提醒一次</label>
         <label class="row small"><input v-model="s.notify.monthly_reset" type="checkbox" />按月清零完成</label>
+        <label class="row small"><input v-model="s.notify.sub_share" type="checkbox" />订阅疑似被分享:24 小时内从 <input v-model.number="s.notify.sub_share_ips" type="number" min="2" max="50" class="num" /> 个以上不同 IP 拉取(每位客户每天最多提醒一次,客户卡片上也会标出来)</label>
       </div>
       <div class="row actions">
         <button class="primary" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
         <button :disabled="saving || testing" @click="test">{{ testing ? '发送中…' : '保存并发一条测试通知' }}</button>
       </div>
+    </section>
+
+    <section class="sheet block">
+      <h3>开放 API</h3>
+      <p class="muted small">给发卡站、机器人这类程序用:请求头带 <code>Authorization: Bearer 令牌</code> 就能调后台的接口(建客户、续期、开线路、取订阅链接)。令牌改不了这页的设置,也碰不了备份恢复。接口说明见仓库的 <code>docs/api.md</code>。</p>
+      <form class="row actions" @submit.prevent="addToken">
+        <input v-model="tokenName" required maxlength="64" placeholder="令牌用在哪儿,如:发卡站" class="grow" />
+        <button class="primary">生成令牌</button>
+      </form>
+      <div v-if="fresh" class="fresh">
+        <p class="small"><strong>「{{ fresh.name }}」的令牌,只显示这一次,现在就复制保存:</strong></p>
+        <div class="row">
+          <input readonly :value="fresh.token" class="grow mono" @focus="($event.target as HTMLInputElement).select()" />
+          <button type="button" @click="copyText(fresh.token ?? '', '令牌已复制')">复制</button>
+        </div>
+        <p class="muted small">试一下:<code>curl -H "Authorization: Bearer {{ fresh.token }}" {{ origin }}/api/customers</code></p>
+      </div>
+      <table v-if="tokens.length" class="tokens">
+        <thead><tr><th>名称</th><th>令牌</th><th>创建</th><th>上次使用</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="t in tokens" :key="t.id">
+            <td>{{ t.name }}</td>
+            <td class="mono muted">xh_…{{ t.hint }}</td>
+            <td class="muted small">{{ fmtAgo(t.created_at) }}</td>
+            <td class="muted small">{{ t.last_used_at ? fmtAgo(t.last_used_at) : '还没用过' }}</td>
+            <td><button type="button" class="link danger" @click="removeToken(t)">删除</button></td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <section class="sheet block">
@@ -197,6 +266,45 @@ code {
 }
 .btn:hover {
   background: var(--hover);
+}
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.fresh {
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fresh .row {
+  gap: 8px;
+}
+.fresh code {
+  word-break: break-all;
+}
+.tokens {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.tokens th,
+.tokens td {
+  text-align: left;
+  padding: 6px 8px;
+  border-top: 1px solid var(--rule);
+}
+.tokens th {
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--ink-soft);
+  border-top: 0;
 }
 .restore .label {
   display: block;

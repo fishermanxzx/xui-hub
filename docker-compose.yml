@@ -22,8 +22,9 @@ services:
     volumes:
       # 数据库(含面板 token)。宿主机目录需属于 uid 1000:mkdir -p data && chown 1000:1000 data
       - ./data:/data
-      # 要 HTTPS 就把证书目录挂进来,并在 .env 里填 TLS_CERT_FILE=/cert/fullchain.pem、TLS_KEY_FILE=/cert/privkey.pem
-      # - ./cert:/cert:ro
+      # HTTPS 证书目录。申请证书:在这个目录里执行 bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/scripts/docker-ssl.sh)
+      # 或者自己把证书放进 ./cert,在 .env 里填 TLS_CERT_FILE=/cert/fullchain.pem、TLS_KEY_FILE=/cert/privkey.pem
+      - ./cert:/cert:ro
     logging: &logging
       driver: json-file
       options:

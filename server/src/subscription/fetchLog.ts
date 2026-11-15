@@ -48,3 +48,11 @@ export function subClientCounts(db: DB, since: number): Map<number, { clients: n
 export function pruneSubFetches(db: DB, days: number, now = Date.now()): number {
   return db.prepare('DELETE FROM sub_fetches WHERE at < ?').run(now - days * DAY_MS).changes;
 }
+
+/** since 以来各客户的订阅从哪些 IP 拉过(成功的才算),给「疑似分享」用 */
+export function subIpsSince(db: DB, since: number): Map<number, string[]> {
+  const rows = db.prepare("SELECT DISTINCT customer_id, ip FROM sub_fetches WHERE at >= ? AND status = 200 AND ip <> ''").all(since) as { customer_id: number; ip: string }[];
+  const out = new Map<number, string[]>();
+  for (const r of rows) out.set(r.customer_id, [...(out.get(r.customer_id) ?? []), r.ip]);
+  return out;
+}

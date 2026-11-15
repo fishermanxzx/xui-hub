@@ -133,6 +133,20 @@ export const MIGRATIONS: string[] = [
   -- 客户自己的 Clash 订阅模板:'' = 默认(ACL4SSR_Online_Mini),内置模板的 id,或自定义的 https 地址
   ALTER TABLE customers ADD COLUMN sub_template TEXT NOT NULL DEFAULT '';
   `,
+  `
+  -- 每条线路同时在线的 IP 数上限(写到面板客户端的 limitIp),0 = 不限
+  ALTER TABLE customers ADD COLUMN limit_ip INTEGER NOT NULL DEFAULT 0;
+
+  -- 开放 API 的令牌:只存 SHA-256,明文只在创建时给一次;hint 是明文的末 4 位,方便认是哪一个
+  CREATE TABLE api_tokens (
+    id           INTEGER PRIMARY KEY,
+    name         TEXT NOT NULL,
+    hash         TEXT NOT NULL UNIQUE,
+    hint         TEXT NOT NULL,
+    created_at   INTEGER NOT NULL,
+    last_used_at INTEGER
+  );
+  `,
 ];
 
 export function openDb(file: string): DB {
