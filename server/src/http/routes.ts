@@ -40,7 +40,6 @@ import { LoginLimiter, passwordMatches, readCookie, SESSION_COOKIE, SESSION_MAX_
 
 export interface PanelClient extends ClientAdmin, PanelReader, PanelProbe, LineAdmin {
   setClientsEnabled(emails: string[], enable: boolean): Promise<void>;
-  updateClient(email: string, patch: Record<string, unknown>): Promise<void>;
   resetClientTraffic(email: string): Promise<void>;
   serverStatus(): Promise<{ panelVersion: string; xrayVersion: string; xrayState: string; xrayError: string }>;
   xrayVersions(): Promise<string[]>;

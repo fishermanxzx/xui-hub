@@ -7,7 +7,7 @@ import TopologyGraph from '../components/TopologyGraph.vue';
 import Modal from '../components/Modal.vue';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
-import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, region, shortUa, STATE_LABEL, subUrl } from '../format';
+import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, STATE_LABEL, subUrl } from '../format';
 import { toast, toastError } from '../toast';
 import type { ClientProtocol, Customer, EnforceOp, Line, LineKind, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
 

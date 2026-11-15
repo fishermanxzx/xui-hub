@@ -9,7 +9,6 @@ import { shareEvents } from '../notify/events';
 import { DEFAULT_SETTINGS } from '../settings';
 import { checkCustomTemplate, type TemplateFetcher } from '../subscription/templates';
 import { fakePanels, memoryDb, type FakePanel } from '../testUtil';
-import { clientBody } from '../xui/client';
 import { apiRouter } from './routes';
 import { createToken, listTokens, verifyToken } from './tokens';
 
@@ -88,11 +87,6 @@ test('续期接口:在到期日上加天数,过期的从现在起算,可以顺�
   } finally {
     await close();
   }
-});
-
-test('改面板客户端:记录里的 uuid 当 id 带回去,密钥和开关原样,不认识的字段不带', () => {
-  const rec = { id: 12, uuid: 'u-1', email: 'a', password: 'p', auth: 'k', subId: 's', flow: 'xtls-rprx-vision', enable: true, limitIp: 0, totalGB: 5, allowedIPs: '', keepAlive: 0, reverse: null, createdAt: 1 };
-  assert.deepEqual(clientBody(rec), { id: 'u-1', email: 'a', password: 'p', flow: 'xtls-rprx-vision', auth: 'k', limitIp: 0, totalGB: 5, enable: true, subId: 's' });
 });
 
 test('自定义模板:保存前试拉,取不到 / 不是模板 / 内网地址都不让存;没改就不再拉', async () => {

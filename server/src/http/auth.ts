@@ -1,7 +1,7 @@
 // 后台登录:单一管理员密码,HMAC 签名的会话 cookie。未设置 ADMIN_PASSWORD 时(仅限本机监听)不鉴权。
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import type { NextFunction, Request, Response } from 'express';
+import type { Request } from 'express';
 import { getMeta, setMeta, type DB } from '../db';
 
 export const SESSION_COOKIE = 'xuihub_session';
@@ -90,11 +90,4 @@ export class LoginLimiter {
   clear(ip: string): void {
     this.attempts.delete(ip);
   }
-}
-
-export function requireAuth(enabled: boolean, key: () => string) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    if (!enabled || verifySession(key(), readCookie(req, SESSION_COOKIE))) return next();
-    res.status(401).json({ error: '未登录' });
-  };
 }

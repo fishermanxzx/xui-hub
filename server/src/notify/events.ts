@@ -22,6 +22,11 @@ export function forgetNotified(db: DB, prefix: string): void {
   db.prepare("DELETE FROM notified WHERE key LIKE ? || '%'").run(prefix);
 }
 
+/** 按天记的 key(疑似分享、每日备份)过了 30 天就没用了,清掉 */
+export function pruneNotified(db: DB, now = Date.now()): void {
+  db.prepare("DELETE FROM notified WHERE (key LIKE 'share:%' OR key LIKE 'backup:%') AND at < ?").run(now - 30 * 86_400_000);
+}
+
 const GB = 1024 ** 3;
 const gb = (n: number) => `${(n / GB).toFixed(n >= 10 * GB ? 0 : 1)} GB`;
 const fmtDate = (ms: number) => {

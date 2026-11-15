@@ -160,6 +160,9 @@ test('OAuth:发现文档、动态注册、授权页要后台密码、PKCE 换令
     // 回调地址 / client 不对:出错误页,不跳转
     assert.equal((await fetch(`${as.authorization_endpoint}?${new URLSearchParams({ ...params, redirect_uri: 'https://evil.example/cb' })}`, { redirect: 'manual' })).status, 400);
     assert.equal((await fetch(`${as.authorization_endpoint}?${new URLSearchParams({ ...params, client_id: 'nope' })}`, { redirect: 'manual' })).status, 400);
+    // resource 指向别的站(哪怕前缀和这里一样):带着 error 跳回客户端
+    const evilResource = await fetch(`${as.authorization_endpoint}?${new URLSearchParams({ ...params, resource: `${base}.evil.example/mcp` })}`, { redirect: 'manual' });
+    assert.deepEqual([evilResource.status, new URL(evilResource.headers.get('location')!).searchParams.get('error')], [302, 'invalid_target']);
     // 没有 PKCE:带着 error 跳回客户端
     const noPkce = await fetch(`${as.authorization_endpoint}?${new URLSearchParams({ ...params, code_challenge: '' })}`, { redirect: 'manual' });
     assert.deepEqual([noPkce.status, new URL(noPkce.headers.get('location')!).searchParams.get('error')], [302, 'invalid_request']);

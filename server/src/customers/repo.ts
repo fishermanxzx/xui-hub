@@ -51,8 +51,6 @@ export interface Customer {
   sub_template: string;
   /** 能拉订阅的设备数上限,0 = 不限 */
   limit_devices: number;
-  /** 0.9.0 写到面板上的 limitIp,等着清回 0;不再使用 */
-  limit_ip: number;
   /** 订阅链接 /sub/<token> 里的 token,每个客户一个;重置后旧链接失效 */
   sub_token: string;
   /** 上次拉取订阅的时间和客户端(User-Agent) */
@@ -164,7 +162,8 @@ function withLines(db: DB, rows: any[], now = Date.now()): CustomerView[] {
   const all = rows.length === 1 ? linesOf(db, rows[0].id) : (db.prepare(`${LINE_SQL} ORDER BY l.id`).all() as any[]).map(toLine);
   const byCustomer = new Map<number, Line[]>();
   for (const l of all) byCustomer.set(l.customer_id, [...(byCustomer.get(l.customer_id) ?? []), l]);
-  return rows.map((c) => {
+  // limit_ip 是 0.9.0 留下的列(当时往面板写 limitIp),早已不用,不往外带
+  return rows.map(({ limit_ip: _unused, ...c }) => {
     const lines = byCustomer.get(c.id) ?? [];
     const used_up = lines.reduce((s, l) => s + l.up, 0);
     const used_down = lines.reduce((s, l) => s + l.down, 0);
@@ -221,11 +220,6 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
     now,
     id,
   );
-}
-
-/** 面板上的 limitIp 已经清回 0 */
-export function clearLegacyLimitIp(db: DB, id: number): void {
-  db.prepare('UPDATE customers SET limit_ip = 0 WHERE id = ?').run(id);
 }
 
 export function markReset(db: DB, id: number, now = Date.now()): void {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { needsInboundStats, normalizeClients } from './normalize';
+import { normalizeClients } from './normalize';
 
 test('v3 client 自带 traffic', () => {
   const clients = [
@@ -17,7 +17,6 @@ test('v3 client 自带 traffic', () => {
       traffic: { up: 1, down: 2, lastOnline: 1_700_000_000, lastSubFetch: 1_700_000_000_000 },
     },
   ];
-  assert.equal(needsInboundStats(clients), false);
   const [a] = normalizeClients(clients);
   assert.equal(a.up + a.down, 3);
   assert.equal(a.totalBytes, 100);
@@ -31,7 +30,6 @@ test('缺少 traffic 时用入站 clientStats 兜底,同 email 不累加', () =>
     { id: 1, clientStats: [{ email: 'b', up: 5, down: 5 }] },
     { id: 2, clientStats: [{ email: 'b', up: 5, down: 5 }] },
   ];
-  assert.equal(needsInboundStats(clients), true);
   const [b] = normalizeClients(clients, inbounds);
   assert.equal(b.up + b.down, 10);
   assert.equal(b.enable, false);

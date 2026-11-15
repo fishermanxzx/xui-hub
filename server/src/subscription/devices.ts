@@ -9,6 +9,8 @@ import { InputError } from '../panels/repo';
 const DAY_MS = 86_400_000;
 /** 这么多天没再拉过订阅的设备自动清掉,名额让出来(客户端一般每天更新一次订阅) */
 export const DEVICE_IDLE_DAYS = 30;
+/** 没设上限的客户最多记这么多台(再多的照样放行,只是不记),免得有人拿着订阅链接换 UA 把表刷大 */
+const MAX_TRACKED = 200;
 
 export interface SubDevice {
   id: number;
@@ -54,7 +56,7 @@ export function admitDevice(db: DB, customerId: number, limit: number, d: { key:
     db.prepare('UPDATE sub_devices SET key = ?, ua = ?, last_at = ? WHERE id = ?').run(d.key, ua, now, upgraded.id);
     return true;
   }
-  db.prepare('INSERT INTO sub_devices (customer_id, key, ua, ip, first_at, last_at) VALUES (?, ?, ?, ?, ?, ?)').run(customerId, d.key, ua, ip, now, now);
+  if (known.length < MAX_TRACKED) db.prepare('INSERT INTO sub_devices (customer_id, key, ua, ip, first_at, last_at) VALUES (?, ?, ?, ?, ?, ?)').run(customerId, d.key, ua, ip, now, now);
   return true;
 }
 

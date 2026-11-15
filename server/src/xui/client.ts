@@ -11,16 +11,6 @@ export interface XUIConnection {
   token: string;
 }
 
-/** /clients/get 返回的是库里的记录,字段名和提交用的 client 不完全一样(记录的 id 是行号,uuid 才是 client 的 id) */
-const CLIENT_FIELDS = ['security', 'password', 'flow', 'auth', 'limitIp', 'limitHwid', 'totalGB', 'expiryTime', 'enable', 'tgId', 'subId', 'group', 'comment', 'reset', 'resetDay', 'resetWeekday', 'resetMax', 'trafficReset', 'trafficResetDay'];
-
-export function clientBody(rec: any): Record<string, unknown> {
-  const body: Record<string, unknown> = { id: String(rec.uuid ?? ''), email: rec.email };
-  for (const k of CLIENT_FIELDS) if (rec[k] !== undefined && rec[k] !== null) body[k] = rec[k];
-  if (rec.reverse) body.reverse = rec.reverse;
-  return body;
-}
-
 export class XUIClient {
   private dispatcher: Dispatcher;
 
@@ -86,17 +76,6 @@ export class XUIClient {
   /** 新建 client 并挂到这些入站上 */
   async addClient(client: unknown, inboundIds: number[]): Promise<void> {
     await this.req('POST', '/clients/add', { client, inboundIds });
-  }
-
-  /**
-   * 改 client 的几个字段。面板的 update 接口没传的字段会被清成零值(3.11 上只传 limitIp 会把客户端停用、flow 清掉),
-   * 所以先整份读出,改完整份写回;密钥(uuid / password / auth / subId)原样带回去
-   */
-  async updateClient(email: string, patch: Record<string, unknown>): Promise<void> {
-    const got = await this.req<any>('GET', `/clients/get/${encodeURIComponent(email)}`);
-    const rec = got?.client ?? got;
-    if (!rec?.email) throw new XUIError(`面板上没有客户端 ${email}`);
-    await this.req('POST', `/clients/update/${encodeURIComponent(email)}`, { ...clientBody(rec), ...patch, email });
   }
 
   /** 批量启用 / 停用 client(面板会重载 Xray) */

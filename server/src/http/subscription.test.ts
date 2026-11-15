@@ -5,8 +5,8 @@ import type { AddressInfo } from 'node:net';
 import { addLine, createCustomer, getCustomer, resetSubToken, updateCustomer, updateLineStats } from '../customers/repo';
 import type { Converter } from '../subscription/convert';
 import { listSubFetches, pruneSubFetches } from '../subscription/fetchLog';
-import { DEFAULT_CONVERT_OPTIONS } from '../subscription/format';
 import type { LinkFetcher } from '../subscription/service';
+import { templateUrl } from '../subscription/templates';
 import { addPanel, memoryDb } from '../testUtil';
 import { subscriptionRouter, type SubscriptionDeps } from './subscription';
 
@@ -18,7 +18,7 @@ const V2RAYN_UA = 'v2rayN/7.10.5';
 const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15';
 const NODES = 'vless://x@1.1.1.1:1#A\nhysteria2://y@2.2.2.2:2#B';
 const USERINFO = 'upload=0; download=0; total=1000; expire=4102444800';
-const CONFIG = DEFAULT_CONVERT_OPTIONS.config;
+const CONFIG = templateUrl('');
 
 const fetcher: LinkFetcher = async (panel) => (panel.name === 'a' ? ['vless://x@1.1.1.1:1#A'] : ['hysteria2://y@2.2.2.2:2#B']);
 

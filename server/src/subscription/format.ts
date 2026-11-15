@@ -53,10 +53,9 @@ export function targetFromParam(value: unknown): Target | null {
   return typeof value === 'string' ? (PARAM_ALIASES[value.toLowerCase()] ?? null) : null;
 }
 
-/** 经 subconverter 转换 Clash / Surge 时的参数;规则用 ACL4SSR Online Mini */
+/** 经 subconverter 转换 Clash / Surge 时的参数;模板(config)按客户另给,见 templates.ts */
 export const DEFAULT_CONVERT_OPTIONS: Record<string, string> = {
   insert: 'false',
-  config: 'https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/config/ACL4SSR_Online_Mini.ini',
   emoji: 'true',
   list: 'false',
   tfo: 'false',

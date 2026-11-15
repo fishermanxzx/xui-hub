@@ -10,7 +10,6 @@ export interface ClientSnapshot {
   up: number;
   down: number;
   lastOnline: number;
-  limitIp: number;
 }
 
 function num(value: unknown): number {
@@ -28,11 +27,6 @@ function text(value: unknown): string | null {
 function ms(value: unknown): number {
   const n = num(value);
   return n > 0 && n < 1e12 ? n * 1000 : n;
-}
-
-/** v3 的 client 自带 traffic;缺失时需要入站的 clientStats 兜底 */
-export function needsInboundStats(clients: any[]): boolean {
-  return clients.some((c) => c?.email && (c.traffic == null || typeof c.traffic !== 'object'));
 }
 
 /** email -> 流量行。一个 email 在面板上只有一行流量;若重复出现取较大者,不累加 */
@@ -69,7 +63,6 @@ export function normalizeClients(clients: any[], inbounds: any[] = []): ClientSn
       up: num(traffic.up),
       down: num(traffic.down),
       lastOnline: ms(traffic.lastOnline),
-      limitIp: num(c.limitIp),
     });
   }
   return out;

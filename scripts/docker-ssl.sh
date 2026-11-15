@@ -123,7 +123,6 @@ wait_up() {
 
 use_cert() {
   local host="$1"
-  ensure_mount || return 1
   env_set TLS_CERT_FILE /cert/fullchain.pem
   env_set TLS_KEY_FILE /cert/privkey.pem
   compose up -d >/dev/null 2>&1 || { err "docker compose up -d 失败,手动执行看报错"; return 1; }
@@ -136,6 +135,8 @@ use_cert() {
 }
 
 issue_domain() {
+  # 先确认 compose 里证书目录挂得上,免得签完才发现用不了
+  ensure_mount || return 1
   install_acme || return 1
   local domain="${1:-}"
   while ! is_domain "$domain"; do read -r -p "域名(A 记录已指向本机):" domain; done
@@ -148,6 +149,8 @@ issue_domain() {
 }
 
 issue_ip() {
+  # 先确认 compose 里证书目录挂得上,免得签完才发现用不了
+  ensure_mount || return 1
   install_acme || return 1
   local ip="${1:-}" a
   if [ -z "$ip" ]; then ip="$(public_ip)"; read -r -p "给哪个公网 IPv4 申请证书 [$ip]:" a; ip="${a:-$ip}"; fi
@@ -162,6 +165,8 @@ issue_ip() {
 }
 
 issue_cf() {
+  # 先确认 compose 里证书目录挂得上,免得签完才发现用不了
+  ensure_mount || return 1
   install_acme || return 1
   local domain="${1:-}" token="${CF_Token:-}"
   while ! is_domain "$domain"; do read -r -p "域名(会同时签 *.域名 通配符):" domain; done

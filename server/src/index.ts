@@ -8,8 +8,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import { join, resolve } from 'node:path';
 import { applyPendingRestore, backupBuffer, backupName } from './backup';
 import { tcpOpen } from './clients/create';
-import { clearLegacyLimitIp, listCustomers } from './customers/repo';
-import { applyLimitIp } from './lines/limit';
+import { listCustomers } from './customers/repo';
 import { pruneDevices } from './subscription/devices';
 import { openDb } from './db';
 import { env, isLoopbackHost, PROJECT_ROOT } from './env';
@@ -24,7 +23,7 @@ import { mihomoTemplateMatcher } from './subscription/mihomo';
 import { defaultFetcher } from './subscription/service';
 import { enforceCustomers } from './lines/enforce';
 import { runMonthlyResets } from './lines/reset';
-import { alreadyNotified, enforceEvents, markNotified, panelEvents, resetEvent, shareEvents, thresholdEvents } from './notify/events';
+import { alreadyNotified, enforceEvents, markNotified, panelEvents, pruneNotified, resetEvent, shareEvents, thresholdEvents } from './notify/events';
 import { broadcast, channelsFor, type Message } from './notify/send';
 import { checkAllPanels } from './panels/check';
 import { listPanels, type Panel } from './panels/repo';
@@ -166,12 +165,7 @@ const check = noOverlap(async () => {
     await dailyBackup(now);
     pruneSubFetches(db, env.subLogDays);
     pruneDevices(db, now);
-    // 0.9.0 往面板客户端写过 limitIp 的,清回 0(设备数上限现在在订阅链接上做);面板连不上的下轮再试
-    for (const c of customers.filter((c) => c.limit_ip > 0)) {
-      const failed = await applyLimitIp(db, c.lines, 0, clientFor);
-      if (!failed.length) clearLegacyLimitIp(db, c.id);
-      else console.error(`清掉 ${c.name} 在面板上的 limitIp 没成:${failed.map((f) => `${f.line}(${f.error})`).join('、')}`);
-    }
+    pruneNotified(db, now);
   } catch (e) {
     console.error('同步失败', e);
   }

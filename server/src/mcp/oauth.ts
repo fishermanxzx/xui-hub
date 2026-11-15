@@ -84,6 +84,15 @@ export function redirectAllowed(registered: string[], given: string): boolean {
   });
 }
 
+/** 两个地址是不是同一个源(协议 + 主机 + 端口) */
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
 export function pkceMatches(challenge: string, verifier: unknown): boolean {
   if (typeof verifier !== 'string' || !/^[A-Za-z0-9._~-]{43,128}$/.test(verifier)) return false;
   const a = Buffer.from(createHash('sha256').update(verifier).digest('base64url'));
@@ -142,6 +151,7 @@ function issueTokens(db: DB, grantId: number, now: number) {
   const access = ACCESS_PREFIX + rand();
   const refresh = REFRESH_PREFIX + rand();
   db.prepare('DELETE FROM oauth_access WHERE expires_at < ?').run(now);
+  db.prepare('DELETE FROM oauth_grants WHERE refresh_expires_at < ?').run(now);
   db.prepare('INSERT INTO oauth_access (hash, grant_id, expires_at) VALUES (?, ?, ?)').run(sha(access), grantId, now + ACCESS_TTL_MS);
   // 刷新令牌每次换新,旧的作废
   db.prepare('UPDATE oauth_grants SET refresh_hash = ?, refresh_expires_at = ? WHERE id = ?').run(sha(refresh), now + REFRESH_TTL_MS, grantId);
@@ -237,6 +247,19 @@ export function oauthRouter(deps: OAuthDeps): Router {
   const loginLimiter = new LoginLimiter();
   const registerLimiter = new LoginLimiter();
   const codes = new Map<string, PendingCode>();
+  // client_id 是地址的客户端,元数据文档缓存 5 分钟:授权页打开和提交各要用一次,也免得反复去拉外部地址
+  const docCache = new Map<string, { client: OAuthClient; until: number }>();
+  const clientOf = async (clientId: string): Promise<OAuthClient> => {
+    const now = Date.now();
+    const hit = docCache.get(clientId);
+    if (hit && hit.until > now) return hit.client;
+    const client = await resolveClient(db, clientId, fetchDoc);
+    if (/^https:/.test(clientId)) {
+      if (docCache.size >= 100) docCache.clear();
+      docCache.set(clientId, { client, until: now + 300_000 });
+    }
+    return client;
+  };
   const r = Router();
   const form = express.urlencoded({ extended: false, limit: '20kb' });
   const json = express.json({ limit: '20kb' });
@@ -306,7 +329,7 @@ export function oauthRouter(deps: OAuthDeps): Router {
     res.set({ 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'", 'Referrer-Policy': 'no-referrer' });
     let client: OAuthClient;
     try {
-      client = await resolveClient(db, p.client_id, fetchDoc);
+      client = await clientOf(p.client_id);
       if (!redirectAllowed(client.redirect_uris, p.redirect_uri)) throw new InputError('redirect_uri 和这个客户端登记的不一致');
     } catch (e) {
       res.status(400).type('html').send(errorPage(e instanceof Error ? e.message : String(e)));
@@ -318,7 +341,7 @@ export function oauthRouter(deps: OAuthDeps): Router {
     };
     if (p.response_type !== 'code') return fail('unsupported_response_type', 'only response_type=code is supported');
     if (!p.code_challenge || p.code_challenge_method !== 'S256') return fail('invalid_request', 'PKCE with code_challenge_method=S256 is required');
-    if (p.resource && !p.resource.replace(/\/+$/, '').toLowerCase().startsWith(baseUrlOf(req).toLowerCase())) return fail('invalid_target', 'resource does not belong to this server');
+    if (p.resource && !sameOrigin(p.resource, baseUrlOf(req))) return fail('invalid_target', 'resource does not belong to this server');
     return client;
   };
 
