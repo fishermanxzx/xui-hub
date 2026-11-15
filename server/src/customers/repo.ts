@@ -43,7 +43,7 @@ export interface Customer {
   quota_bytes: number;
   /** 到期时间(毫秒),0 = 不限期 */
   expire_at: number;
-  /** 每月几号清零流量(1-28),0 = 不清零 */
+  /** 按月重置流量:0 = 不重置。有到期时间时重置日跟着到期日走(每月到了到期日的那个时刻),这个数只在没有到期时间时用(每月几号 0 点,1-28) */
   reset_day: number;
   /** 上次按月清零的时间 */
   last_reset_at: number;
@@ -66,6 +66,8 @@ export type CustomerView = Customer & {
   used_down: number;
   used: number;
   state: CustomerState;
+  /** 下次按月重置流量的时间(毫秒),0 = 没开 */
+  next_reset_at: number;
 };
 
 export interface CustomerInput {
@@ -168,7 +170,7 @@ function withLines(db: DB, rows: any[], now = Date.now()): CustomerView[] {
     const used_up = lines.reduce((s, l) => s + l.up, 0);
     const used_down = lines.reduce((s, l) => s + l.down, 0);
     const used = used_up + used_down;
-    return { ...c, lines, used_up, used_down, used, state: customerState(c, used, now) };
+    return { ...c, lines, used_up, used_down, used, state: customerState(c, used, now), next_reset_at: nextResetAt(c, now) };
   });
 }
 
@@ -207,14 +209,15 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
   const cur = db.prepare('SELECT * FROM customers WHERE id = ?').get(id) as any;
   if (!cur) throw new InputError('客户不存在');
   const resetDay = input.reset_day === undefined ? cur.reset_day : validResetDay(input.reset_day);
+  const expireAt = input.expire_at === undefined ? cur.expire_at : nonNegativeInt(input.expire_at, '到期时间');
   db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, reset_day = ?, last_reset_at = ?, sub_template = ?, limit_devices = ?, updated_at = ? WHERE id = ?').run(
     input.name === undefined ? cur.name : validName(input.name),
     input.remark === undefined ? cur.remark : String(input.remark ?? '').trim(),
     input.quota_bytes === undefined ? cur.quota_bytes : nonNegativeInt(input.quota_bytes, '额度'),
-    input.expire_at === undefined ? cur.expire_at : nonNegativeInt(input.expire_at, '到期时间'),
+    expireAt,
     resetDay,
-    // 刚设上 / 改了清零日:从现在起算,下一个清零日才清,不会设完马上把这期清掉
-    resetDay !== cur.reset_day ? now : cur.last_reset_at,
+    // 刚开 / 改了重置日,或者到期日变了(重置日跟着到期日走):从现在起算,下一个重置日才清,不会改完马上把这期清掉
+    resetDay !== cur.reset_day || (resetDay > 0 && expireAt !== cur.expire_at) ? now : cur.last_reset_at,
     input.sub_template === undefined ? cur.sub_template : validTemplate(input.sub_template),
     input.limit_devices === undefined ? cur.limit_devices : validLimitDevices(input.limit_devices),
     now,
@@ -237,9 +240,35 @@ export function periodStart(resetDay: number, now = Date.now()): number {
   return start.getTime();
 }
 
-/** 到了清零日还没清的客户 */
+/** 把 at 这个时刻挪到 year 年 month 月(0 起)的同一天同一时刻;那个月没有这一天(29-31 号)就取月末 */
+function sameDayIn(at: Date, year: number, month: number): number {
+  const last = new Date(year, month + 1, 0).getDate();
+  return new Date(year, month, Math.min(at.getDate(), last), at.getHours(), at.getMinutes(), at.getSeconds(), at.getMilliseconds()).getTime();
+}
+
+/**
+ * 这位客户本期的起点。有到期时间:重置跟着到期日走,起点是 now 之前最近的那个「到期时刻往前 / 往后推整月」
+ * (15 号 23:59 到期,就是每月 15 号 23:59;续费后到期日变了,重置日跟着变)。没有到期时间:每月 reset_day 号 0 点。
+ */
+export function resetPeriodStart(c: { reset_day: number; expire_at: number }, now = Date.now()): number {
+  if (!c.expire_at) return periodStart(c.reset_day, now);
+  const at = new Date(c.expire_at);
+  const d = new Date(now);
+  const start = sameDayIn(at, d.getFullYear(), d.getMonth());
+  return start > now ? sameDayIn(at, d.getFullYear(), d.getMonth() - 1) : start;
+}
+
+/** 下次按月重置的时间;没开返回 0 */
+export function nextResetAt(c: { reset_day: number; expire_at: number }, now = Date.now()): number {
+  if (!c.reset_day) return 0;
+  const start = new Date(resetPeriodStart(c, now));
+  if (!c.expire_at) return new Date(start.getFullYear(), start.getMonth() + 1, c.reset_day).getTime();
+  return sameDayIn(new Date(c.expire_at), start.getFullYear(), start.getMonth() + 1);
+}
+
+/** 到了重置日还没清的客户 */
 export function customersDueReset(db: DB, now = Date.now()): CustomerView[] {
-  return listCustomers(db).filter((c) => c.reset_day > 0 && c.last_reset_at < periodStart(c.reset_day, now));
+  return listCustomers(db).filter((c) => c.reset_day > 0 && c.last_reset_at < resetPeriodStart(c, now));
 }
 
 /** 同步到的客户端状态写回线路(面板上没有这个客户端时 present = false,流量保持上次的值) */

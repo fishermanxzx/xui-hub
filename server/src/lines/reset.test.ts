@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addLine, createCustomer, customersDueReset, getCustomer, periodStart, updateCustomer, updateLineStats } from '../customers/repo';
+import { addLine, createCustomer, customersDueReset, getCustomer, nextResetAt, periodStart, resetPeriodStart, updateCustomer, updateLineStats } from '../customers/repo';
 import { alreadyNotified, markNotified } from '../notify/events';
 import type { Panel } from '../panels/repo';
 import { addPanel, memoryDb } from '../testUtil';
@@ -67,4 +67,33 @@ test('手动清零:走同一段逻辑,返回没清成的线路', async () => {
   updateLineStats(db, l.id, { up: 5, down: 5, enable: true, last_online: 0 });
   const failed = await resetCustomerUsage(db, getCustomer(db, cid)!, () => ({ resetClientTraffic: async () => {} }));
   assert.deepEqual([failed, getCustomer(db, cid)!.used], [[], 0]);
+});
+
+test('有到期时间的客户,重置日跟着到期日走:每月到期日那一刻重置;月末到期的小月取月末;续费改了到期日后跟着变,改完不会马上清', async () => {
+  const at = (y: number, m: number, d: number) => new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+  const c = { reset_day: 1, expire_at: at(2026, 5, 15) };
+  assert.equal(resetPeriodStart(c, day(2026, 3, 15)), at(2026, 2, 15));
+  assert.equal(resetPeriodStart(c, day(2026, 3, 16)), at(2026, 3, 15));
+  assert.equal(nextResetAt(c, day(2026, 3, 16)), at(2026, 4, 15));
+  // 到期后没续费,周期照旧往后排
+  assert.equal(resetPeriodStart(c, day(2026, 7, 1)), at(2026, 6, 15));
+  // 31 号到期:2 月取 28 号,4 月取 30 号
+  const eom = { reset_day: 1, expire_at: at(2026, 5, 31) };
+  assert.deepEqual([resetPeriodStart(eom, day(2026, 3, 5)), nextResetAt(eom, day(2026, 3, 5)), nextResetAt(eom, day(2026, 4, 5))], [at(2026, 2, 28), at(2026, 3, 31), at(2026, 4, 30)]);
+  assert.deepEqual([nextResetAt({ reset_day: 0, expire_at: at(2026, 5, 15) }), nextResetAt({ reset_day: 10, expire_at: 0 }, day(2026, 3, 10))], [0, day(2026, 4, 10, 0)]);
+
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  const cid = createCustomer(db, { name: 'c', reset_day: 1, expire_at: at(2026, 3, 15) }, day(2026, 3, 1));
+  addLine(db, { customer_id: cid, kind: 'direct', panel_id: a.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'c' });
+  const adminFor = () => ({ resetClientTraffic: async () => {} });
+  assert.equal(getCustomer(db, cid)!.next_reset_at > 0, true);
+  assert.deepEqual(await runMonthlyResets(db, adminFor, day(2026, 3, 15)), []);
+  assert.equal((await runMonthlyResets(db, adminFor, day(2026, 3, 16, 0))).length, 1);
+  // 3 月 20 号中午续费,到期日变成 4 月 20 号:改完不会马上清;之后按新的日子走(每月 20 号到期那一刻)
+  updateCustomer(db, cid, { expire_at: at(2026, 4, 20) }, day(2026, 3, 20));
+  assert.deepEqual(await runMonthlyResets(db, adminFor, day(2026, 3, 20, 13)), []);
+  assert.equal((await runMonthlyResets(db, adminFor, day(2026, 3, 21, 0))).length, 1);
+  assert.deepEqual(await runMonthlyResets(db, adminFor, day(2026, 4, 20)), []);
+  assert.equal((await runMonthlyResets(db, adminFor, day(2026, 4, 21, 0))).length, 1);
 });

@@ -143,6 +143,8 @@ export interface Customer {
   /** 每月几号清零流量(1-28),0 = 不清零 */
   reset_day: number;
   last_reset_at: number;
+  /** 下次按月重置流量的时间(毫秒),0 = 没开 */
+  next_reset_at: number;
   /** Clash 订阅模板:'' = 默认,内置模板 id,或自定义 https 地址 */
   sub_template: string;
   /** 能拉订阅的设备数上限,0 = 不限 */

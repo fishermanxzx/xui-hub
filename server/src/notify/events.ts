@@ -97,7 +97,7 @@ export function resetEvent(c: CustomerView, failed: number, now: number): Messag
   return {
     event: 'monthly_reset',
     title: `客户「${c.name}」已按月清零流量`,
-    text: `每月 ${c.reset_day} 号清零,本期之前已用 ${gb(c.used)}` + (failed ? `;${failed} 个客户端没清成,下轮再试` : ''),
+    text: `${c.expire_at ? '跟着到期日每月重置' : `每月 ${c.reset_day} 号重置`},本期之前已用 ${gb(c.used)}` + (failed ? `;${failed} 个客户端没清成,下轮再试` : ''),
     at: now,
   };
 }

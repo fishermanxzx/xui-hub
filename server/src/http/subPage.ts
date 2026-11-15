@@ -144,7 +144,7 @@ h2{font-size:15px;margin:0 0 4px}
 <div class="card">
   <div class="row"><span class="big">${c.quota_bytes ? `剩余 ${fmtBytes(left)}` : '流量不限'}</span><span class="muted">${c.quota_bytes ? `已用 ${fmtBytes(c.used)} / ${fmtBytes(c.quota_bytes)}` : `已用 ${fmtBytes(c.used)}`}</span></div>
   ${c.quota_bytes ? `<div class="bar"><i class="${pct >= 100 ? 'bad' : pct >= 90 ? 'warn' : ''}" style="width:${pct}%"></i></div>` : ''}
-  <div class="row"><span class="muted">到期:${esc(expire)}</span>${c.reset_day ? `<span class="muted">每月 ${c.reset_day} 号流量重置</span>` : ''}</div>
+  <div class="row"><span class="muted">到期:${esc(expire)}</span>${c.next_reset_at ? `<span class="muted">流量每月重置,下次 ${esc(fmtDate(c.next_reset_at))}</span>` : ''}</div>
   ${c.state !== 'active' ? `<div class="notice">${c.state === 'expired' ? '套餐已到期,线路已停用。' : '流量已用完,线路已停用。'}请联系你的服务提供方。</div>` : ''}
 </div>
 

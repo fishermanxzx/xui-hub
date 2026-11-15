@@ -25,7 +25,8 @@ Authorization: Bearer xh_……
 | `name` / `remark` | 名称、备注 |
 | `quota_bytes` | 总额度(字节),0 = 不限 |
 | `expire_at` | 到期时间(毫秒时间戳),0 = 不限期 |
-| `reset_day` | 每月几号清零流量(1-28),0 = 不清零 |
+| `reset_day` | 按月重置流量:0 = 不重置,1-28 = 开启。客户有到期时间时重置日跟着到期日走(每月到期日那一刻,续费后跟着变),这个数只在没有到期时间时当「每月几号 0 点」用 |
+| `next_reset_at` | 只读:下次按月重置的时间(毫秒),0 = 没开 |
 | `limit_devices` | 能拉订阅的设备数上限,0 = 不限 |
 | `sub_devices` | 已经拉过订阅的设备数 |
 | `sub_template` | Clash 订阅模板:空 = 默认,内置模板 id,或 https 模板地址 |

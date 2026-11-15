@@ -14,7 +14,7 @@ test('自助页:剩余流量、到期、线路、一键导入链接;HTML 转义;
   updateLineStats(db, l.id, { up: 10 * GB, down: 30 * GB, enable: true, last_online: 0 });
   const url = 'https://sub.example/sub/tok';
   const html = renderSubPage({ customer: getCustomer(db, cid)!, url }, now);
-  for (const s of ['a&amp;b', '剩余 60.0 GB', '已用 40.0 GB / 100.0 GB', '还有 10 天', '每月 1 号流量重置', '日本&lt;落地&gt;', 'hy2', '中转 · 已用 40.0 GB', 'clash://install-config?url=https%3A%2F%2Fsub.example%2Fsub%2Ftok', '<svg', 'value="https://sub.example/sub/tok"']) assert.ok(html.includes(s), s);
+  for (const s of ['a&amp;b', '剩余 60.0 GB', '已用 40.0 GB / 100.0 GB', '还有 10 天', '流量每月重置,下次 ', '日本&lt;落地&gt;', 'hy2', '中转 · 已用 40.0 GB', 'clash://install-config?url=https%3A%2F%2Fsub.example%2Fsub%2Ftok', '<svg', 'value="https://sub.example/sub/tok"']) assert.ok(html.includes(s), s);
   assert.ok(!html.includes('<落地>'));
   assert.ok(!html.includes('请联系你的服务提供方'));
 

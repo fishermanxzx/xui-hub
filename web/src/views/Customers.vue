@@ -75,7 +75,7 @@ function opsNote(ops: EnforceOp[]): string {
 
 async function submit() {
   saving.value = true;
-  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.monthlyReset && form.value.resetDay !== '' ? Number(form.value.resetDay) : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template };
+  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template };
   try {
     const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
     showForm.value = false;
@@ -91,11 +91,9 @@ async function submit() {
   }
 }
 
-/** 勾上「每月自动重置流量」时先填一个日子:有到期日就跟到期日同一天(这样每个计费月的流量从 0 起算),没有就用今天;只能 1-28 */
+/** 勾上「每月自动重置流量」:有到期日时重置日跟着到期日走,不用填;没有到期日才要填每月几号(先填今天,只能 1-28) */
 function onMonthlyReset() {
-  if (!form.value.monthlyReset || form.value.resetDay !== '') return;
-  const day = form.value.expire ? Number(form.value.expire.slice(8, 10)) : new Date().getDate();
-  form.value.resetDay = String(Math.min(Math.max(day, 1), 28));
+  if (form.value.monthlyReset && form.value.resetDay === '') form.value.resetDay = String(Math.min(new Date().getDate(), 28));
 }
 
 async function resetUsage(c: Customer) {
@@ -344,7 +342,7 @@ function exitText(l: Line): string {
           </span>
           <span v-if="c.sub_template" class="muted small" :title="c.sub_template">模板:{{ templateName(c.sub_template) }}</span>
           <span v-if="c.limit_devices" class="small" :class="c.sub_devices >= c.limit_devices ? 'text-warn' : 'muted'" title="拉过订阅的设备数 / 上限。满了以后新设备拉不到订阅,点订阅那一行的「记录」可以删设备">设备 {{ c.sub_devices }} / {{ c.limit_devices }}</span>
-          <span v-if="c.reset_day" class="muted small" :title="c.last_reset_at ? `上次清零 ${fmtDateTime(c.last_reset_at)}` : '还没清过'">每月 {{ c.reset_day }} 号重置流量</span>
+          <span v-if="c.next_reset_at" class="muted small" :title="c.expire_at ? '重置日跟着到期日走' : `每月 ${c.reset_day} 号重置`">每月重置流量 · 下次 {{ fmtDate(c.next_reset_at) }}</span>
         </div>
         <div class="ops">
           <button class="primary small-btn" :disabled="!panels.length" @click="openLineFor(c)">开线路</button>
@@ -398,8 +396,9 @@ function exitText(l: Line): string {
         <label class="field">总额度(GB,空 = 不限)<input v-model="form.quotaGb" type="number" min="0" step="1" /></label>
         <div class="field">
           <label class="row small check"><input v-model="form.monthlyReset" type="checkbox" @change="onMonthlyReset" />每月自动重置流量</label>
-          <span v-if="form.monthlyReset" class="row small reset-day">每月<input v-model="form.resetDay" type="number" min="1" max="28" step="1" required aria-label="每月几号重置" />号 0 点重置</span>
-          <span v-else class="muted small">不勾 = 流量一直累计,用完为止</span>
+          <span v-if="!form.monthlyReset" class="muted small">不勾 = 流量一直累计,用完为止</span>
+          <span v-else-if="form.expire" class="muted small">跟着到期日走:每月 {{ Number(form.expire.slice(8, 10)) }} 号到期那一刻重置,续费后到期日变了也跟着变</span>
+          <span v-else class="row small reset-day">没设到期日,每月<input v-model="form.resetDay" type="number" min="1" max="28" step="1" required aria-label="每月几号重置" />号 0 点重置</span>
         </div>
       </div>
       <div class="two">
@@ -422,7 +421,7 @@ function exitText(l: Line): string {
         </select>
       </label>
       <label v-if="form.template === 'custom'" class="field">模板地址<input v-model="form.customTemplate" required placeholder="https://… subconverter 的 ini 模板" /></label>
-      <p class="muted small hint">流量按客户所有线路加总,每分钟从面板同步一次;超额或到期后自动停用他的全部客户端,改大额度、延后到期或清零流量会自动恢复。勾了「每月自动重置流量」,每月到这一天 0 点自动把他的流量清零、被超额停掉的线路恢复(每位客户各自设置,日子只能选 1-28)。设备数上限管的是订阅链接:每个导入过订阅的客户端算一台,满了以后新设备拉不到订阅,客户用浏览器打开订阅链接可以自己移除旧设备;面板上不改任何东西。</p>
+      <p class="muted small hint">流量按客户所有线路加总,每分钟从面板同步一次;超额或到期后自动停用他的全部客户端,改大额度、延后到期或清零流量会自动恢复。勾了「每月自动重置流量」,每月到了到期日那天自动把他的流量清零、被超额停掉的线路恢复;重置日始终跟着到期日,续费后到期日变了也跟着变(没设到期日的才要自己填每月几号)。每位客户各自设置。设备数上限管的是订阅链接:每个导入过订阅的客户端算一台,满了以后新设备拉不到订阅,客户用浏览器打开订阅链接可以自己移除旧设备;面板上不改任何东西。</p>
     </form>
     <template #footer>
       <span class="spacer" />

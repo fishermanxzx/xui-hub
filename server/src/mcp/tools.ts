@@ -46,6 +46,7 @@ function customerView(c: any, ctx: ToolContext) {
     used_gb: +(c.used / GB).toFixed(2),
     expire_at: iso(c.expire_at),
     reset_day: c.reset_day || null,
+    next_reset_at: c.next_reset_at ? new Date(c.next_reset_at).toISOString() : null,
     limit_devices: c.limit_devices || null,
     devices: c.sub_devices,
     sub_template: c.sub_template || 'ACL4SSR_Online_Mini',
@@ -88,7 +89,7 @@ const customerFields = {
   quota_gb: { type: 'number', description: '总流量额度(GB),0 = 不限', minimum: 0 },
   expire_at: str('到期时间,ISO 日期(如 2026-12-31);空字符串 = 不限期'),
   expire_in_days: int('从现在起多少天后到期(和 expire_at 二选一)', { minimum: 1, maximum: 3650 }),
-  reset_day: int('每月几号把流量清零(1-28),0 = 不清零', { minimum: 0, maximum: 28 }),
+  reset_day: int('按月重置流量:0 = 不重置;1-28 = 开启。客户有到期时间时重置日跟着到期日走(每月到期日那天),这个数只在没有到期时间时当「每月几号」用', { minimum: 0, maximum: 28 }),
   limit_devices: int('能拉订阅的设备数上限,0 = 不限', { minimum: 0, maximum: 100 }),
   sub_template: str('Clash 订阅模板:内置模板 id(如 ACL4SSR_Online_Full)或 https 模板地址;空字符串 = 默认'),
 };
