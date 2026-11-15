@@ -200,7 +200,7 @@ install_xui_hub() {
       # 退回是尽力而为:中间哪一步失败都接着往下做
       activate || true
       if wait_ready "$probe"; then
-        die "xui-hub $tag 在这台机器上起不来,已退回原来的 $(cat "$DIR/VERSION" 2>/dev/null || echo 版本)并恢复运行"
+        die "xui-hub $tag 在这台机器上起不来,已退回原来的 $(cat "$DIR/VERSION" 2>/dev/null || echo 版本),服务已恢复运行"
       fi
       die "xui-hub $tag 起不来,退回原来的版本后也没起来:问题多半不在版本上,检查 $ENV_FILE 和日志(xui-hub log)"
     fi
