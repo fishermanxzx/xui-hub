@@ -26,6 +26,18 @@ export interface Settings {
   backup: {
     /** 每天把数据库备份发到 Telegram */
     daily: boolean;
+    /** 异地备份:S3 兼容对象存储(Cloudflare R2 等);四项填齐就每天上传一份 */
+    remote: {
+      endpoint: string;
+      region: string;
+      bucket: string;
+      access_key: string;
+      secret_key: string;
+      /** 桶内目录,可空 */
+      prefix: string;
+      /** 远端只留最近几天的,0 = 不清理 */
+      keep_days: number;
+    };
   };
 }
 
@@ -33,7 +45,7 @@ export const DEFAULT_SETTINGS: Settings = {
   telegram: { token: '', chat_id: '' },
   webhook: { url: '' },
   notify: { panel_down: true, customer_disabled: true, expiring: true, expiring_days: 3, quota_warn: true, quota_warn_pct: 90, monthly_reset: true, sub_share: true, sub_share_ips: 5 },
-  backup: { daily: false },
+  backup: { daily: false, remote: { endpoint: '', region: 'auto', bucket: '', access_key: '', secret_key: '', prefix: 'xui-hub', keep_days: 30 } },
 };
 
 export function getSettings(db: DB): Settings {
@@ -44,7 +56,7 @@ export function getSettings(db: DB): Settings {
     telegram: { ...DEFAULT_SETTINGS.telegram, ...s.telegram },
     webhook: { ...DEFAULT_SETTINGS.webhook, ...s.webhook },
     notify: { ...DEFAULT_SETTINGS.notify, ...s.notify },
-    backup: { ...DEFAULT_SETTINGS.backup, ...s.backup },
+    backup: { ...DEFAULT_SETTINGS.backup, ...s.backup, remote: { ...DEFAULT_SETTINGS.backup.remote, ...s.backup?.remote } },
   };
 }
 
@@ -68,6 +80,8 @@ export function updateSettings(db: DB, input: any): Settings {
   const wh = input?.webhook ?? {};
   const n = input?.notify ?? {};
   const b = input?.backup ?? {};
+  const rm = b.remote ?? {};
+  const cr = cur.backup.remote;
   const next: Settings = {
     telegram: {
       token: tg.token === undefined ? cur.telegram.token : str(tg.token, 200, 'Bot token'),
@@ -85,10 +99,22 @@ export function updateSettings(db: DB, input: any): Settings {
       sub_share: bool(n.sub_share, cur.notify.sub_share),
       sub_share_ips: int(n.sub_share_ips, cur.notify.sub_share_ips, 2, 50, 'IP 个数'),
     },
-    backup: { daily: bool(b.daily, cur.backup.daily) },
+    backup: {
+      daily: bool(b.daily, cur.backup.daily),
+      remote: {
+        endpoint: rm.endpoint === undefined ? cr.endpoint : str(rm.endpoint, 300, 'Endpoint').replace(/\/+$/, ''),
+        region: rm.region === undefined ? cr.region : str(rm.region, 64, 'Region') || 'auto',
+        bucket: rm.bucket === undefined ? cr.bucket : str(rm.bucket, 128, '桶名'),
+        access_key: rm.access_key === undefined ? cr.access_key : str(rm.access_key, 256, 'Access Key'),
+        secret_key: rm.secret_key === undefined ? cr.secret_key : str(rm.secret_key, 256, 'Secret Key'),
+        prefix: rm.prefix === undefined ? cr.prefix : str(rm.prefix, 200, '目录'),
+        keep_days: int(rm.keep_days, cr.keep_days, 0, 3650, '保留天数'),
+      },
+    },
   };
   if (next.telegram.token && !/^\d+:[\w-]{20,}$/.test(next.telegram.token)) throw new InputError('Bot token 格式不对,应形如 123456:ABC-DEF…');
   if (next.webhook.url && !/^https?:\/\//.test(next.webhook.url)) throw new InputError('Webhook 地址要以 http:// 或 https:// 开头');
+  if (next.backup.remote.endpoint && !/^https?:\/\/[^/]+$/.test(next.backup.remote.endpoint)) throw new InputError('Endpoint 要是 https://主机名 的形式,不带桶名和路径');
   setMeta(db, 'settings', JSON.stringify(next));
   return next;
 }

@@ -2,6 +2,7 @@
 
 import { Router, raw, type NextFunction, type Request, type Response } from 'express';
 import { backupBuffer, backupName, inspectBackup, stageRestore } from '../backup';
+import { downloadBackup, errorText as s3Error, listRemote, remoteEnabled, remoteStatus, runRemoteBackup } from '../remoteBackup';
 import type { DB } from '../db';
 import { createClient, type ClientAdmin } from '../clients/create';
 import { checkAllPanels, checkPanel, type PanelProbe } from '../panels/check';
@@ -533,16 +534,52 @@ export function apiRouter(deps: RouteDeps): Router {
     }),
   );
   // 上传一份 hub.db 整个换掉:先核对是 xui-hub 的库,放到待恢复位置,响应后退出进程,重启时换上去
+  const restoreWith = (data: Buffer, res: Response) => {
+    if (!deps.dataDir) throw new InputError('这个部署不支持在线恢复');
+    const info = inspectBackup(data);
+    stageRestore(deps.dataDir, data);
+    res.json({ ...info, restarting: !!deps.onRestore });
+    if (deps.onRestore) setTimeout(deps.onRestore, 500);
+  };
   r.post(
     '/restore',
     raw({ type: () => true, limit: '256mb' }),
-    wrap((req, res) => {
-      if (!deps.dataDir) throw new InputError('这个部署不支持在线恢复');
-      const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-      const info = inspectBackup(data);
-      stageRestore(deps.dataDir, data);
-      res.json({ ...info, restarting: !!deps.onRestore });
-      if (deps.onRestore) setTimeout(deps.onRestore, 500);
+    wrap((req, res) => restoreWith(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), res)),
+  );
+
+  // ---------- 异地备份(S3 / R2) ----------
+  const remoteCfg = () => {
+    const c = getSettings(db).backup.remote;
+    if (!remoteEnabled(c)) throw new InputError('先在上面填好对象存储的 Endpoint、桶名和密钥并保存');
+    return c;
+  };
+  const remoteCall = async <T>(fn: () => Promise<T>): Promise<T> => {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e instanceof InputError) throw e;
+      throw new InputError(s3Error(e));
+    }
+  };
+  // 远端有哪些备份 + 上次自动 / 手动备份的结果
+  r.get(
+    '/backup/remote',
+    wrap(async () => {
+      const last = remoteStatus(db);
+      const c = getSettings(db).backup.remote;
+      if (!remoteEnabled(c)) return { enabled: false, last, files: [] };
+      return { enabled: true, last, files: (await remoteCall(() => listRemote(c))).slice(0, 50) };
+    }),
+  );
+  // 现在就传一份(顺带清理过期的)
+  r.post('/backup/remote', wrap(() => remoteCall(() => runRemoteBackup(db, remoteCfg()))));
+  // 用远端的某一份恢复
+  r.post(
+    '/backup/remote/restore',
+    wrap(async (req, res) => {
+      const key = String(req.body?.key ?? '');
+      if (!key) throw new InputError('要指定 key');
+      restoreWith(await remoteCall(() => downloadBackup(remoteCfg(), key)), res);
     }),
   );
 

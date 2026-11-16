@@ -1,4 +1,4 @@
-import type { UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus } from './types';
+import type { RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus } from './types';
 import { locale } from './i18n';
 
 let onUnauthorized: (() => void) | null = null;
@@ -101,6 +101,9 @@ export const api = {
   backupUrl: '/api/backup',
   /** 上传一份 hub.db 整个换掉;成功后服务会重启 */
   restore: (file: Blob) => call<BackupInfo>('POST', '/api/restore', file),
+  remoteBackups: () => call<RemoteBackups>('GET', '/api/backup/remote'),
+  remoteBackupNow: () => call<RemoteResult>('POST', '/api/backup/remote'),
+  remoteRestore: (key: string) => call<BackupInfo>('POST', '/api/backup/remote/restore', { key }),
 
   socks: () => call<Socks[]>('GET', '/api/socks'),
   createSocks: (body: SocksInput) => call<Socks>('POST', '/api/socks', body),

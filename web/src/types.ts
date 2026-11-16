@@ -227,7 +227,34 @@ export interface Settings {
     sub_share: boolean;
     sub_share_ips: number;
   };
-  backup: { daily: boolean };
+  backup: {
+    daily: boolean;
+    /** 异地备份(S3 兼容对象存储) */
+    remote: { endpoint: string; region: string; bucket: string; access_key: string; secret_key: string; prefix: string; keep_days: number };
+  };
+}
+
+export interface RemoteFile {
+  key: string;
+  size: number;
+  at: number;
+}
+export interface RemoteStatus {
+  at: number;
+  ok: boolean;
+  key?: string;
+  size?: number;
+  error?: string;
+}
+export interface RemoteBackups {
+  enabled: boolean;
+  last: RemoteStatus | null;
+  files: RemoteFile[];
+}
+export interface RemoteResult {
+  key: string;
+  size: number;
+  deleted: number;
 }
 
 /** 开放 API 的令牌;token(明文)只在创建时返回 */

@@ -7,6 +7,7 @@ import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { join, resolve } from 'node:path';
 import { applyPendingRestore, backupBuffer, backupName } from './backup';
+import { remoteEnabled, runRemoteBackup } from './remoteBackup';
 import { tcpOpen } from './clients/create';
 import { listCustomers } from './customers/repo';
 import { pruneDevices } from './subscription/devices';
@@ -145,6 +146,21 @@ async function dailyBackup(now: number): Promise<void> {
   }
 }
 
+/** 每天一次传到对象存储(配好了才做);失败只记日志,下一轮再试 */
+async function dailyRemoteBackup(now: number): Promise<void> {
+  const c = getSettings(db).backup.remote;
+  if (!remoteEnabled(c)) return;
+  const key = `backup:remote:${backupName(now).slice(8, 16)}`;
+  if (alreadyNotified(db, key)) return;
+  try {
+    const r = await runRemoteBackup(db, c, now);
+    console.log(`异地备份已上传 ${r.key}(${Math.round(r.size / 1024)} KB${r.deleted ? `,清掉 ${r.deleted} 份旧的` : ''})`);
+    markNotified(db, key, now);
+  } catch (e) {
+    console.error('异地备份失败', e instanceof Error ? e.message : e);
+  }
+}
+
 // 定期:检查各面板(顺带同步各线路的客户端流量)→ 按月清零到期的 → 停用超额 / 到期客户的线路、恢复回到正常的 → 发通知。
 // 上一轮没跑完(面板超时)就跳过这一轮
 const check = noOverlap(async () => {
@@ -166,6 +182,7 @@ const check = noOverlap(async () => {
     messages.push(...shareEvents(db, settings, now, customers));
     await notify(messages);
     await dailyBackup(now);
+    await dailyRemoteBackup(now);
     pruneSubFetches(db, env.subLogDays);
     pruneDevices(db, now);
     pruneNotified(db, now);

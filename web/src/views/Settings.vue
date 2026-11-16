@@ -5,8 +5,8 @@ import { onMounted, ref } from 'vue';
 import { api } from '../api';
 import { toast, toastError } from '../toast';
 import { copyText } from '../clipboard';
-import { fmtAgo } from '../format';
-import type { ApiToken, OAuthGrant, Settings } from '../types';
+import { fmtAgo, fmtBytes, fmtDateTime } from '../format';
+import type { ApiToken, OAuthGrant, RemoteBackups, Settings } from '../types';
 
 const s = ref<Settings | null>(null);
 const saving = ref(false);
@@ -108,6 +108,46 @@ async function revoke(g: OAuthGrant) {
     await loadGrants();
   } catch (e) {
     toastError(e);
+  }
+}
+
+// ---------- 异地备份 ----------
+const remote = ref<RemoteBackups | null>(null);
+const remoteBusy = ref(false);
+async function loadRemote() {
+  try {
+    remote.value = await api.remoteBackups();
+  } catch (e) {
+    toastError(e);
+  }
+}
+onMounted(loadRemote);
+/** 先保存,再传一份 */
+async function remoteNow() {
+  if (!(await save())) return;
+  remoteBusy.value = true;
+  try {
+    const r = await api.remoteBackupNow();
+    toast(t('settings.remoteDone', { key: r.key, size: fmtBytes(r.size), deleted: r.deleted ? t('settings.remoteDeleted', { n: r.deleted }) : '' }), 'ok');
+    await loadRemote();
+  } catch (e) {
+    toastError(e);
+    await loadRemote();
+  } finally {
+    remoteBusy.value = false;
+  }
+}
+async function remoteRestore(key: string) {
+  if (!confirm(t('settings.confirmRemoteRestore', { key }))) return;
+  restoring.value = true;
+  try {
+    const info = await api.remoteRestore(key);
+    restored.value = info;
+    toast(info.restarting ? t('settings.restoreRestarting') : t('settings.restorePlaced'));
+  } catch (e) {
+    toastError(e);
+  } finally {
+    restoring.value = false;
   }
 }
 
@@ -249,6 +289,70 @@ async function restore() {
         <p v-if="restored" class="small text-ok">{{ t('settings.restored', { panels: restored.panels, customers: restored.customers, lines: restored.lines }) }}</p>
       </div>
     </section>
+
+    <section class="sheet block">
+      <h3>{{ t('settings.remote') }}</h3>
+      <p class="muted small">{{ t('settings.remoteIntro') }}</p>
+      <div class="grid">
+        <label class="field">
+          {{ t('settings.remoteEndpoint') }}
+          <input v-model="s.backup.remote.endpoint" :placeholder="t('settings.remoteEndpointPlaceholder')" autocomplete="off" />
+        </label>
+        <label class="field">
+          {{ t('settings.remoteBucket') }}
+          <input v-model="s.backup.remote.bucket" autocomplete="off" />
+        </label>
+        <label class="field">
+          Access Key ID
+          <input v-model="s.backup.remote.access_key" autocomplete="off" />
+        </label>
+        <label class="field">
+          Secret Access Key
+          <input v-model="s.backup.remote.secret_key" type="password" autocomplete="new-password" />
+        </label>
+        <label class="field">
+          {{ t('settings.remotePrefix') }}
+          <input v-model="s.backup.remote.prefix" autocomplete="off" />
+        </label>
+        <label class="field">
+          {{ t('settings.remoteRegion') }}
+          <input v-model="s.backup.remote.region" autocomplete="off" />
+        </label>
+        <label class="field">
+          {{ t('settings.remoteKeep') }}
+          <input v-model.number="s.backup.remote.keep_days" type="number" min="0" max="3650" />
+        </label>
+      </div>
+      <p class="muted small">{{ t('settings.remoteKeepHint') }}</p>
+      <div class="row actions">
+        <button :disabled="saving" @click="save">{{ saving ? t('common.saving') : t('common.save') }}</button>
+        <button :disabled="remoteBusy || saving" @click="remoteNow">{{ remoteBusy ? t('settings.remoteUploading') : t('settings.remoteNow') }}</button>
+        <template v-if="remote?.last">
+          <span v-if="remote.last.ok" class="small text-ok">{{ t('settings.remoteLastOk', { ago: fmtAgo(remote.last.at), key: remote.last.key, size: fmtBytes(remote.last.size ?? 0) }) }}</span>
+          <span v-else class="small text-err">{{ t('settings.remoteLastBad', { ago: fmtAgo(remote.last.at), error: remote.last.error }) }}</span>
+        </template>
+        <span v-else class="muted small">{{ t('settings.remoteNever') }}</span>
+      </div>
+      <template v-if="remote?.enabled">
+        <div class="row remote-head">
+          <span class="label">{{ t('settings.remoteFiles') }}</span>
+          <button class="link" @click="loadRemote">{{ t('settings.remoteRefresh') }}</button>
+        </div>
+        <div v-if="remote.files.length" class="table-wrap">
+          <table class="remote-files">
+            <tbody>
+              <tr v-for="f in remote.files" :key="f.key">
+                <td class="mono">{{ f.key }}</td>
+                <td class="muted small">{{ fmtBytes(f.size) }}</td>
+                <td class="muted small">{{ fmtDateTime(f.at) }}</td>
+                <td class="right"><button class="link" :disabled="restoring" @click="remoteRestore(f.key)">{{ t('settings.remoteRestore') }}</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-else class="muted small">{{ t('settings.remoteNoFiles') }}</p>
+      </template>
+    </section>
   </template>
 </template>
 
@@ -377,6 +481,27 @@ code {
 .restore .row {
   gap: 12px;
   flex-wrap: wrap;
+}
+.remote-head {
+  justify-content: space-between;
+}
+.remote-head .label {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.remote-files td {
+  padding: 6px 8px;
+  border-top: 1px solid var(--rule-soft);
+  white-space: nowrap;
+}
+.remote-files td.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.remote-files td.right {
+  text-align: right;
 }
 @media (max-width: 640px) {
   .grid {
