@@ -8,6 +8,7 @@ import { toast, toastError } from '../toast';
 import type { ClientProtocol, CreatedClient, Customer, Panel, PanelClient, PanelDetail, PanelInbound, PanelVersions } from '../types';
 import ClientLinks from './ClientLinks.vue';
 import Modal from './Modal.vue';
+import Select, { type SelectOption } from './Select.vue';
 
 const props = defineProps<{ panel: Panel; open: boolean }>();
 const emit = defineEmits<{ toggle: []; edit: []; remove: []; changed: [] }>();
@@ -63,6 +64,7 @@ const versions = ref<PanelVersions | null>(null);
 const loadingVersions = ref(false);
 const showXray = ref(false);
 const xrayPick = ref('');
+const xrayOptions = computed<SelectOption<string>[]>(() => (versions.value?.xray.available ?? []).map((v) => ({ value: v, label: v + (v.replace(/^v/, '') === versions.value!.xray.current ? t('card.currentMark') : '') })));
 const switching = ref(false);
 const upgrading = ref(false);
 const upgradeNote = ref('');
@@ -187,6 +189,7 @@ async function create() {
 const assignFor = ref<PanelClient | null>(null);
 const customers = ref<Customer[]>([]);
 const assignTo = ref<number | 'new'>('new');
+const assignOptions = computed<SelectOption<number | 'new'>[]>(() => [...customers.value.map((x) => ({ value: x.id, label: x.name + (x.remark ? ` · ${x.remark}` : '') })), { value: 'new', label: t('card.newCustomer') }]);
 const newName = ref('');
 const assigning = ref(false);
 
@@ -377,9 +380,7 @@ async function removeClient(c: PanelClient) {
       </p>
       <label class="field">
         {{ t('card.switchTo') }}
-        <select v-model="xrayPick">
-          <option v-for="v in versions.xray.available" :key="v" :value="v">{{ v }}{{ v.replace(/^v/, '') === versions.xray.current ? t('card.currentMark') : '' }}</option>
-        </select>
+        <Select v-model="xrayPick" :options="xrayOptions" />
       </label>
       <p class="muted small hint">{{ t('card.xrayHint') }}</p>
     </template>
@@ -395,10 +396,7 @@ async function removeClient(c: PanelClient) {
       <p class="muted small">{{ t('card.assignIntro') }}</p>
       <label class="field">
         {{ t('card.customer') }}
-        <select v-model="assignTo">
-          <option v-for="x in customers" :key="x.id" :value="x.id">{{ x.name }}{{ x.remark ? ` · ${x.remark}` : '' }}</option>
-          <option value="new">{{ t('card.newCustomer') }}</option>
-        </select>
+        <Select v-model="assignTo" :options="assignOptions" />
       </label>
       <label v-if="assignTo === 'new'" class="field">{{ t('card.newCustomerName') }}<input v-model="newName" required /></label>
     </form>

@@ -4,6 +4,7 @@ import { api, setUnauthorizedHandler } from './api';
 import { LOCALES, locale, setLocale, t, type Locale } from './i18n';
 import { toasts } from './toast';
 import VersionBadge from './components/VersionBadge.vue';
+import Select from './components/Select.vue';
 import Login from './views/Login.vue';
 import Customers from './views/Customers.vue';
 import Panels from './views/Panels.vue';
@@ -55,9 +56,7 @@ onMounted(checkSession);
           </nav>
           <span class="spacer" />
           <VersionBadge />
-          <select class="lang" :value="locale" :aria-label="t('common.language')" @change="setLocale(($event.target as HTMLSelectElement).value as Locale)">
-            <option v-for="l in LOCALES" :key="l.id" :value="l.id">{{ l.label }}</option>
-          </select>
+          <Select quiet :model-value="locale" :options="LOCALES.map((l) => ({ value: l.id, label: l.label }))" :aria-label="t('common.language')" @update:model-value="setLocale($event as Locale)" />
           <button v-if="authRequired" class="link quiet" :title="t('nav.logoutHint')" @click="logout">{{ t('nav.logout') }}</button>
         </div>
       </header>
@@ -173,19 +172,4 @@ nav a.on {
   .shell {
     padding: 16px 12px 32px;
   }
-}
-.lang {
-  width: auto;
-  padding: 2px 22px 2px 8px;
-  min-height: 0;
-  height: 28px;
-  font-size: 12px;
-  color: var(--ink-soft);
-  border-color: transparent;
-  background-color: transparent;
-  box-shadow: none;
-}
-.lang:hover {
-  border-color: var(--rule);
-}
-</style>
+}</style>

@@ -6,6 +6,7 @@ import { api } from '../api';
 import ClientLinks from '../components/ClientLinks.vue';
 import TopologyGraph from '../components/TopologyGraph.vue';
 import Modal from '../components/Modal.vue';
+import Select, { type SelectOption } from '../components/Select.vue';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl } from '../format';
@@ -225,6 +226,13 @@ const list = (id: number) => {
 const clientInbounds = computed(() => list(lf.value.panel_id).filter((i) => i.accepts_clients && i.enable));
 const socksInbounds = computed(() => list(lf.value.exit_panel_id).filter((i) => (i.protocol === 'mixed' || i.protocol === 'socks') && i.enable));
 const landingPanels = computed(() => panels.value.filter((p) => p.id !== lf.value.panel_id));
+const PROTOCOL_OPTIONS: SelectOption<ClientProtocol>[] = [
+  { value: 'vless', label: 'vless(reality)' },
+  { value: 'hy2', label: 'hy2(hysteria2)' },
+];
+const panelOptions = (list: Panel[]): SelectOption<number>[] => list.map((p) => ({ value: p.id, label: p.name + (p.check_error ? t('customers.unreachable') : ''), disabled: !!p.check_error }));
+const socksOptions = computed<SelectOption<number>[]>(() => socksList.value.map((s) => ({ value: s.id, label: `${s.name} · ${s.host}:${s.port}${s.check ? (s.check.ok ? t('customers.socksOk') : t('customers.socksBad')) : ''}` })));
+const templateOptions = computed<SelectOption<string>[]>(() => [...templates.value.map((x) => ({ value: x.id === templateDefault.value ? '' : x.id, label: `${tplText(x, 'name')} — ${tplText(x, 'desc')}` })), { value: 'custom', label: t('customers.customTemplateOption') }]);
 
 function openLineFor(c: Customer) {
   lineFor.value = c;
@@ -421,10 +429,7 @@ function exitText(l: Line): string {
       </div>
       <label class="field">
         {{ t('customers.subTemplate') }}
-        <select v-model="form.template">
-          <option v-for="x in templates" :key="x.id" :value="x.id === templateDefault ? '' : x.id">{{ tplText(x, 'name') }} — {{ tplText(x, 'desc') }}</option>
-          <option value="custom">{{ t('customers.customTemplateOption') }}</option>
-        </select>
+        <Select v-model="form.template" :options="templateOptions" />
       </label>
       <label v-if="form.template === 'custom'" class="field">{{ t('customers.templateUrl') }}<input v-model="form.customTemplate" required :placeholder="t('customers.templateUrlPlaceholder')" /></label>
       <p class="muted small hint">{{ t('customers.formHint') }}</p>
@@ -449,18 +454,13 @@ function exitText(l: Line): string {
 
         <label class="field">
           {{ lf.kind === 'relay' ? t('customers.relayPanel') : t('customers.panel') }}
-          <select v-model="lf.panel_id">
-            <option v-for="p in panels" :key="p.id" :value="p.id" :disabled="!!p.check_error">{{ p.name }}{{ p.check_error ? t('customers.unreachable') : '' }}</option>
-          </select>
+          <Select v-model="lf.panel_id" :options="panelOptions(panels)" />
         </label>
         <div class="field-block">
           <span class="label">{{ lf.kind === 'relay' ? t('customers.relayInbound') : t('customers.inbound') }}</span>
           <div class="choices">
             <label class="row small"><input v-model="lf.inbound" type="radio" value="new" />{{ t('customers.inboundAuto') }}</label>
-            <select v-if="lf.inbound === 'new'" v-model="lf.protocol" class="inline">
-              <option value="vless">vless(reality)</option>
-              <option value="hy2">hy2(hysteria2)</option>
-            </select>
+            <span v-if="lf.inbound === 'new'" class="inline"><Select v-model="lf.protocol" :options="PROTOCOL_OPTIONS" :aria-label="t('customers.inboundAuto')" /></span>
             <template v-if="inboundsOf[lf.panel_id] === 'loading'"><span class="muted small">{{ t('customers.readingInbounds') }}</span></template>
             <template v-else-if="inboundsOf[lf.panel_id] === 'error'"><span class="text-err small">{{ t('customers.inboundsError') }} <button type="button" class="link" @click="fetchInbounds(lf.panel_id)">{{ t('customers.retry') }}</button></span></template>
             <template v-else-if="clientInbounds.length">
@@ -484,9 +484,7 @@ function exitText(l: Line): string {
           <template v-if="lf.exit_kind === 'panel'">
             <label class="field">
               {{ t('customers.landingPanel') }}
-              <select v-model="lf.exit_panel_id">
-                <option v-for="p in landingPanels" :key="p.id" :value="p.id" :disabled="!!p.check_error">{{ p.name }}{{ p.check_error ? t('customers.unreachable') : '' }}</option>
-              </select>
+              <Select v-model="lf.exit_panel_id" :options="panelOptions(landingPanels)" />
             </label>
             <div class="field-block">
               <span class="label">{{ t('customers.exitInbound') }}</span>
@@ -503,9 +501,7 @@ function exitText(l: Line): string {
           </template>
           <label v-else class="field">
             SOCKS
-            <select v-model="lf.socks_id">
-              <option v-for="s in socksList" :key="s.id" :value="s.id">{{ s.name }} · {{ s.host }}:{{ s.port }}{{ s.check ? (s.check.ok ? t('customers.socksOk') : t('customers.socksBad')) : '' }}</option>
-            </select>
+            <Select v-model="lf.socks_id" :options="socksOptions" />
           </label>
         </template>
       </div>
