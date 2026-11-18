@@ -1,5 +1,5 @@
 // SOCKS5 连通性测试:握手认证 → 经代理访问 Cloudflare trace(HTTPS),拿到出口 IP 和地区。
-// 从本服务所在机器发起;代理商若按来源 IP 白名单放行,结果可能与中转机上不同。
+// 从本服务所在机器发起;代理商若按来源 IP 白名单放行,结果可能与线路所在的面板上不同。
 
 import { once } from 'node:events';
 import { createConnection, type Socket } from 'node:net';

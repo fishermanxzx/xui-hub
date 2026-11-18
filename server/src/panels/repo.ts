@@ -20,7 +20,7 @@ export interface Panel {
   xray_state: string | null;
 }
 
-/** line_count:挂在这块面板上的客户线路数;exit_line_count:以它为落地的中转线路数 */
+/** line_count:挂在这块面板上的客户线路数;exit_line_count:旧版本留下的、以它为出口的线路数 */
 export type PanelView = Omit<Panel, 'token'> & { line_count: number; exit_line_count: number };
 
 export interface PanelInput {

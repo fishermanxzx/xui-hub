@@ -1,20 +1,19 @@
-// 给客户开一条线路:
-// - 直连:在选定面板上,挂到已有入站或新建入站,新建 client;
-// - 中转:先把出口准备好(SOCKS,或落地面板上的 socks 入站),在中转面板上选定 / 新建入站,给这个客户端(按 email)加一条到出口的路由规则,再新建 client。
-//   规则按客户端区分,所以中转和直连的客户端可以挂在同一个入站上,各走各的出口。
-// 返回线路记录和客户端的分享链接(链接指向客户端直连的那块面板:直连是落地本身,中转是中转机)。
-// 中途失败会把这次已经建的 client、路由规则、入站撤掉;同一块面板上的开 / 删线路排队执行。
+// 给客户开一条线路:在选定面板上挂到已有入站或新建入站,新建 client。只动这一块面板。
+// - 不选出口:客户端从这块面板直出(kind = direct);
+// - 选了出口(SOCKS 页登记的代理):给这个客户端(按 email)加一条到该代理的路由规则(kind = relay)。
+//   规则按客户端区分,所以直出和走代理的客户端可以挂在同一个入站上,各走各的出口。
+// 返回线路记录和客户端的分享链接。中途失败会把这次已经建的 client、路由规则、入站撤掉;同一块面板上的开 / 删线路排队执行。
 
 import { addClientTo, ensureInbound, freeEmail, type ClientAdmin, type CreateOptions } from '../clients/create';
 import { addLine, getCustomer, linesOnPanel, linesViaSocks, type Line } from '../customers/repo';
 import type { DB } from '../db';
 import { getPanel, InputError, listPanels, type Panel } from '../panels/repo';
-import { errorText, panelKey, serial, serialAll, using } from '../util';
+import { errorText, panelKey, serial, using } from '../util';
 import type { SocksEndpoint } from '../socks/repo';
 import { XUIError } from '../xui/client';
-import { applyRoutes, parseExitSpec, prepareExit, removeRoutes, socksServer, type ExitAdmin, type PreparedExit, type RouteAdmin, type UserRoute } from './relay';
+import { applyRoutes, parseExitSocksId, prepareExit, removeRoutes, socksServer, type RouteAdmin, type UserRoute } from './relay';
 
-export interface LineAdmin extends ClientAdmin, ExitAdmin, RouteAdmin {
+export interface LineAdmin extends ClientAdmin, RouteAdmin {
   deleteClient(email: string): Promise<void>;
 }
 
@@ -23,28 +22,29 @@ export interface OpenLineInput {
   panel_id?: unknown;
   /** 入站:给 id 用已有的;否则按 protocol(vless / hy2)复用或新建 */
   inbound?: { id?: unknown; protocol?: unknown } | null;
-  /** 中转的出口 */
+  /** 出口:{ kind: 'socks', socks_id }(SOCKS 页登记的代理);不给就从这块面板直出 */
   exit?: unknown;
 }
 
 export interface OpenedLine {
   line: Line;
   links: string[];
-  /** 在中转 / 落地上新建了的入站 */
-  created: { inbound: string | null; exit_inbound: string | null };
+  /** 这次在面板上新建了的入站 */
+  created: { inbound: string | null };
 }
 
 export async function openLine(db: DB, customerId: number, input: OpenLineInput, adminFor: (panel: Panel) => LineAdmin, probe?: CreateOptions['probe']): Promise<OpenedLine> {
   const customer = getCustomer(db, customerId);
   if (!customer) throw new InputError('客户不存在');
-  const kind = input.kind === 'relay' ? 'relay' : input.kind === 'direct' ? 'direct' : null;
-  if (!kind) throw new InputError('线路类型只能是 direct(直连)或 relay(中转)');
+  // kind 可省:给了出口就是 relay(走代理),没给就是 direct(直出)。显式写 relay 却没出口的照旧报错
+  if (input.kind != null && input.kind !== 'direct' && input.kind !== 'relay') throw new InputError('线路类型只能是 direct(直出)或 relay(走 SOCKS 出口)');
+  const wantsExit = input.kind === 'relay' || (input.kind == null && input.exit != null);
+  const kind = wantsExit ? 'relay' : 'direct';
   const panel = getPanel(db, Number(input.panel_id));
-  if (!panel) throw new InputError(kind === 'relay' ? '中转面板不存在' : '面板不存在');
-  const exitSpec = kind === 'relay' ? parseExitSpec(input.exit) : null;
+  if (!panel) throw new InputError('面板不存在');
+  const exit = wantsExit ? prepareExit(db, parseExitSocksId(input.exit)) : null;
 
-  const keys = [panelKey(panel.id), ...(exitSpec?.kind === 'panel' ? [panelKey(exitSpec.panel_id)] : [])];
-  return serialAll(keys, () =>
+  return serial(panelKey(panel.id), () =>
     using(adminFor(panel), async (admin) => {
       // 每做成一步就记下怎么撤;后面失败了倒着撤一遍(撤不掉的不管),再把原来的错误抛出去
       const undo: (() => Promise<unknown>)[] = [];
@@ -52,14 +52,10 @@ export async function openLine(db: DB, customerId: number, input: OpenLineInput,
         const opts: CreateOptions = { otherPanels: listPanels(db), adminFor, probe };
         const { inbound, created, protocol } = await ensureInbound(panel, admin, { inbound_id: input.inbound?.id, protocol: input.inbound?.protocol }, opts);
         if (created) undo.push(() => admin.deleteInbound(Number(inbound.id)));
-        if (exitSpec && !inbound.tag) throw new InputError('这个入站没有 tag,没法按客户端加路由规则');
+        if (exit && !inbound.tag) throw new InputError('这个入站没有 tag,没法按客户端加路由规则');
         // 本地记着、面板上却被人删掉的线路,email 也要避开
         const email = await freeEmail(admin, customer.name, linesOnPanel(db, panel.id).map((l) => l.email));
-        let exit: PreparedExit | null = null;
-        if (exitSpec) {
-          exit = await prepareExit(db, exitSpec, adminFor, new URL(panel.base_url).hostname);
-          const landing = exit.created_inbound_id == null ? undefined : getPanel(db, exit.exit_panel_id!);
-          if (landing) undo.push(() => using(adminFor(landing), (a) => a.deleteInbound(exit!.created_inbound_id!)));
+        if (exit) {
           const route = { inboundTag: String(inbound.tag), email, server: exit.server };
           undo.push(() => removeRoutes(admin, [route]));
           await applyRoutes(admin, [route]);
@@ -74,13 +70,13 @@ export async function openLine(db: DB, customerId: number, input: OpenLineInput,
           inbound_remark: String(inbound.remark ?? ''),
           protocol,
           email,
-          exit_kind: exit?.exit_kind ?? null,
-          exit_panel_id: exit?.exit_panel_id ?? null,
-          exit_port: exit?.exit_port ?? null,
-          exit_socks_id: exit?.exit_socks_id ?? null,
+          exit_kind: exit ? 'socks' : null,
+          exit_panel_id: null,
+          exit_port: null,
+          exit_socks_id: exit?.socks_id ?? null,
           exit_label: exit?.label ?? '',
         });
-        return { line, links, created: { inbound: created ? String(inbound.remark ?? '') : null, exit_inbound: exit?.created_inbound ?? null } };
+        return { line, links, created: { inbound: created ? String(inbound.remark ?? '') : null } };
       } catch (e) {
         for (const step of undo.reverse()) await step().catch(() => {});
         throw e;

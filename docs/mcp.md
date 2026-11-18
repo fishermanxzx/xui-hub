@@ -56,7 +56,7 @@ claude mcp add --transport http xui-hub https://hub.example.com:8788/mcp --heade
 | `delete_customer` | 删除客户,连同面板上的客户端 |
 | `list_devices` | 拉过订阅的设备和最近的拉取记录 |
 | `remove_device` | 移除一台设备 |
-| `open_line` | 开直连或中转线路 |
+| `open_line` | 开线路:直出,或经登记的 SOCKS 出去 |
 | `get_line_links` | 线路的分享链接 |
 | `delete_line` | 删线路 |
 | `list_panels` | 面板列表和状态 |

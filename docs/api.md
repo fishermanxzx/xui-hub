@@ -64,13 +64,13 @@ Authorization: Bearer xh_……
 
 `inbound` 也可以写 `{ "id": 3 }` 指定已有入站;`protocol` 可选 `vless` 或 `hy2`。
 
-开中转线路(客户端连 1 号面板,流量从 2 号面板出去):
+走 SOCKS 出口(客户端连 1 号面板,流量从 SOCKS 页登记的 1 号代理出去;只改 1 号面板):
 
 ```json
-{ "kind": "relay", "panel_id": 1, "inbound": { "protocol": "vless" }, "exit": { "kind": "panel", "panel_id": 2 } }
+{ "kind": "relay", "panel_id": 1, "inbound": { "protocol": "vless" }, "exit": { "kind": "socks", "socks_id": 1 } }
 ```
 
-出口也可以是 SOCKS 页登记的代理:`"exit": { "kind": "socks", "socks_id": 1 }`。
+`kind` 可省略:给了 `exit` 就是走 SOCKS,没给就是直出。要从另一台机器出,先在那台机器上建 socks / mixed 入站并登记到 SOCKS 页。旧版本的 `"exit": { "kind": "panel", … }` 不再支持,会返回 400。
 
 返回 `{ "line": {…}, "links": ["vless://…"], "created": {…} }`。
 

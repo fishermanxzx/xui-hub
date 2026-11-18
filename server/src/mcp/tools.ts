@@ -181,28 +181,23 @@ export const TOOLS: ToolDef[] = [
     name: 'open_line',
     title: '开线路',
     description:
-      '给客户开一条线路(在面板上新建一个客户端)。direct 直连:客户端直接连 panel_id 这块面板。relay 中转:客户端连 panel_id(中转面板),流量从 exit_panel_id(落地面板)或 exit_socks_id(SOCKS 代理)出去。' +
+      '给客户开一条线路:在 panel_id 这块面板上新建一个客户端,只改这一块面板。默认从这块面板直出;' +
+      '给 exit_socks_id(list_socks 返回的,SOCKS 页登记的代理)就让这个客户端的流量从那个代理出去。要从别的机器出,先在那台机器上建 socks 入站并登记到 SOCKS 页。' +
       '入站默认按 protocol 自动选,没有同协议的就新建;也可以用 inbound_id 指定。返回线路和分享链接。',
     inputSchema: obj(
       {
         customer_id: customerId,
-        kind: { type: 'string', enum: ['direct', 'relay'], description: 'direct 直连 / relay 中转' },
-        panel_id: int('面板 id(list_panels 返回的);中转时是中转面板', { minimum: 1 }),
+        panel_id: int('面板 id(list_panels 返回的)', { minimum: 1 }),
         protocol: { type: 'string', enum: ['vless', 'hy2'], description: '协议,默认 vless(reality)' },
         inbound_id: int('挂到面板上哪个已有入站(不传则按协议自动选或新建)', { minimum: 1 }),
-        exit_panel_id: int('中转的出口:落地面板 id', { minimum: 1 }),
-        exit_socks_id: int('中转的出口:SOCKS 代理 id(list_socks 返回的)', { minimum: 1 }),
+        exit_socks_id: int('出口:SOCKS 代理 id(list_socks 返回的);不传就从这块面板直出', { minimum: 1 }),
       },
-      ['customer_id', 'kind', 'panel_id'],
+      ['customer_id', 'panel_id'],
     ),
     annotations: { destructiveHint: false, openWorldHint: true },
     run: async (a, ctx) => {
-      const body: any = { kind: a.kind, panel_id: a.panel_id, inbound: a.inbound_id ? { id: a.inbound_id } : { protocol: a.protocol ?? 'vless' } };
-      if (a.kind === 'relay') {
-        if (a.exit_panel_id) body.exit = { kind: 'panel', panel_id: a.exit_panel_id };
-        else if (a.exit_socks_id) body.exit = { kind: 'socks', socks_id: a.exit_socks_id };
-        else throw new ToolError('中转线路要给出口:exit_panel_id 或 exit_socks_id');
-      }
+      const body: any = { panel_id: a.panel_id, inbound: a.inbound_id ? { id: a.inbound_id } : { protocol: a.protocol ?? 'vless' } };
+      if (a.exit_socks_id) body.exit = { kind: 'socks', socks_id: a.exit_socks_id };
       const r = await call(ctx, 'POST', `/customers/${Number(a.customer_id)}/lines`, body);
       return { line_id: r.line.id, panel: r.line.panel_name, protocol: r.line.protocol === 'hysteria' ? 'hy2' : r.line.protocol, email: r.line.email, exit: r.line.exit_label || null, links: r.links, created: r.created };
     },
@@ -218,7 +213,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'delete_line',
     title: '删线路',
-    description: '删掉客户的一条线路,面板上的客户端和中转规则一起删。面板连不上时 force 为 true 只删记录。执行前向用户确认。',
+    description: '删掉客户的一条线路,面板上的客户端和它的出口规则一起删。面板连不上时 force 为 true 只删记录。执行前向用户确认。',
     inputSchema: obj({ customer_id: customerId, line_id: int('线路 id', { minimum: 1 }), force: { type: 'boolean', description: '面板连不上也删掉这条记录' } }, ['customer_id', 'line_id']),
     annotations: { destructiveHint: true, openWorldHint: true },
     run: async (a, ctx) => ({ deleted: true, ...(await call(ctx, 'DELETE', `/customers/${Number(a.customer_id)}/lines/${Number(a.line_id)}${a.force === true ? '?force=1' : ''}`)) }),
@@ -254,7 +249,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'list_socks',
     title: 'SOCKS 代理列表',
-    description: '列出登记的 SOCKS5 代理(可当中转线路的出口):id、名称、地址、最近一次连通性测试的出口 IP 和地区。不含密码。',
+    description: '列出登记的 SOCKS5 代理(开线路时可选作出口):id、名称、地址、最近一次连通性测试的出口 IP 和地区。不含密码。',
     inputSchema: obj({}),
     annotations: { readOnlyHint: true },
     run: (_a, ctx) => call(ctx, 'GET', '/socks'),

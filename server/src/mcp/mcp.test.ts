@@ -81,7 +81,7 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
     const c = toolJson(await call('create_customer', { name: '小王', quota_gb: 100, expire_in_days: 30 }));
     assert.deepEqual([c.name, c.quota_gb, c.state], ['小王', 100, 'active']);
     assert.match(c.sub_url, new RegExp(`^${base}/sub/[\\w-]+$`));
-    const line = toolJson(await call('open_line', { customer_id: c.id, kind: 'direct', panel_id: 1 }));
+    const line = toolJson(await call('open_line', { customer_id: c.id, panel_id: 1 }));
     assert.deepEqual([line.email, line.links.length, data.p1.clients.map((x) => x.email)], ['小王', 1, ['小王']]);
     const renewed = toolJson(await call('renew_customer', { customer_id: c.id, days: 30 }));
     assert.ok(Math.abs(Date.parse(renewed.expire_at) - Date.parse(c.expire_at) - 30 * 86_400_000) < 1000);
@@ -89,8 +89,8 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
     assert.deepEqual(toolJson(await call('list_devices', { customer_id: c.id })), { devices: [], recent_fetches: [] });
 
     // 业务上的失败放在结果里;不认识的工具 / 方法是协议错误
-    const bad = await call('open_line', { customer_id: c.id, kind: 'relay', panel_id: 1 });
-    assert.deepEqual([bad.body.result.isError, /出口/.test(bad.body.result.content[0].text)], [true, true]);
+    const bad = await call('open_line', { customer_id: c.id, panel_id: 1, exit_socks_id: 99 });
+    assert.deepEqual([bad.body.result.isError, /SOCKS 不存在/.test(bad.body.result.content[0].text)], [true, true]);
     assert.equal((await call('renew_customer', { customer_id: 999, days: 1 })).body.result.isError, true);
     assert.equal((await call('nope')).body.error.code, -32602);
     assert.equal((await rpc(token, 'resources/list')).body.error.code, -32601);
