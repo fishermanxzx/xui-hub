@@ -81,6 +81,17 @@ export function withTrojanFingerprint(yamlText: string, fingerprint = 'chrome'):
 }
 
 /**
+ * REALITY 节点打开 X25519MLKEM768:Mihomo 默认只用 X25519 握手,和真 Chrome(带后量子密钥交换)不一样;
+ * 新版 Xray 服务端会拒掉这种握手,节点就连不上。3x-ui 自己生成的 Clash 配置也写了这一项。
+ * subconverter 不认这个参数,这里给单行写法里的 `reality-opts: {...}` 补上,已经写了的不动。
+ */
+export function withRealityMlkem(yamlText: string): string {
+  return yamlText.replace(/^([ \t]*- \{.*)$/gm, (line) =>
+    line.replace(/(reality-opts: \{)([^{}]*)\}/, (m, head: string, body: string) => (/\bsupport-x25519mlkem768:/.test(body) ? m : `${head}${body}, support-x25519mlkem768: true}`)),
+  );
+}
+
+/**
  * subconverter 生成的头部写的是 `mode: Rule`(首字母大写)。内核不分大小写照样认,但 Mihomo 的配置规范只列小写的
  * rule / global / direct,编辑器按规范校验会报错,有的客户端也只认小写。统一改成小写,只动 proxies: 之前的那一行。
  */

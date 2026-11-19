@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import YAML from 'yaml';
-import { applyMihomoTemplate, lowerMode, mihomoTemplateMatcher, withTrojanFingerprint } from './mihomo';
+import { applyMihomoTemplate, lowerMode, mihomoTemplateMatcher, withRealityMlkem, withTrojanFingerprint } from './mihomo';
 
 const BODY = [
   'proxies:',
@@ -93,4 +93,22 @@ test('头部的 mode 改成小写;节点名里碰巧有 mode: 的、proxies 之�
   assert.ok(lowerMode(BASE).endsWith(BODY));
   assert.equal(lowerMode('mode: "Global"\nproxies:\n  - {name: x}\nmode: Rule\n'), 'mode: global\nproxies:\n  - {name: x}\nmode: Rule\n');
   assert.equal(lowerMode('mode: script\nproxies: []\n'), 'mode: script\nproxies: []\n');
+});
+
+test('REALITY 节点补上 support-x25519mlkem768;已经写了的、不是 REALITY 的不动', () => {
+  const body = [
+    'proxies:',
+    '  - {name: r, server: 1.2.3.4, port: 443, type: vless, uuid: u, tls: true, flow: xtls-rprx-vision, reality-opts: {public-key: pk, short-id: ab}, servername: www.example.com, client-fingerprint: chrome}',
+    '  - {name: r2, server: 1.2.3.4, port: 443, type: vless, uuid: u, reality-opts: {public-key: pk, short-id: ab, support-x25519mlkem768: false}}',
+    '  - {name: v, server: 1.2.3.4, port: 443, type: vless, uuid: u, tls: true, servername: a.example.org}',
+    'proxy-groups:',
+    '  - {name: g, type: select, proxies: [r, r2, v]}',
+  ].join('\n');
+  const out = withRealityMlkem(body);
+  const proxies = YAML.parse(out).proxies;
+  assert.deepEqual(proxies[0]['reality-opts'], { 'public-key': 'pk', 'short-id': 'ab', 'support-x25519mlkem768': true });
+  assert.equal(proxies[1]['reality-opts']['support-x25519mlkem768'], false);
+  assert.equal(proxies[2]['reality-opts'], undefined);
+  assert.deepEqual(out.split('\n').slice(2), body.split('\n').slice(2));
+  assert.equal(withRealityMlkem(out), out, '重复处理不变');
 });
