@@ -1,4 +1,4 @@
-// SOCKS 代理的存取(中转的出口之一)。账号密码只在服务端使用,对外视图不含密码。
+// SOCKS 代理的存取(开线路时可选作出口)。账号密码只在服务端使用,对外视图不含密码。
 
 import type { DB } from '../db';
 import { InputError } from '../panels/repo';
@@ -28,7 +28,7 @@ export interface SocksCheck {
   error: string | null;
 }
 
-/** used_by:出口是它的中转线路数 */
+/** used_by:出口是它的线路数 */
 export type SocksView = Omit<SocksProxy, 'password'> & { has_password: boolean; check: SocksCheck | null; used_by: number };
 
 export interface SocksInput {
@@ -116,7 +116,7 @@ export function getSocksView(db: DB, id: number): SocksView | undefined {
   return row ? rowToView(row) : undefined;
 }
 
-/** 含密码,只在服务端使用(测连通性、给中转建出站) */
+/** 含密码,只在服务端使用(测连通性、给线路所在面板建出站) */
 export function getSocks(db: DB, id: number): SocksProxy | undefined {
   const row = db.prepare('SELECT * FROM socks_proxies WHERE id = ?').get(id);
   return row ? rowToProxy(row) : undefined;
@@ -142,7 +142,7 @@ export function createSocks(db: DB, input: SocksInput, now = Date.now()): number
 
 /**
  * 校验一次修改,算出要写的值,不落库。endpoint 非空 = 换了地址 / 账号:
- * 在用它的中转要先跟着改(lines/open.ts 的 repointSocksLines),改成了再 updateSocks
+ * 走它的线路要先在各自面板上跟着改(lines/open.ts 的 repointSocksLines),改成了再 updateSocks
  */
 export function planSocksUpdate(db: DB, id: number, input: SocksInput): { cur: SocksProxy; name: string; remark: string; endpoint: SocksEndpoint | null } {
   const cur = getSocks(db, id);
@@ -165,7 +165,7 @@ export function updateSocks(db: DB, id: number, input: SocksInput, now = Date.no
   ).run(plan.name, ep.host, ep.port, ep.username, ep.password, plan.remark, now, id);
 }
 
-/** 还有线路拿它当出口时不让删(删了那些线路在中转上的出站还指着它,记录却对不上了) */
+/** 还有线路拿它当出口时不让删(删了那些线路所在面板上的出站还指着它,记录却对不上了) */
 export function deleteSocks(db: DB, id: number): void {
   const used = getSocksView(db, id)?.used_by ?? 0;
   if (used) throw new InputError(`还有 ${used} 条线路在用这个 SOCKS,先删掉这些线路`);

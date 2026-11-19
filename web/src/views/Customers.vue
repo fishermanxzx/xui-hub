@@ -11,7 +11,7 @@ import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl } from '../format';
 import { toast, toastError } from '../toast';
-import type { ClientProtocol, Customer, EnforceOp, Line, LineKind, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
+import type { ClientProtocol, Customer, EnforceOp, Line, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
 
 const customers = ref<Customer[]>([]);
 const panels = ref<Panel[]>([]);
@@ -194,14 +194,12 @@ async function remove(c: Customer) {
 const lineFor = ref<Customer | null>(null);
 const opening = ref(false);
 const opened = ref<OpenedLine | null>(null);
+// 一条线路只动一块面板:选面板和入站,出口默认从这块面板直出,也可以选 SOCKS 页登记的代理
 const lf = ref({
-  kind: 'direct' as LineKind,
   panel_id: 0,
   inbound: 'new' as 'new' | number,
   protocol: 'vless' as ClientProtocol,
-  exit_kind: 'panel' as 'panel' | 'socks',
-  exit_panel_id: 0,
-  exit_inbound: 'new' as 'new' | number,
+  exit: 'direct' as 'direct' | 'socks',
   socks_id: 0,
 });
 /** 各面板现取的入站(按面板 id 缓存) */
@@ -224,8 +222,6 @@ const list = (id: number) => {
   return Array.isArray(v) ? v : [];
 };
 const clientInbounds = computed(() => list(lf.value.panel_id).filter((i) => i.accepts_clients && i.enable));
-const socksInbounds = computed(() => list(lf.value.exit_panel_id).filter((i) => (i.protocol === 'mixed' || i.protocol === 'socks') && i.enable));
-const landingPanels = computed(() => panels.value.filter((p) => p.id !== lf.value.panel_id));
 const PROTOCOL_OPTIONS: SelectOption<ClientProtocol>[] = [
   { value: 'vless', label: 'vless(reality)' },
   { value: 'hy2', label: 'hy2(hysteria2)' },
@@ -238,23 +234,13 @@ function openLineFor(c: Customer) {
   lineFor.value = c;
   opened.value = null;
   const usable = panels.value.filter((p) => !p.check_error);
-  lf.value = { kind: 'direct', panel_id: usable[0]?.id ?? 0, inbound: 'new', protocol: 'vless', exit_kind: socksList.value.length && panels.value.length < 2 ? 'socks' : 'panel', exit_panel_id: 0, exit_inbound: 'new', socks_id: socksList.value[0]?.id ?? 0 };
-  lf.value.exit_panel_id = landingPanels.value[0]?.id ?? 0;
+  lf.value = { panel_id: usable[0]?.id ?? 0, inbound: 'new', protocol: 'vless', exit: 'direct', socks_id: socksList.value[0]?.id ?? 0 };
   void fetchInbounds(lf.value.panel_id);
-  void fetchInbounds(lf.value.exit_panel_id);
 }
 watch(
   () => lf.value.panel_id,
   (id) => {
     lf.value.inbound = 'new';
-    void fetchInbounds(id);
-    if (lf.value.exit_panel_id === id) lf.value.exit_panel_id = landingPanels.value[0]?.id ?? 0;
-  },
-);
-watch(
-  () => lf.value.exit_panel_id,
-  (id) => {
-    lf.value.exit_inbound = 'new';
     void fetchInbounds(id);
   },
 );
@@ -262,25 +248,24 @@ watch(
 const canOpen = computed(() => {
   const f = lf.value;
   if (!f.panel_id) return false;
-  if (f.kind === 'relay') return f.exit_kind === 'socks' ? !!f.socks_id : !!f.exit_panel_id;
-  return true;
+  return f.exit === 'direct' || !!f.socks_id;
 });
 
 async function open() {
   if (!lineFor.value) return;
   const f = lf.value;
-  const body: OpenLineInput = { kind: f.kind, panel_id: f.panel_id, inbound: f.inbound === 'new' ? { protocol: f.protocol } : { id: f.inbound } };
-  if (f.kind === 'relay') body.exit = f.exit_kind === 'socks' ? { kind: 'socks', socks_id: f.socks_id } : { kind: 'panel', panel_id: f.exit_panel_id, inbound_id: f.exit_inbound === 'new' ? null : f.exit_inbound };
-  if (f.kind === 'relay' && !confirm(t('customers.confirmRelay'))) return;
+  const viaSocks = f.exit === 'socks';
+  const body: OpenLineInput = { kind: viaSocks ? 'relay' : 'direct', panel_id: f.panel_id, inbound: f.inbound === 'new' ? { protocol: f.protocol } : { id: f.inbound } };
+  if (viaSocks) body.exit = { kind: 'socks', socks_id: f.socks_id };
+  if (viaSocks && !confirm(t('customers.confirmRelay', { panel: panels.value.find((p) => p.id === f.panel_id)?.name ?? '' }))) return;
   opening.value = true;
   try {
     opened.value = await api.openLine(lineFor.value.id, body);
-    const notes = [opened.value.created.inbound ? t('customers.openedInbound', { name: opened.value.created.inbound }) : '', opened.value.created.exit_inbound ? t('customers.openedExitInbound', { name: opened.value.created.exit_inbound }) : ''].filter(Boolean);
-    toast(notes.length ? t('customers.lineOpenedNote', { note: notes.join(', ') }) : t('customers.lineOpened'));
-    // 入站变了:缓存清掉,表单正用着的两块马上重取(「再开一条」接着用这张表单)
+    const created = opened.value.created.inbound;
+    toast(created ? t('customers.lineOpenedNote', { note: t('customers.openedInbound', { name: created }) }) : t('customers.lineOpened'));
+    // 入站变了:缓存清掉,表单正用着的面板马上重取(「再开一条」接着用这张表单)
     inboundsOf.value = {};
     void fetchInbounds(f.panel_id);
-    void fetchInbounds(f.exit_panel_id);
     await load();
   } catch (e) {
     toastError(e);
@@ -444,20 +429,12 @@ function exitText(l: Line): string {
   <Modal v-if="lineFor" :title="opened ? t('customers.lineOpenedTitle', { name: lineFor.name }) : t('customers.openLineTitle', { name: lineFor.name })" @close="lineFor = null">
     <template v-if="!opened">
       <div class="form">
-        <div class="field-block">
-          <span class="label">{{ t('customers.lineKind') }}</span>
-          <div class="choices">
-            <label class="row small"><input v-model="lf.kind" type="radio" value="direct" />{{ t('customers.kindDirect') }}</label>
-            <label class="row small"><input v-model="lf.kind" type="radio" value="relay" />{{ t('customers.kindRelay') }}</label>
-          </div>
-        </div>
-
         <label class="field">
-          {{ lf.kind === 'relay' ? t('customers.relayPanel') : t('customers.panel') }}
+          {{ t('customers.panel') }}
           <Select v-model="lf.panel_id" :options="panelOptions(panels)" />
         </label>
         <div class="field-block">
-          <span class="label">{{ lf.kind === 'relay' ? t('customers.relayInbound') : t('customers.inbound') }}</span>
+          <span class="label">{{ t('customers.inbound') }}</span>
           <div class="choices">
             <label class="row small"><input v-model="lf.inbound" type="radio" value="new" />{{ t('customers.inboundAuto') }}</label>
             <span v-if="lf.inbound === 'new'" class="inline"><Select v-model="lf.protocol" :options="PROTOCOL_OPTIONS" :aria-label="t('customers.inboundAuto')" /></span>
@@ -470,40 +447,17 @@ function exitText(l: Line): string {
             </template>
             <span v-else class="muted small">{{ t('customers.noInbounds') }}</span>
           </div>
-          <p v-if="lf.kind === 'relay'" class="muted small hint">{{ t('customers.relayHint') }}</p>
         </div>
 
-        <template v-if="lf.kind === 'relay'">
-          <div class="field-block">
-            <span class="label">{{ t('customers.exit') }}</span>
-            <div class="choices">
-              <label class="row small"><input v-model="lf.exit_kind" type="radio" value="panel" :disabled="!landingPanels.length" />{{ t('customers.landingPanel') }}{{ landingPanels.length ? '' : t('customers.noSecondPanel') }}</label>
-              <label class="row small"><input v-model="lf.exit_kind" type="radio" value="socks" :disabled="!socksList.length" />SOCKS{{ socksList.length ? '' : t('customers.noSocks') }}</label>
-            </div>
+        <div class="field-block">
+          <span class="label">{{ t('customers.exit') }}</span>
+          <div class="choices">
+            <label class="row small"><input v-model="lf.exit" type="radio" value="direct" />{{ t('customers.exitDirect') }}</label>
+            <label class="row small"><input v-model="lf.exit" type="radio" value="socks" :disabled="!socksList.length" />{{ t('customers.exitSocks') }}{{ socksList.length ? '' : t('customers.noSocks') }}</label>
+            <span v-if="lf.exit === 'socks'" class="inline"><Select v-model="lf.socks_id" :options="socksOptions" :aria-label="t('customers.exitSocks')" /></span>
           </div>
-          <template v-if="lf.exit_kind === 'panel'">
-            <label class="field">
-              {{ t('customers.landingPanel') }}
-              <Select v-model="lf.exit_panel_id" :options="panelOptions(landingPanels)" />
-            </label>
-            <div class="field-block">
-              <span class="label">{{ t('customers.exitInbound') }}</span>
-              <div class="choices">
-                <label class="row small"><input v-model="lf.exit_inbound" type="radio" value="new" />{{ t('customers.exitInboundAuto') }}</label>
-                <template v-if="inboundsOf[lf.exit_panel_id] === 'loading'"><span class="muted small">{{ t('customers.readingInbounds') }}</span></template>
-                <template v-else-if="inboundsOf[lf.exit_panel_id] === 'error'"><span class="text-err small">{{ t('customers.landingInboundsError') }} <button type="button" class="link" @click="fetchInbounds(lf.exit_panel_id)">{{ t('customers.retry') }}</button></span></template>
-                <template v-else-if="socksInbounds.length">
-                  <label v-for="i in socksInbounds" :key="i.id" class="row small"><input v-model="lf.exit_inbound" type="radio" :value="i.id" />{{ i.remark || t('customers.unnamed') }} · {{ i.protocol }} {{ i.port }}</label>
-                </template>
-                <span v-else-if="lf.exit_panel_id" class="muted small">{{ t('customers.noSocksInbounds') }}</span>
-              </div>
-            </div>
-          </template>
-          <label v-else class="field">
-            SOCKS
-            <Select v-model="lf.socks_id" :options="socksOptions" />
-          </label>
-        </template>
+          <p class="muted small hint">{{ t('customers.relayHint') }}</p>
+        </div>
       </div>
     </template>
     <template v-else>

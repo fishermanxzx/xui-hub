@@ -1,15 +1,13 @@
-// 中转线路的出口与路由:
-// - 出口可以是 SOCKS 页登记的代理,或落地面板上的 socks(mixed)入站(指定一个已有的;不指定就用本系统建过的 relay-socks,没有才新建);
-// - 在中转的 Xray 配置里补一个指向出口的 socks 出站(已有同地址同账号的就复用)和一条「这个入站 + 这个客户端(user = email)→ 该出站」
-//   的规则,放在会接住这个入站流量的兜底规则之前,然后重启 Xray;规则去掉后没人用的出站一并删掉。
+// 线路的出口与路由:每块面板只管自己。客户端默认从这块面板直出;要换出口,就选 SOCKS 页登记的一个代理
+// (可以是别的机器上用户自己建的 socks / mixed 入站,也可以是第三方代理)。xui-hub 不会去别的面板上建任何东西。
+// 做法:在这块面板的 Xray 配置里补一个指向该代理的 socks 出站(已有同地址同账号的就复用)和一条「这个入站 + 这个客户端(user = email)→ 该出站」
+// 的规则,放在会接住这个入站流量的兜底规则之前,然后重启 Xray;规则去掉后没人用的出站一并删掉。
 // 规则按客户端区分:同一个入站上的客户端可以各走各的出口,没配规则的客户端照旧按入站 / 全局的兜底规则走(一般是直出)。
+// 旧版本留下的「落地面板」出口(exit_kind = panel)照常生效、能删,只是不能再新开。
 
-import { randomBytes } from 'node:crypto';
 import type { DB } from '../db';
-import { pickPort } from '../clients/create';
-import { getPanel, InputError, type Panel } from '../panels/repo';
+import { InputError } from '../panels/repo';
 import { getSocks, type SocksEndpoint } from '../socks/repo';
-import { using } from '../util';
 import { decodeJson, xrayConfig } from '../xui/json';
 
 export const DEFAULT_TEST_URL = 'https://www.google.com/generate_204';
@@ -23,26 +21,10 @@ export interface ExitServer {
 
 export const socksServer = (s: SocksEndpoint): ExitServer => ({ address: s.host, port: s.port, user: s.username, pass: s.password });
 
-export type ExitSpec =
-  | { kind: 'socks'; socks_id: number }
-  | { kind: 'panel'; panel_id: number; inbound_id?: number | null };
-
 export interface PreparedExit {
   server: ExitServer;
   label: string;
-  exit_kind: 'panel' | 'socks';
-  exit_panel_id: number | null;
-  exit_port: number | null;
-  exit_socks_id: number | null;
-  /** 这次在落地上新建的 socks 入站(名字和 id,开线路失败时按 id 删掉);复用已有的为 null */
-  created_inbound: string | null;
-  created_inbound_id: number | null;
-}
-
-export interface ExitAdmin {
-  listInbounds(): Promise<any[]>;
-  addInbound(body: unknown): Promise<void>;
-  close?(): Promise<void>;
+  socks_id: number;
 }
 
 export interface RouteAdmin {
@@ -51,106 +33,18 @@ export interface RouteAdmin {
   restartXray(): Promise<void>;
 }
 
-const isSocksInbound = (ib: any) => ['mixed', 'socks'].includes(String(ib?.protocol)) && ib?.enable !== false;
-/** 本系统在落地上建的 socks 入站的名字 */
-const OWN_REMARK = /^relay-socks(-\d+)?$/;
-
-/** 落地上给中转用的 socks 入站:mixed 协议、用户名密码认证、只收 TCP 代理请求 */
-export function builtinMixedInbound(port: number, remark: string, user: string, pass: string): any {
-  return {
-    up: 0,
-    down: 0,
-    total: 0,
-    remark,
-    enable: true,
-    expiryTime: 0,
-    listen: '',
-    port,
-    protocol: 'mixed',
-    settings: JSON.stringify({ auth: 'password', accounts: [{ user, pass }], udp: true, ip: '127.0.0.1' }),
-    streamSettings: JSON.stringify({ network: 'tcp', security: 'none', tcpSettings: { acceptProxyProtocol: false, header: { type: 'none' } } }),
-    sniffing: JSON.stringify({ enabled: false, destOverride: [] }),
-    allocate: JSON.stringify({ strategy: 'always', refresh: 5, concurrency: 3 }),
-  };
+/** 请求里的出口:只认 SOCKS 页登记的代理 */
+export function parseExitSocksId(raw: any): number {
+  if (raw?.kind === 'panel') throw new InputError('不再支持把别的面板直接当出口:在那台机器上自己建一个 socks / mixed 入站,登记到 SOCKS 页,再选它当出口');
+  const id = Number(raw?.socks_id);
+  if (!Number.isInteger(id) || id <= 0) throw new InputError('出口要选 SOCKS 页登记的代理');
+  return id;
 }
 
-/** 从 mixed / socks 入站的设置里取第一个账号 */
-export function accountOf(ib: any): { user: string; pass: string } {
-  const s = decodeJson(ib?.settings) ?? {};
-  const acc = (s.accounts ?? [])[0] ?? {};
-  return { user: String(acc.user ?? ''), pass: String(acc.pass ?? '') };
-}
-
-export function parseExitSpec(raw: any): ExitSpec {
-  if (raw?.kind === 'socks') {
-    const id = Number(raw.socks_id);
-    if (!Number.isInteger(id) || id <= 0) throw new InputError('缺少 SOCKS');
-    return { kind: 'socks', socks_id: id };
-  }
-  if (raw?.kind === 'panel') {
-    const id = Number(raw.panel_id);
-    if (!Number.isInteger(id) || id <= 0) throw new InputError('缺少落地面板');
-    const ib = raw.inbound_id == null || raw.inbound_id === '' ? null : Number(raw.inbound_id);
-    return { kind: 'panel', panel_id: id, inbound_id: ib };
-  }
-  throw new InputError('中转线路要选出口:落地面板或 SOCKS');
-}
-
-/** 把出口变成中转能连的 socks 服务器。落地没指定入站时用本系统建过的那个(名字是 relay-socks),没有才新建 */
-export async function prepareExit(db: DB, spec: ExitSpec, adminFor: (panel: Panel) => ExitAdmin, relayHost: string): Promise<PreparedExit> {
-  if (spec.kind === 'socks') {
-    const s = getSocks(db, spec.socks_id);
-    if (!s) throw new InputError('SOCKS 不存在');
-    return {
-      server: socksServer(s),
-      label: `SOCKS ${s.name}`,
-      exit_kind: 'socks',
-      exit_panel_id: null,
-      exit_port: null,
-      exit_socks_id: s.id,
-      created_inbound: null,
-      created_inbound_id: null,
-    };
-  }
-  const landing = getPanel(db, spec.panel_id);
-  if (!landing) throw new InputError('落地面板不存在');
-  const address = new URL(landing.base_url).hostname;
-  if (address === relayHost) throw new InputError('落地和中转是同一块面板');
-  return using(adminFor(landing), async (admin) => {
-    const inbounds = await admin.listInbounds();
-    let ib: any;
-    let created: string | null = null;
-    if (spec.inbound_id != null) {
-      ib = inbounds.find((x) => Number(x.id) === spec.inbound_id);
-      if (!ib) throw new InputError('落地上没有这个入站');
-      if (!isSocksInbound(ib)) throw new InputError('落地上给中转用的入站要是 socks / mixed 协议且启用');
-    } else {
-      ib = inbounds.find((x) => isSocksInbound(x) && OWN_REMARK.test(String(x.remark ?? '')) && accountOf(x).user);
-    }
-    if (!ib) {
-      const port = pickPort(landing, inbounds);
-      const taken = new Set(inbounds.map((x) => String(x.remark ?? '')));
-      let remark = 'relay-socks';
-      for (let i = 2; taken.has(remark); i++) remark = `relay-socks-${i}`;
-      const user = `r${randomBytes(4).toString('hex')}`;
-      const pass = randomBytes(12).toString('base64url');
-      await admin.addInbound(builtinMixedInbound(port, remark, user, pass));
-      ib = (await admin.listInbounds()).find((x) => Number(x.port) === port && x.protocol === 'mixed');
-      if (!ib) throw new Error('落地上新建 socks 入站后读回没找到');
-      created = remark;
-    }
-    const acc = accountOf(ib);
-    return {
-      server: { address, port: Number(ib.port), user: acc.user, pass: acc.pass },
-      label: `落地 ${landing.name}(${ib.remark || ib.port})`,
-      exit_kind: 'panel' as const,
-      exit_panel_id: landing.id,
-      exit_port: Number(ib.port),
-      exit_socks_id: null,
-      created_inbound: created,
-      created_inbound_id: created ? Number(ib.id) : null,
-    };
-  });
+export function prepareExit(db: DB, socksId: number): PreparedExit {
+  const s = getSocks(db, socksId);
+  if (!s) throw new InputError('SOCKS 不存在');
+  return { server: socksServer(s), label: `SOCKS ${s.name}`, socks_id: s.id };
 }
 
 const serverOf = (o: any) => {

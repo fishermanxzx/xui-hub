@@ -167,7 +167,7 @@ test('客户全流程:建客户、开线路、取链接、超额停用、清零�
 
     const opened = await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: hk.id, inbound: { id: 7 } });
     assert.equal(opened.status, 200);
-    assert.deepEqual([opened.body.line.email, opened.body.line.panel_name, opened.body.created], ['李四', 'hk', { inbound: null, exit_inbound: null }]);
+    assert.deepEqual([opened.body.line.email, opened.body.line.panel_name, opened.body.created], ['李四', 'hk', { inbound: null }]);
     assert.match(opened.body.links[0], /^vless:\/\/.+@1\.1\.1\.1#李四$/);
     const lid = opened.body.line.id;
     assert.deepEqual((await call('GET', `/customers/${c.id}/lines/${lid}/links`)).body, { links: opened.body.links });

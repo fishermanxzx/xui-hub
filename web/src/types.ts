@@ -298,13 +298,13 @@ export interface OpenLineInput {
   kind: LineKind;
   panel_id: number;
   inbound: { id?: number; protocol?: ClientProtocol };
-  exit?: { kind: 'panel'; panel_id: number; inbound_id?: number | null } | { kind: 'socks'; socks_id: number };
+  exit?: { kind: 'socks'; socks_id: number };
 }
 
 export interface OpenedLine {
   line: Line;
   links: string[];
-  created: { inbound: string | null; exit_inbound: string | null };
+  created: { inbound: string | null };
 }
 
 export interface CreatedClient {

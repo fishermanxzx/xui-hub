@@ -1,4 +1,4 @@
-// 客户与线路的存取。线路 = 客户在某块面板上的一个 client,直连或中转(带出口)。
+// 客户与线路的存取。线路 = 客户在某块面板上的一个 client,直出或走 SOCKS 出口(exit_kind = socks;旧版本留下的 exit_kind = panel 照常生效)。
 
 import { randomBytes } from 'node:crypto';
 import type { DB } from '../db';
@@ -294,7 +294,7 @@ export function lineByEmail(db: DB, panelId: number, email: string): Line | unde
   return row ? toLine(row) : undefined;
 }
 
-/** 出口是这个 SOCKS 的中转线路 */
+/** 出口是这个 SOCKS 的线路 */
 export function linesViaSocks(db: DB, socksId: number): Line[] {
   return (db.prepare(`${LINE_SQL} WHERE l.exit_socks_id = ? ORDER BY l.id`).all(socksId) as any[]).map(toLine);
 }

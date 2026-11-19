@@ -24,7 +24,7 @@ await shot('customers', { hash: 'customers', height: 860 });
 await shot('open-line', { hash: 'customers', height: 900, before: async () => {
   await clickText('开线路', 0);
   await sleep(300);
-  await clickText('中转:');
+  await clickText('经 SOCKS');
   await sleep(600);
 } });
 await shot('topology', { hash: 'customers', height: 700, before: async () => {

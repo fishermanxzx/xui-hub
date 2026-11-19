@@ -436,7 +436,7 @@ export function apiRouter(deps: RouteDeps): Router {
       return { failed };
     }),
   );
-  // 开线路:直连 / 中转(见 lines/open.ts)
+  // 开线路:直出,或走登记的 SOCKS 出口(见 lines/open.ts)
   r.post('/customers/:id/lines', wrap((req) => openLine(db, idParam(req), req.body ?? {}, deps.clientFor, deps.probe)));
   const lineOf = (req: Request) => {
     const line = getLine(db, Number(req.params.lid));
@@ -472,7 +472,7 @@ export function apiRouter(deps: RouteDeps): Router {
   };
   r.get('/socks', wrap(() => listSocks(db)));
   r.post('/socks', wrap((req) => socksOne(createSocks(db, req.body ?? {}))));
-  // 换了地址 / 账号:先把在用它的中转改指到新地址,都改成了才保存
+  // 换了地址 / 账号:先把走它的线路在各自面板上改指到新地址,都改成了才保存
   r.patch(
     '/socks/:id',
     wrap(async (req) => {
