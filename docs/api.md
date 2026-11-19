@@ -34,12 +34,13 @@ Authorization: Bearer xh_……
 | `state` | `active` 正常 / `expired` 已到期 / `over_quota` 已超额 |
 | `sub_token` | 订阅链接是 `https://<后台地址>/sub/<sub_token>` |
 | `sub_url` | 配了 `SUB_BASE_URL` 时是完整的订阅链接,否则为 `null` |
+| `sub_links` | 自定义订阅链接:路径(可带参数)的数组,如 `/s/zhangsan`、`/getprofile?name=a&token=b`。访问 `https://<订阅地址>/<路径>` 和访问 `sub_url` 一样。路径不分大小写、忽略末尾的 `/`;链接里写了的参数请求里要有且相等,多带的参数不影响。新建 / 修改时传数组整组替换(也可以传完整网址,只取路径和参数),空数组 = 清空;每位客户最多 20 个,不能和别的客户重复,不能占用 `/api`、`/mcp`、`/assets` 等本程序自己用的路径。重置订阅链接不影响它们 |
 | `lines` | 线路列表 |
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/customers` | 全部客户 |
-| POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_devices`、`sub_template` |
+| POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_devices`、`sub_template`、`sub_links` |
 | PATCH | `/customers/:id` | 修改,只传要改的字段。改了额度 / 到期会立刻停用或恢复他的客户端 |
 | POST | `/customers/:id/renew` | 续期。请求体:`days`(1-3650),`reset_usage`(可选,`true` 时顺带把流量清零)。在现在的到期日上加天数,已到期或没设到期日的从现在起算 |
 | POST | `/customers/:id/reset-usage` | 把已用流量清零 |

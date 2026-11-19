@@ -51,6 +51,8 @@ function customerView(c: any, ctx: ToolContext) {
     devices: c.sub_devices,
     sub_template: c.sub_template || 'ACL4SSR_Online_Mini',
     sub_url: c.sub_url || `${ctx.baseUrl}/sub/${c.sub_token}`,
+    // 自定义链接:和 sub_url 同一个地址前缀
+    custom_sub_urls: (c.sub_links ?? []).map((l: string) => `${c.sub_url ? String(c.sub_url).replace(/\/sub\/[^/]*$/, '') : ctx.baseUrl}${l}`),
     sub_last_fetched_at: iso(c.sub_fetched_at ?? 0),
     lines: (c.lines ?? []).map((l: any) => ({
       id: l.id,
@@ -69,7 +71,7 @@ function customerView(c: any, ctx: ToolContext) {
 /** quota_gb / expire_at(ISO 或 +N 天)换成接口要的字节和毫秒 */
 function customerInput(a: any): Record<string, unknown> {
   const body: Record<string, unknown> = {};
-  for (const k of ['name', 'remark', 'reset_day', 'limit_devices', 'sub_template']) if (a[k] !== undefined) body[k] = a[k];
+  for (const k of ['name', 'remark', 'reset_day', 'limit_devices', 'sub_template', 'sub_links']) if (a[k] !== undefined) body[k] = a[k];
   if (a.quota_gb !== undefined) body.quota_bytes = Math.round(Number(a.quota_gb) * GB);
   if (a.expire_at !== undefined) {
     if (a.expire_at === '' || a.expire_at === null) body.expire_at = 0;
@@ -92,6 +94,12 @@ const customerFields = {
   reset_day: int('按月重置流量:0 = 不重置;1-28 = 开启。客户有到期时间时重置日跟着到期日走(每月到期日那天),这个数只在没有到期时间时当「每月几号」用', { minimum: 0, maximum: 28 }),
   limit_devices: int('能拉订阅的设备数上限,0 = 不限', { minimum: 0, maximum: 100 }),
   sub_template: str('Clash 订阅模板:内置模板 id(如 ACL4SSR_Online_Full)或 https 模板地址;空字符串 = 默认'),
+  sub_links: {
+    type: 'array',
+    items: { type: 'string' },
+    maxItems: 20,
+    description: '自定义订阅链接(整组替换,空数组 = 清空):路径,可带参数,如 /s/zhangsan 或 /getprofile?name=a&token=b;也可以贴完整网址(只取路径和参数)。访问它和访问 sub_url 一样,常用来沿用别的系统发出去的旧链接',
+  },
 };
 
 export const TOOLS: ToolDef[] = [
@@ -114,7 +122,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'update_customer',
     title: '修改客户',
-    description: '修改客户的名称、备注、额度、到期时间、清零日、设备数上限或订阅模板,只传要改的。改了额度 / 到期会立刻停用或恢复他在面板上的客户端。',
+    description: '修改客户的名称、备注、额度、到期时间、清零日、设备数上限、订阅模板或自定义订阅链接,只传要改的。改了额度 / 到期会立刻停用或恢复他在面板上的客户端。',
     inputSchema: obj({ customer_id: customerId, ...customerFields }, ['customer_id']),
     annotations: { destructiveHint: false, idempotentHint: true },
     run: async (a, ctx) => customerView(await call(ctx, 'PATCH', `/customers/${Number(a.customer_id)}`, customerInput(a)), ctx),

@@ -3,6 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import type { DB } from '../db';
 import { InputError } from '../panels/repo';
+import { customLinksByCustomer, setCustomLinks } from '../subscription/customLinks';
 import { validTemplate } from '../subscription/templates';
 
 export type LineKind = 'direct' | 'relay';
@@ -68,6 +69,8 @@ export type CustomerView = Customer & {
   state: CustomerState;
   /** 下次按月重置流量的时间(毫秒),0 = 没开 */
   next_reset_at: number;
+  /** 自定义订阅链接(路径 + 参数),访问它们和访问 /sub/<token> 一样 */
+  sub_links: string[];
 };
 
 export interface CustomerInput {
@@ -78,6 +81,8 @@ export interface CustomerInput {
   reset_day?: unknown;
   sub_template?: unknown;
   limit_devices?: unknown;
+  /** 自定义订阅链接:整组替换,地址数组或按行分隔的字符串 */
+  sub_links?: unknown;
 }
 
 /** 客户状态:到期 > 超额 > 正常 */
@@ -164,13 +169,14 @@ function withLines(db: DB, rows: any[], now = Date.now()): CustomerView[] {
   const all = rows.length === 1 ? linesOf(db, rows[0].id) : (db.prepare(`${LINE_SQL} ORDER BY l.id`).all() as any[]).map(toLine);
   const byCustomer = new Map<number, Line[]>();
   for (const l of all) byCustomer.set(l.customer_id, [...(byCustomer.get(l.customer_id) ?? []), l]);
+  const links = customLinksByCustomer(db, rows.length === 1 ? rows[0].id : undefined);
   // limit_ip 是 0.9.0 留下的列(当时往面板写 limitIp),早已不用,不往外带
   return rows.map(({ limit_ip: _unused, ...c }) => {
     const lines = byCustomer.get(c.id) ?? [];
     const used_up = lines.reduce((s, l) => s + l.up, 0);
     const used_down = lines.reduce((s, l) => s + l.down, 0);
     const used = used_up + used_down;
-    return { ...c, lines, used_up, used_down, used, state: customerState(c, used, now), next_reset_at: nextResetAt(c, now) };
+    return { ...c, lines, used_up, used_down, used, state: customerState(c, used, now), next_reset_at: nextResetAt(c, now), sub_links: links.get(c.id) ?? [] };
   });
 }
 
@@ -186,10 +192,14 @@ export function getCustomer(db: DB, id: number): CustomerView | undefined {
 const newSubToken = () => randomBytes(18).toString('base64url');
 
 export function createCustomer(db: DB, input: CustomerInput, now = Date.now()): number {
-  const info = db
-    .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_template, limit_devices, sub_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, validTemplate(input.sub_template), validLimitDevices(input.limit_devices), newSubToken(), now, now);
-  return Number(info.lastInsertRowid);
+  return db.transaction(() => {
+    const info = db
+      .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_template, limit_devices, sub_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, validTemplate(input.sub_template), validLimitDevices(input.limit_devices), newSubToken(), now, now);
+    const id = Number(info.lastInsertRowid);
+    if (input.sub_links !== undefined) setCustomLinks(db, id, input.sub_links);
+    return id;
+  })();
 }
 
 export function customerIdBySubToken(db: DB, token: string): number | undefined {
@@ -210,7 +220,8 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
   if (!cur) throw new InputError('客户不存在');
   const resetDay = input.reset_day === undefined ? cur.reset_day : validResetDay(input.reset_day);
   const expireAt = input.expire_at === undefined ? cur.expire_at : nonNegativeInt(input.expire_at, '到期时间');
-  db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, reset_day = ?, last_reset_at = ?, sub_template = ?, limit_devices = ?, updated_at = ? WHERE id = ?').run(
+  const update = db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, reset_day = ?, last_reset_at = ?, sub_template = ?, limit_devices = ?, updated_at = ? WHERE id = ?');
+  const values = [
     input.name === undefined ? cur.name : validName(input.name),
     input.remark === undefined ? cur.remark : String(input.remark ?? '').trim(),
     input.quota_bytes === undefined ? cur.quota_bytes : nonNegativeInt(input.quota_bytes, '额度'),
@@ -222,7 +233,11 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
     input.limit_devices === undefined ? cur.limit_devices : validLimitDevices(input.limit_devices),
     now,
     id,
-  );
+  ];
+  db.transaction(() => {
+    update.run(...values);
+    if (input.sub_links !== undefined) setCustomLinks(db, id, input.sub_links);
+  })();
 }
 
 export function markReset(db: DB, id: number, now = Date.now()): void {

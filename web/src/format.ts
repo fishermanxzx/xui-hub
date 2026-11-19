@@ -86,6 +86,11 @@ export function subUrl(c: { sub_url: string | null; sub_token: string }): string
   return c.sub_url ?? `${location.origin}/sub/${c.sub_token}`;
 }
 
+/** 自定义链接的完整地址:和订阅链接同一个地址前缀 */
+export function customSubUrl(c: { sub_url: string | null; sub_token: string }, link: string): string {
+  return subUrl(c).replace(/\/sub\/[^/]*$/, '') + link;
+}
+
 /** 订阅客户端的简称:UA 的第一段(如 clash-verge/v2.5.8),浏览器统一叫浏览器 */
 export function shortUa(ua: string | null | undefined): string {
   if (!ua) return '';

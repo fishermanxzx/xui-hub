@@ -208,6 +208,19 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (day, panel_id, email)
   ) WITHOUT ROWID;
   `,
+  `
+  -- 自定义订阅链接:客户另配的访问地址,访问它等于访问 /sub/<token>。
+  -- link 是后台填的样子(显示用);path / query 是规范化后的(匹配用:路径小写、去末尾 /,参数排好序)
+  CREATE TABLE sub_links (
+    id          INTEGER PRIMARY KEY,
+    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    link        TEXT NOT NULL,
+    path        TEXT NOT NULL,
+    query       TEXT NOT NULL,
+    UNIQUE (path, query)
+  );
+  CREATE INDEX sub_links_customer ON sub_links(customer_id);
+  `,
 ];
 
 export function openDb(file: string): DB {
