@@ -4,7 +4,7 @@ import type { Panel } from '../panels/repo';
 import { decodeJson } from '../xui/json';
 import { addPanel, memoryDb } from '../testUtil';
 import { createClient, emailFor, protocolOf, type ClientAdmin } from './create';
-import { freshReality } from './templates';
+import { freshReality, stealsItself } from './templates';
 
 const reality = (key: string) => ({
   network: 'tcp',
@@ -157,4 +157,34 @@ test('照旧内置模板(伪装 www.microsoft.com)建的入站复制时,伪装�
   const made = (site: string) => decodeJson(freshReality({ protocol: 'vless', streamSettings: JSON.stringify({ network: 'tcp', security: 'reality', realitySettings: { target: `${site}:443`, serverNames: [site] } }) }).streamSettings).realitySettings;
   assert.deepEqual([made('www.microsoft.com').target, made('www.microsoft.com').serverNames], ['www.sony.com:443', ['www.sony.com']]);
   assert.deepEqual([made('www.example.com').target, made('www.example.com').serverNames], ['www.example.com:443', ['www.example.com']]);
+});
+
+test('「偷自己」的 reality 入站不当模板:照下一块面板的,都没有就用内置模板', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a', 'https://1.2.3.4:2053/p');
+  // xui-node 装的节点:伪装目标是本机 Nginx,SNI 是自己的域名
+  const node = addPanel(db, 'node', 'https://us1.example.com:2096/x');
+  const self = { network: 'tcp', security: 'reality', realitySettings: { target: '127.0.0.1:8443', serverNames: ['us1.example.com'], privateKey: 'k', settings: { publicKey: 'p' } } };
+  const b = addPanel(db, 'b');
+  const data: Record<string, Data> = {
+    a: { inbounds: [], clients: [] },
+    node: { inbounds: [inbound(1, 'vless', 443, JSON.stringify(self), 'us1')], clients: [] },
+    b: { inbounds: [inbound(7, 'vless', 443, reality('b-key'), 'b-reality')], clients: [] },
+  };
+  const adminFor = fake(data);
+  await createClient(a, adminFor(a), { name: 'li' }, { otherPanels: [a, node, b], adminFor });
+  assert.equal(decodeJson(data.a.inbounds[0].streamSettings).realitySettings.serverNames[0], 'www.example.com', '跳过 node,照 b 的');
+  const c = addPanel(db, 'c');
+  data.c = { inbounds: [], clients: [] };
+  await createClient(c, adminFor(c), { name: 'w' }, { otherPanels: [c, node], adminFor });
+  const rs = decodeJson(data.c.inbounds[0].streamSettings).realitySettings;
+  assert.deepEqual([rs.target, rs.serverNames], ['www.sony.com:443', ['www.sony.com']], '只有 node 时用内置模板');
+});
+
+test('stealsItself:本机地址、只写端口、unix socket、面板自己的地址或域名都算「偷自己」', () => {
+  const ib = (target: string, serverNames: string[] = ['www.example.com']) => ({ streamSettings: JSON.stringify({ realitySettings: { target, serverNames } }) });
+  const yes = ['127.0.0.1:8443', 'localhost:8443', '[::1]:8443', '0.0.0.0:443', '8443', '/dev/shm/nginx.sock', '@nginx', 'us1.example.com:8443', 'US1.example.com:443', ''];
+  for (const t of yes) assert.equal(stealsItself(ib(t), 'us1.example.com'), true, t);
+  assert.equal(stealsItself(ib('www.example.com:443', ['us1.example.com']), 'us1.example.com'), true, 'SNI 是自己的域名');
+  for (const t of ['www.sony.com:443', 'www.example.com:443', '[2001:db8::1]:443']) assert.equal(stealsItself(ib(t), 'us1.example.com'), false, t);
 });

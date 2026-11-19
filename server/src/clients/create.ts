@@ -1,6 +1,6 @@
 // 在一台面板上创建客户端(client),协议 vless(reality)或 hy2:
 // - 面板上已有这个协议、启用着的入站就复用(vless 优先 reality,都优先 client 多的);
-// - 没有就新建一个入站:照其他面板上的同协议入站复制(换新密钥 / 证书),没有就用内置模板;
+// - 没有就新建一个入站:照其他面板上的同协议入站复制(换新密钥 / 证书;「偷自己」的 reality 入站不照抄),没有就用内置模板;
 //   hy2 新建需要这台面板配置了证书(面板设置里的证书路径)。
 // 建好后读回核对,再从面板取这个 client 的分享链接。
 
@@ -9,7 +9,7 @@ import { connect } from 'node:net';
 import { InputError, type Panel } from '../panels/repo';
 import { using } from '../util';
 import { decodeJson } from '../xui/json';
-import { builtinHysteria2, builtinVlessReality, cloneInbound, freshHysteria, freshReality, isReality, isTemplate, type ClientProtocol } from './templates';
+import { builtinHysteria2, builtinVlessReality, cloneInbound, freshHysteria, freshReality, isReality, isTemplate, stealsItself, type ClientProtocol } from './templates';
 
 export interface ClientAdmin {
   listInbounds(): Promise<any[]>;
@@ -141,8 +141,10 @@ async function templateFor(protocol: ClientProtocol, panel: Panel, admin: Client
   const host = new URL(panel.base_url).hostname;
   for (const other of opts.otherPanels ?? []) {
     if (other.id === panel.id || !opts.adminFor) continue;
-    // 别的面板读不到就跳过
-    const ib = await using(opts.adminFor(other), async (client) => (await client.listInbounds()).find(isTemplate(protocol))).catch(() => undefined);
+    // 别的面板读不到就跳过;「偷自己」的 reality 入站搬不走,不当模板
+    const otherHost = new URL(other.base_url).hostname;
+    const usable = (ib: any) => isTemplate(protocol)(ib) && (protocol !== 'vless' || !stealsItself(ib, otherHost));
+    const ib = await using(opts.adminFor(other), async (client) => (await client.listInbounds()).find(usable)).catch(() => undefined);
     if (!ib) continue;
     const from = `${other.name} 的 ${ib.remark || ib.port}`;
     return protocol === 'vless' ? { body: freshReality(ib), from } : { body: freshHysteria(ib, cert!, host), from };
