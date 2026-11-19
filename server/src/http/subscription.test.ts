@@ -110,6 +110,54 @@ test('重置订阅链接后旧 token 404,新 token 可用', async () => {
   }
 });
 
+test('自定义链接:和生成的链接回一样的内容(格式、流量头、拉取记录、自助页);对不上的放给后面的路由;重置 token 不影响', async () => {
+  const { db, id, other, token } = setup();
+  updateCustomer(db, id, { sub_links: ['/getprofile?name=profiles/zhu&token=t', '/s/zhu'] });
+  const calls: Call[] = [];
+  const { base, link, close } = await serve(db, fakeConverter(calls));
+  try {
+    const viaToken = await get(link(token), CLASH_UA);
+    const viaLink = await get(`${base}/getprofile?token=t&name=profiles%2Fzhu`, CLASH_UA);
+    assert.equal(viaLink.status, 200);
+    assert.equal(await viaLink.text(), await viaToken.text());
+    assert.equal(viaLink.headers.get('subscription-userinfo'), USERINFO);
+    assert.equal(viaLink.headers.get('content-type'), viaToken.headers.get('content-type'));
+    // 多带参数照样认,?target= 照样能指定格式
+    assert.equal(await decode(await get(`${base}/S/zhu/?target=base64`, CLASH_UA)), NODES);
+    assert.equal((await fetch(`${base}/s/zhu`, { method: 'HEAD', headers: { 'User-Agent': V2RAYN_UA } })).status, 200);
+    // 拉取记录照常记在这位客户名下
+    assert.equal(listSubFetches(db, id).length, 4);
+    // 浏览器打开:自助页,上面给的是生成的链接
+    const page = await fetch(`${base}/s/zhu`, { headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html' } });
+    assert.match(await page.text(), new RegExp(`/sub/${token}`));
+    // 路径配过、参数不全:404(token 写错一样);没配过的路径不归这里管,落到后面的路由
+    const wrong = await get(`${base}/getprofile?name=profiles/zhu`, CLASH_UA);
+    assert.deepEqual([wrong.status, await wrong.text()], [404, 'not found']);
+    assert.equal(listSubFetches(db, id).length, 4, '对不上的不记');
+    const app = express();
+    app.use(subscriptionRouter({ db, fetcher, convert: null, internalBaseUrl: '', internalSecret: '', mihomoTemplate: () => false }));
+    app.use((_req, res) => void res.send('next'));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((r) => server.once('listening', r));
+    try {
+      const b2 = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      assert.equal(await (await get(`${b2}/s/nobody`, CLASH_UA)).text(), 'next');
+      assert.equal(await (await get(`${b2}/`, CLASH_UA)).text(), 'next');
+      assert.equal(await (await get(`${b2}/s/zhu`, V2RAYN_UA)).status, 200);
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+    // 重置 token 后自定义链接照样能用;改到别的客户名下就跟着走
+    resetSubToken(db, id);
+    assert.equal((await get(`${base}/s/zhu`, V2RAYN_UA)).status, 200);
+    updateCustomer(db, id, { sub_links: [] });
+    updateCustomer(db, other, { sub_links: ['/s/zhu'] });
+    assert.equal(await decode(await get(`${base}/s/zhu`, V2RAYN_UA)), 'vless://x@1.1.1.1:1#A');
+  } finally {
+    await close();
+  }
+});
+
 test('sing-box 与 Hiddify:本系统生成 JSON(不经 subconverter),Profile-Title,不带下载头;按版本选 DNS 写法', async () => {
   const { db, token } = setup();
   const calls: Call[] = [];

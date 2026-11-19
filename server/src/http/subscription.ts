@@ -1,4 +1,5 @@
 // 公开的订阅接口(无需登录):/sub/<token>,token 每个客户一个(后台「复制订阅」里的链接)。
+// 客户另配的自定义链接(任意路径,可带参数)和 /sub/<token> 等价,见 subscription/customLinks.ts。
 // 返回该客户全部线路的统一订阅(全局用量),按 UA 返回 Clash / sing-box / base64 等格式,?target= 可强制指定。
 // 非 base64 格式由内部 subconverter 转换,它带内部密钥回源 /internal/nodes/:id 取原始节点。
 
@@ -11,6 +12,7 @@ import { buildLoon, buildQuantumultX } from '../subscription/apple';
 import { applyMihomoTemplate, lowerMode, withRealityMlkem, withTrojanFingerprint } from '../subscription/mihomo';
 import { parseNodes } from '../subscription/nodes';
 import { buildSingbox, singboxLegacyDns } from '../subscription/singbox';
+import { customerIdByLink } from '../subscription/customLinks';
 import { clientIp, recordSubFetch } from '../subscription/fetchLog';
 import { collectLinks, encodeSubscription, mergeLinks, userinfoHeader, type LinkFetcher } from '../subscription/service';
 import { renderSubPage } from './subPage';
@@ -130,6 +132,58 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
     }),
   );
 
+  /** 给这位客户回订阅(/sub/<token> 和自定义链接都走这里) */
+  const subscribe = async (customer: CustomerView, req: Request, res: Response): Promise<void> => {
+    const ua = req.get('user-agent');
+    // 浏览器直接打开(没指定格式):给客户看的自助页。?target=base64 仍然拿节点
+    if (req.query.target === undefined && isBrowserUA(ua) && (req.get('accept') ?? '').includes('text/html')) {
+      const base = deps.subBaseUrl || `${req.protocol}://${req.get('host')}`;
+      res.set({ 'Cache-Control': 'no-store', 'Content-Type': 'text/html; charset=utf-8' });
+      res.send(renderSubPage({ customer, url: `${base}/sub/${customer.sub_token}`, devices: listDevices(db, customer.id), removed: req.query.removed === '1' }));
+      return;
+    }
+    const target = requestedTarget(req);
+    // token 有效的请求都记一条拉取记录(响应发完后记,带上最终状态码)
+    res.on('finish', () => recordSubFetch(db, { at: Date.now(), customer_id: customer.id, target, status: res.statusCode, ua: ua ?? '', ip: clientIp(req) }));
+    // 设备数上限:名额满了的新设备拉不到订阅(已经拿到节点的设备不受影响),客户在自助页删掉一台旧的就能再加
+    if (!admitDevice(db, customer.id, customer.limit_devices, { key: deviceKey(req), ua: ua ?? '', ip: clientIp(req) })) {
+      res.status(403).type('text/plain').send('device limit reached: open the subscription link in a browser and remove an old device first\n设备数已达上限:用浏览器打开订阅链接,删掉一台旧设备后再更新订阅');
+      return;
+    }
+    touchSubFetch(db, customer.id, ua ?? '');
+    res.set(formatHeaders(target, customer.name, userinfoHeader(customer)));
+    if (target === 'base64') {
+      res.send(encodeSubscription(await nodes(customer)));
+      return;
+    }
+    if (customer.state !== 'active') {
+      res.status(403).type('text/plain').send('subscription disabled');
+      return;
+    }
+    if (OWN_TARGETS.has(target)) {
+      sendOwn(res, target, renderOwn(target, await nodes(customer), ua));
+      return;
+    }
+    if (!deps.convert) {
+      res.status(503).type('text/plain').send('converter unavailable');
+      return;
+    }
+    const source = `${deps.internalBaseUrl}/internal/nodes/${customer.id}?key=${encodeURIComponent(deps.internalSecret)}`;
+    res.send(withTemplate(req, target, customer.name, (await deps.convert(target, source, { ...DEFAULT_CONVERT_OPTIONS, config: templateUrl(customer.sub_template) })).body));
+  };
+
+  // 自定义链接:先于下面的路由匹配(本程序自己用的路径不会被占,见 isReserved)
+  r.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const q = req.originalUrl.indexOf('?');
+    const id = customerIdByLink(db, req.path, q < 0 ? '' : req.originalUrl.slice(q + 1));
+    if (id === undefined) return next();
+    const customer = id === null ? undefined : getCustomer(db, id);
+    // 路径是自定义链接、参数对不上(如旧链接里的 token 写错):和 token 不对一样回 404,不落到后台页面
+    if (!customer) return void res.status(404).type('text/plain').send('not found');
+    void handle((rq, rs) => subscribe(customer, rq, rs))(req, res);
+  });
+
   r.get(
     '/sub/:token',
     handle(async (req, res) => {
@@ -139,42 +193,7 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
         res.status(404).type('text/plain').send('not found');
         return;
       }
-      const ua = req.get('user-agent');
-      // 浏览器直接打开(没指定格式):给客户看的自助页。?target=base64 仍然拿节点
-      if (req.query.target === undefined && isBrowserUA(ua) && (req.get('accept') ?? '').includes('text/html')) {
-        const base = deps.subBaseUrl || `${req.protocol}://${req.get('host')}`;
-        res.set({ 'Cache-Control': 'no-store', 'Content-Type': 'text/html; charset=utf-8' });
-        res.send(renderSubPage({ customer, url: `${base}/sub/${customer.sub_token}`, devices: listDevices(db, customer.id), removed: req.query.removed === '1' }));
-        return;
-      }
-      const target = requestedTarget(req);
-      // token 有效的请求都记一条拉取记录(响应发完后记,带上最终状态码)
-      res.on('finish', () => recordSubFetch(db, { at: Date.now(), customer_id: customer.id, target, status: res.statusCode, ua: ua ?? '', ip: clientIp(req) }));
-      // 设备数上限:名额满了的新设备拉不到订阅(已经拿到节点的设备不受影响),客户在自助页删掉一台旧的就能再加
-      if (!admitDevice(db, customer.id, customer.limit_devices, { key: deviceKey(req), ua: ua ?? '', ip: clientIp(req) })) {
-        res.status(403).type('text/plain').send('device limit reached: open the subscription link in a browser and remove an old device first\n设备数已达上限:用浏览器打开订阅链接,删掉一台旧设备后再更新订阅');
-        return;
-      }
-      touchSubFetch(db, customer.id, ua ?? '');
-      res.set(formatHeaders(target, customer.name, userinfoHeader(customer)));
-      if (target === 'base64') {
-        res.send(encodeSubscription(await nodes(customer)));
-        return;
-      }
-      if (customer.state !== 'active') {
-        res.status(403).type('text/plain').send('subscription disabled');
-        return;
-      }
-      if (OWN_TARGETS.has(target)) {
-        sendOwn(res, target, renderOwn(target, await nodes(customer), ua));
-        return;
-      }
-      if (!deps.convert) {
-        res.status(503).type('text/plain').send('converter unavailable');
-        return;
-      }
-      const source = `${deps.internalBaseUrl}/internal/nodes/${customer.id}?key=${encodeURIComponent(deps.internalSecret)}`;
-      res.send(withTemplate(req, target, customer.name, (await deps.convert(target, source, { ...DEFAULT_CONVERT_OPTIONS, config: templateUrl(customer.sub_template) })).body));
+      await subscribe(customer, req, res);
     }),
   );
 

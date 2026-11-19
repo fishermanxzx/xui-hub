@@ -153,6 +153,8 @@ export interface Customer {
   sub_token: string;
   /** 订阅链接;未配置 SUB_BASE_URL 时为 null,前端用当前地址拼 */
   sub_url: string | null;
+  /** 自定义订阅链接(路径 + 参数),访问它们和访问订阅链接一样 */
+  sub_links: string[];
   sub_fetched_at: number | null;
   sub_fetched_ua: string | null;
   /** 近几天拉订阅用过几个客户端(按 UA 区分)、来自几个 IP */
@@ -198,6 +200,7 @@ export interface CustomerInput {
   reset_day?: number;
   sub_template?: string;
   limit_devices?: number;
+  sub_links?: string[];
 }
 
 export interface SubTemplate {

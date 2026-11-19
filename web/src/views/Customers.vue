@@ -9,7 +9,7 @@ import Modal from '../components/Modal.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
-import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl } from '../format';
+import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl } from '../format';
 import { toast, toastError } from '../toast';
 import type { ClientProtocol, Customer, EnforceOp, Line, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
 
@@ -43,7 +43,7 @@ const proto = (p: string) => PROTOCOL[p] ?? p;
 const editing = ref<Customer | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', remark: '', quotaGb: '', expire: '', monthlyReset: false, resetDay: '', limitDevices: '', template: '', customTemplate: '' });
+const form = ref({ name: '', remark: '', quotaGb: '', expire: '', monthlyReset: false, resetDay: '', limitDevices: '', template: '', customTemplate: '', subLinks: '' });
 /** 内置的 Clash 订阅模板;第一次打开表单时取 */
 const templates = ref<SubTemplate[]>([]);
 /** 内置模板的名字和说明按界面语言给(按模板 id 查文案);语言文件里没有的新模板用服务端给的 */
@@ -57,7 +57,7 @@ function openForm(c: Customer | null) {
   editing.value = c;
   const tpl = c?.sub_template ?? '';
   const custom = /^https:/.test(tpl);
-  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', monthlyReset: !!c?.reset_day, resetDay: c?.reset_day ? String(c.reset_day) : '', limitDevices: c?.limit_devices ? String(c.limit_devices) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '' };
+  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', monthlyReset: !!c?.reset_day, resetDay: c?.reset_day ? String(c.reset_day) : '', limitDevices: c?.limit_devices ? String(c.limit_devices) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '', subLinks: (c?.sub_links ?? []).join('\n') };
   showForm.value = true;
 }
 
@@ -82,7 +82,7 @@ function opsNote(ops: EnforceOp[]): string {
 
 async function submit() {
   saving.value = true;
-  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template };
+  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template, sub_links: form.value.subLinks.split('\n').map((x) => x.trim()).filter(Boolean) };
   try {
     const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
     showForm.value = false;
@@ -148,7 +148,7 @@ onMounted(async () => {
 });
 
 async function resetLink(c: Customer) {
-  if (!confirm(t('customers.confirmResetLink', { name: c.name }))) return;
+  if (!confirm(t('customers.confirmResetLink', { name: c.name }) + (c.sub_links.length ? t('customers.confirmResetLinkCustom', { n: c.sub_links.length }) : ''))) return;
   try {
     await api.resetSubToken(c.id);
     toast(t('customers.linkReset'));
@@ -363,6 +363,11 @@ function exitText(l: Line): string {
           <span v-if="shareIps && c.sub_ips_day >= shareIps" class="text-warn" :title="t('customers.shareHint', { n: c.sub_ips_day })">{{ t('customers.shareWarn', { n: c.sub_ips_day }) }}</span>
           <button class="link small" @click="showFetches(c)">{{ t('customers.records') }}</button>
         </span>
+        <div v-for="l in c.sub_links" :key="l" class="custom-link small">
+          <span class="muted">{{ t('customers.customLink') }}</span>
+          <code :title="customSubUrl(c, l)">{{ customSubUrl(c, l) }}</code>
+          <button class="link" @click="copyText(customSubUrl(c, l), t('customers.subCopied', { name: c.name }))">{{ t('common.copy') }}</button>
+        </div>
       </div>
       <ul v-if="c.lines.length" class="lines">
         <li v-for="l in c.lines" :key="l.id" class="line">
@@ -417,6 +422,11 @@ function exitText(l: Line): string {
         <Select v-model="form.template" :options="templateOptions" />
       </label>
       <label v-if="form.template === 'custom'" class="field">{{ t('customers.templateUrl') }}<input v-model="form.customTemplate" required :placeholder="t('customers.templateUrlPlaceholder')" /></label>
+      <label class="field">
+        {{ t('customers.subLinks') }}
+        <textarea v-model="form.subLinks" rows="2" spellcheck="false" :placeholder="t('customers.subLinksPlaceholder')" />
+        <span class="muted small">{{ t('customers.subLinksHint') }}</span>
+      </label>
       <p class="muted small hint">{{ t('customers.formHint') }}</p>
     </form>
     <template #footer>
@@ -628,6 +638,19 @@ h2 {
 }
 .sub-meta {
   flex-basis: 100%;
+}
+.custom-link {
+  flex-basis: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.custom-link code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sub-meta .link {
   margin-left: 8px;
