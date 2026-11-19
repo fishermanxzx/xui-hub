@@ -33,7 +33,7 @@ const withStream = (template: any, stream: any) => ({
 
 /**
  * reality 入站是不是「偷自己」:伪装目标只在那台机器上成立(本机地址、只写端口、unix socket、那台面板自己的地址),
- * 或者 SNI 是那台面板自己的域名(比如 xui-node 装的节点:target 127.0.0.1:8443、SNI 本机域名)。
+ * 或者 SNI 是那台面板自己的域名(比如 target 127.0.0.1:8443、SNI 填本机域名的节点)。
  * 这种入站复制到别的机器上用不了,不能当模板。panelHost 是那台面板的地址
  */
 export function stealsItself(ib: any, panelHost: string): boolean {

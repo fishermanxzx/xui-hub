@@ -162,7 +162,7 @@ test('照旧内置模板(伪装 www.microsoft.com)建的入站复制时,伪装�
 test('「偷自己」的 reality 入站不当模板:照下一块面板的,都没有就用内置模板', async () => {
   const db = memoryDb();
   const a = addPanel(db, 'a', 'https://1.2.3.4:2053/p');
-  // xui-node 装的节点:伪装目标是本机 Nginx,SNI 是自己的域名
+  // 「偷自己」的节点:伪装目标是本机 Nginx,SNI 是自己的域名
   const node = addPanel(db, 'node', 'https://us1.example.com:2096/x');
   const self = { network: 'tcp', security: 'reality', realitySettings: { target: '127.0.0.1:8443', serverNames: ['us1.example.com'], privateKey: 'k', settings: { publicKey: 'p' } } };
   const b = addPanel(db, 'b');
