@@ -121,8 +121,6 @@ async function remove(s: Socks) {
         <thead>
           <tr>
             <th>{{ t('socks.colName') }}</th>
-            <th>{{ t('socks.colAddress') }}</th>
-            <th>{{ t('socks.colAccount') }}</th>
             <th>{{ t('socks.colCheck') }}</th>
             <th>{{ t('socks.colExit') }}</th>
             <th>{{ t('socks.colUsed') }}</th>
@@ -134,20 +132,18 @@ async function remove(s: Socks) {
         </thead>
         <tbody>
           <tr v-for="s in list" :key="s.id">
-            <td class="name">{{ s.name }}</td>
-            <td class="mono">{{ s.host }}:{{ s.port }}</td>
-            <td class="muted">{{ s.username || t('socks.noAccount') }}<template v-if="s.has_password"> / ••••</template></td>
+            <td class="name" :title="`${s.host}:${s.port}`">{{ s.name }}</td>
             <td class="small">
               <template v-if="checking.has(s.id)"><span class="muted">{{ t('socks.testing') }}</span></template>
               <template v-else-if="!s.check"><span class="muted">{{ t('socks.neverTested') }}</span></template>
               <template v-else-if="s.check.ok"><span class="text-ok">{{ t('socks.ok') }}</span> <span class="muted">{{ s.check.ms }} ms · {{ fmtAgo(s.check.at) }}</span></template>
               <template v-else><span class="text-err" :title="s.check.error ?? ''">{{ t('socks.failed') }}</span> <span class="muted">{{ (s.check.error ?? '').slice(0, 40) }} · {{ fmtAgo(s.check.at) }}</span></template>
             </td>
-            <td class="small">
+            <td class="small nowrap">
               <template v-if="s.check?.ok">{{ s.check.ip }} <span class="muted">{{ region(s.check.loc) }}</span></template>
               <span v-else class="muted">—</span>
             </td>
-            <td class="small"><template v-if="s.used_by">{{ t('socks.usedBy', { n: s.used_by }, s.used_by) }}</template><span v-else class="muted">—</span></td>
+            <td class="small nowrap"><template v-if="s.used_by">{{ t('socks.usedBy', { n: s.used_by }, s.used_by) }}</template><span v-else class="muted">—</span></td>
             <td class="small mono"><template v-if="s.monthly_cost != null">{{ fmtCost(s.monthly_cost) }}</template><span v-else class="muted">—</span></td>
             <td class="small nowrap">
               <template v-if="s.expire_at">{{ fmtDate(s.expire_at) }} <span :class="dueClass(s.expire_at, 'muted')">{{ fmtDue(s.expire_at) }}</span></template>
@@ -172,7 +168,7 @@ async function remove(s: Socks) {
     <form id="socks-form" class="form" @submit.prevent="submit">
       <label class="field">{{ t('socks.name') }}<input v-model="form.name" required :placeholder="t('socks.namePlaceholder')" /></label>
       <label class="field">
-        {{ t('socks.address') }}{{ editing ? t('socks.keepBlank') : '' }}
+        {{ t('socks.address') }}{{ editing ? t('socks.keepBlankCurrent', { addr: `${editing.host}:${editing.port}` }) : '' }}
         <input v-model="form.address" :required="!editing" :placeholder="t('socks.addressPlaceholder')" autocomplete="off" />
       </label>
       <div class="two">
