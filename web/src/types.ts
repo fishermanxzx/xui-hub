@@ -123,6 +123,15 @@ export interface RouteHop {
   fallback: boolean;
 }
 
+/** 在 xui-hub 里给线路配的出口规则(写到面板的 Xray 路由) */
+export interface LineRule {
+  domain: string[];
+  ip: string[];
+  port: string;
+  network: string;
+  to: { kind: 'socks'; socks_id: number } | { kind: 'direct' } | { kind: 'block' };
+}
+
 export interface Line {
   id: number;
   customer_id: number;
@@ -153,6 +162,8 @@ export interface Line {
   /** 面板上实际的出口(按路由规则顺序,每分钟同步时读);null = 还没读到 */
   routes: RouteHop[] | null;
   routes_at: number;
+  /** 在 xui-hub 里配的出口规则;没命中的流量走原来的出口 */
+  rules: LineRule[];
 }
 
 /** 客户的一个外部订阅(别处的订阅地址) */

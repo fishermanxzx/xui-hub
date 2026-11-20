@@ -59,6 +59,7 @@ claude mcp add --transport http xui-hub https://hub.example.com:8788/mcp --heade
 | `remove_device` | 移除一台设备 |
 | `open_line` | 开线路:直出,或经登记的 SOCKS 出去 |
 | `get_line_links` | 线路的分享链接 |
+| `set_line_rules` | 设置线路的出口规则(条件 → SOCKS / 直出 / 拦截),写到面板并重启 Xray |
 | `rename_line` | 改线路的自定义节点名(客户拉订阅时看到的名字) |
 | `delete_line` | 删线路 |
 | `list_panels` | 面板列表和状态 |

@@ -6,6 +6,7 @@ import { InputError } from '../panels/repo';
 import { customLinksByCustomer, setCustomLinks } from '../subscription/customLinks';
 import { validTemplate } from '../subscription/templates';
 import type { RouteHop } from '../lines/routes';
+import type { LineRule } from '../lines/rules';
 import { setUpstreams, upstreamsByCustomer, validUpstreamMode, type UpstreamMode, type UpstreamView } from '../subscription/upstream';
 
 export type LineKind = 'direct' | 'relay';
@@ -33,6 +34,8 @@ export interface Line {
   /** 面板上实际的出口(按 Xray 路由规则顺序,同步时读);null = 还没读到 */
   routes: RouteHop[] | null;
   routes_at: number;
+  /** 在 xui-hub 里配的出口规则(写到面板上);没命中的流量走原来的出口 */
+  rules: LineRule[];
   created_at: number;
   /** 最近一次同步到的客户端流量与状态 */
   up: number;
@@ -144,6 +147,15 @@ const LINE_SQL = `
   LEFT JOIN panels ep ON ep.id = l.exit_panel_id
   LEFT JOIN socks_proxies es ON es.id = l.exit_socks_id`;
 
+function parseRules(v: unknown): LineRule[] {
+  try {
+    const r = typeof v === 'string' ? JSON.parse(v) : [];
+    return Array.isArray(r) ? r : [];
+  } catch {
+    return [];
+  }
+}
+
 function parseRoutes(v: unknown): RouteHop[] | null {
   if (typeof v !== 'string' || !v) return null;
   try {
@@ -175,6 +187,7 @@ function toLine(row: any): Line {
     node_name: row.node_name ?? '',
     routes: parseRoutes(row.routes),
     routes_at: row.routes_at ?? 0,
+    rules: parseRules(row.rules),
     created_at: row.created_at,
     up: row.up ?? 0,
     down: row.down ?? 0,
@@ -391,6 +404,22 @@ export function addLine(db: DB, l: LineInsert, now = Date.now()): Line {
 }
 
 /** 改线路的自定义节点名(只改这里的记录,面板上不动) */
+/** 线路的出口规则(已经写到面板上之后再存) */
+export function setLineRules(db: DB, id: number, rules: LineRule[]): void {
+  db.prepare('UPDATE lines SET rules = ? WHERE id = ?').run(JSON.stringify(rules), id);
+}
+
+/** 用到这个 SOCKS 的线路:出口是它,或出口规则里用了它 */
+export function linesUsingSocks(db: DB, socksId: number): Line[] {
+  return (
+    db
+      .prepare(
+        `${LINE_SQL} WHERE l.exit_socks_id = ? OR EXISTS (SELECT 1 FROM json_each(l.rules) r WHERE json_extract(r.value, '$.to.socks_id') = ?) ORDER BY l.id`,
+      )
+      .all(socksId, socksId) as any[]
+  ).map(toLine);
+}
+
 /** 同步时记下线路实际的出口 */
 export function setLineRoutes(db: DB, id: number, routes: RouteHop[], now = Date.now()): void {
   db.prepare('UPDATE lines SET routes = ?, routes_at = ? WHERE id = ?').run(JSON.stringify(routes), now, id);

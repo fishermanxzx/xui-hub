@@ -499,3 +499,59 @@ test('外部订阅:保存时新填的马上取一次(取不到也照样保存),�
     await close();
   }
 });
+
+test('出口规则:写到面板并重启、存下规则和实际出口;不合法不动面板;改 SOCKS 地址跟着改;被规则用着的 SOCKS 删不了;删线路一起去掉', async () => {
+  const db = memoryDb();
+  const relay = addPanel(db, 'relay', 'https://1.1.1.1:2053/p');
+  const data = { relay: relayPanel() };
+  const { call, close } = await serve(db, data);
+  try {
+    const s = (await call('POST', '/socks', { name: 'us', address: 'socks5://u:p@isp.example.com:1080' })).body;
+    const c = (await call('POST', '/customers', { name: 'zhang' })).body;
+    const line = (await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: relay.id, inbound: { id: 5 } })).body.line;
+    const restarts = data.relay.restarts;
+
+    assert.equal((await call('PUT', `/customers/${c.id}/lines/${line.id}/rules`, { rules: [{ to: { kind: 'direct' } }] })).status, 400);
+    assert.equal(data.relay.restarts, restarts);
+
+    const rules = [
+      { domain: ['geosite:netflix', 'netflix.com'], to: { kind: 'socks', socks_id: s.id } },
+      { domain: ['geosite:category-ads-all'], to: { kind: 'block' } },
+    ];
+    const saved = await call('PUT', `/customers/${c.id}/lines/${line.id}/rules`, { rules });
+    assert.equal(saved.status, 200);
+    assert.equal(data.relay.restarts, restarts + 1);
+    assert.deepEqual(saved.body.rules.map((r: any) => [r.domain, r.to]), [[['geosite:netflix', 'netflix.com'], { kind: 'socks', socks_id: s.id }], [['geosite:category-ads-all'], { kind: 'block' }]]);
+    assert.deepEqual(saved.body.routes.map((h: any) => [h.when.domain ?? 'rest', h.to.kind, h.to.socks_id ?? null]), [
+      [['geosite:netflix', 'netflix.com'], 'socks', s.id],
+      [['geosite:category-ads-all'], 'block', null],
+      ['rest', 'direct', null],
+    ]);
+    const tagged = data.relay.xray.routing.rules.filter((r: any) => r.ruleTag);
+    assert.deepEqual(tagged.map((r: any) => [r.ruleTag, r.user, r.outboundTag]), [
+      ['xui-hub:in-500:zhang:1', ['zhang'], 'socks-isp.example.com-1080'],
+      ['xui-hub:in-500:zhang:2', ['zhang'], 'blocked'],
+    ]);
+    assert.equal((await call('GET', '/socks')).body[0].used_by, 1);
+
+    // 改 SOCKS 地址:规则跟着指到新地址
+    assert.equal((await call('PATCH', `/socks/${s.id}`, { address: 'socks5://u:p@new.example.com:2080' })).status, 200);
+    assert.equal(data.relay.xray.routing.rules.find((r: any) => r.ruleTag === 'xui-hub:in-500:zhang:1').outboundTag, 'socks-new.example.com-2080');
+    assert.ok(!data.relay.xray.outbounds.some((o: any) => o.tag === 'socks-isp.example.com-1080'));
+    assert.match((await call('DELETE', `/socks/${s.id}`)).body.error, /还有 1 条线路在用/);
+
+    // 去掉规则:面板上的也去掉
+    const cleared = await call('PUT', `/customers/${c.id}/lines/${line.id}/rules`, { rules: [] });
+    assert.deepEqual([cleared.body.rules, data.relay.xray.routing.rules.filter((r: any) => r.ruleTag).length], [[], 0]);
+    assert.ok(!data.relay.xray.outbounds.some((o: any) => o.tag === 'socks-new.example.com-2080'));
+
+    // 删线路:本系统写的规则一起去掉
+    await call('PUT', `/customers/${c.id}/lines/${line.id}/rules`, { rules: [{ ip: ['geoip:cn'], to: { kind: 'direct' } }] });
+    assert.equal(data.relay.xray.routing.rules.filter((r: any) => r.ruleTag).length, 1);
+    await call('DELETE', `/customers/${c.id}/lines/${line.id}`);
+    assert.equal(data.relay.xray.routing.rules.filter((r: any) => r.ruleTag).length, 0);
+    assert.deepEqual((await call('DELETE', `/socks/${s.id}`)).body, { ok: true });
+  } finally {
+    await close();
+  }
+});

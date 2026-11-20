@@ -24,7 +24,7 @@ const socks = [
 
 let lid = 0;
 const line = (customer_id, o) => ({
-  id: ++lid, customer_id, exit_kind: null, exit_panel_id: null, exit_panel_name: null, exit_port: null, exit_socks_id: null, exit_socks_name: null, exit_label: '', node_name: '', routes: null, routes_at: 0,
+  id: ++lid, customer_id, exit_kind: null, exit_panel_id: null, exit_panel_name: null, exit_port: null, exit_socks_id: null, exit_socks_name: null, exit_label: '', node_name: '', rules: [], routes: null, routes_at: 0,
   created_at: now - 12 * DAY, enable: true, auto_disabled: false, last_online: now - 180_000, synced_at: now - 20_000, ...o,
 });
 const customer = (id, name, remark, quotaGb, expireDays, lines, extra = {}) => {
@@ -41,7 +41,9 @@ const customers = [
   customer(1, '张三', '月付 30', 200, 18, [
     line(1, { kind: 'direct', panel_id: 2, panel_name: '美国-1', inbound_id: 1, inbound_remark: 'vless-reality', protocol: 'vless', email: '张三', up: 2.1 * GB, down: 31.6 * GB }),
     line(1, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 1, inbound_remark: 'vless-reality', protocol: 'vless', email: '张三', up: 1.3 * GB, down: 22.4 * GB, exit_kind: 'socks', exit_socks_id: 4, exit_socks_name: '日本-1 自建', exit_label: 'SOCKS 日本-1 自建', node_name: '日本 01',
-      // 面板上按规则分了多个出口:流媒体走美国家宽,OpenAI 走面板上自己建的出站,其余走日本
+      // 在 xui-hub 里配的出口规则:流媒体走美国家宽
+      rules: [{ domain: ['geosite:netflix', 'geosite:disney'], ip: [], port: '', network: '', to: { kind: 'socks', socks_id: 1 } }],
+      // 面板上按规则分了多个出口:流媒体走美国家宽(上面的规则),OpenAI 走面板上手配的出站,其余走日本
       routes_at: now - 50_000,
       routes: [
         { when: { domain: ['geosite:netflix', 'geosite:disney'] }, to: { kind: 'socks', tag: 'socks-us', address: 'isp-us.example.net:10002', socks_id: 1 }, fallback: false },

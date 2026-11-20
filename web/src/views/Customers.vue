@@ -11,7 +11,7 @@ import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
 import { toast, toastError } from '../toast';
-import type { ClientProtocol, Customer, EnforceOp, Line, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
+import type { ClientProtocol, Customer, EnforceOp, Line, LineRule, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
 
 const customers = ref<Customer[]>([]);
 const panels = ref<Panel[]>([]);
@@ -300,6 +300,75 @@ async function showLinks(line: Line) {
 }
 
 // ---------- 线路:改节点名 ----------
+// ---------- 出口规则(写到面板的 Xray 路由) ----------
+interface RuleRow {
+  domain: string;
+  ip: string;
+  port: string;
+  network: string;
+  /** 'direct' / 'block' / 'socks:<id>' */
+  to: string;
+}
+const rulesFor = ref<Line | null>(null);
+const ruleRows = ref<RuleRow[]>([]);
+const savingRules = ref(false);
+const toRow = (r: LineRule): RuleRow => ({ domain: r.domain.join('\n'), ip: r.ip.join(', '), port: r.port, network: r.network, to: r.to.kind === 'socks' ? `socks:${r.to.socks_id}` : r.to.kind });
+const fromRow = (r: RuleRow): LineRule => ({
+  domain: r.domain.split(/[\n,]/).map((x) => x.trim()).filter(Boolean),
+  ip: r.ip.split(/[\n,]/).map((x) => x.trim()).filter(Boolean),
+  port: r.port.trim(),
+  network: r.network,
+  to: r.to.startsWith('socks:') ? { kind: 'socks', socks_id: Number(r.to.slice(6)) } : r.to === 'block' ? { kind: 'block' } : { kind: 'direct' },
+});
+const ruleTargets = computed<SelectOption<string>[]>(() => [
+  ...socksList.value.map((s) => ({ value: `socks:${s.id}`, label: t('customers.routeSocks', { name: s.name }) })),
+  { value: 'direct', label: t('customers.direct') },
+  { value: 'block', label: t('customers.routeBlock') },
+]);
+const networkOptions = computed<SelectOption<string>[]>(() => [
+  { value: '', label: t('customers.rulesNetworkAny') },
+  { value: 'tcp', label: 'TCP' },
+  { value: 'udp', label: 'UDP' },
+]);
+/** 常用的几组:流媒体 / AI / 国内直连 / 去广告 */
+const RULE_PRESETS: { key: string; row: Partial<RuleRow> }[] = [
+  { key: 'streaming', row: { domain: 'geosite:netflix\ngeosite:disney\ngeosite:hbo\ngeosite:primevideo' } },
+  { key: 'ai', row: { domain: 'geosite:openai\ngeosite:anthropic' } },
+  { key: 'cn', row: { domain: 'geosite:cn', ip: 'geoip:cn', to: 'direct' } },
+  { key: 'ads', row: { domain: 'geosite:category-ads-all', to: 'block' } },
+];
+const defaultTarget = () => (socksList.value[0] ? `socks:${socksList.value[0].id}` : 'direct');
+function openRules(line: Line) {
+  rulesFor.value = line;
+  ruleRows.value = (line.rules ?? []).map(toRow);
+}
+function addRule(preset?: Partial<RuleRow>) {
+  ruleRows.value.push({ domain: '', ip: '', port: '', network: '', to: defaultTarget(), ...preset });
+}
+function moveRule(i: number, d: number) {
+  const j = i + d;
+  if (j < 0 || j >= ruleRows.value.length) return;
+  const rows = ruleRows.value;
+  [rows[i], rows[j]] = [rows[j], rows[i]];
+}
+/** 线路原来的出口(规则没命中的流量走它) */
+const baseExit = (l: Line) => (l.kind === 'direct' ? t('customers.direct') : l.exit_socks_name ? t('customers.routeSocks', { name: l.exit_socks_name }) : l.exit_label || t('customers.gone'));
+async function saveRules() {
+  const line = rulesFor.value;
+  if (!line) return;
+  savingRules.value = true;
+  try {
+    await api.setLineRules(line.customer_id, line.id, ruleRows.value.map(fromRow));
+    rulesFor.value = null;
+    toast(t('customers.rulesSaved', { panel: line.panel_name }));
+    await load();
+  } catch (e) {
+    toastError(e);
+  } finally {
+    savingRules.value = false;
+  }
+}
+
 const renameFor = ref<Line | null>(null);
 const renameText = ref('');
 const renaming = ref(false);
@@ -466,6 +535,7 @@ function exitText(l: Line): string {
           </span>
           <span class="l-ops">
             <button class="link" :disabled="loadingLinks === l.id" @click="showLinks(l)">{{ loadingLinks === l.id ? t('common.loading') : t('customers.links') }}</button>
+            <button class="link" @click="openRules(l)">{{ l.rules?.length ? t('customers.rulesCount', { n: l.rules.length }) : t('customers.rules') }}</button>
             <button class="link" @click="openRename(l)">{{ t('customers.rename') }}</button>
             <button class="link danger" @click="removeLine(l)">{{ t('common.delete') }}</button>
           </span>
@@ -643,6 +713,44 @@ function exitText(l: Line): string {
     <TopologyGraph :customer="topoFor" :panels="panels" :socks="socksList" :height="420" />
   </Modal>
 
+  <Modal v-if="rulesFor" :title="t('customers.rulesTitle', { panel: rulesFor.panel_name, email: rulesFor.email })" @close="rulesFor = null">
+    <form id="rules-form" class="form" @submit.prevent="saveRules">
+      <p class="muted small">{{ t('customers.rulesIntro') }}</p>
+      <div v-for="(r, i) in ruleRows" :key="i" class="rule-card">
+        <div class="rule-head">
+          <strong class="small">{{ t('customers.ruleN', { n: i + 1 }) }}</strong>
+          <span class="spacer" />
+          <button type="button" class="link" :disabled="i === 0" :title="t('customers.ruleUp')" @click="moveRule(i, -1)">↑</button>
+          <button type="button" class="link" :disabled="i === ruleRows.length - 1" :title="t('customers.ruleDown')" @click="moveRule(i, 1)">↓</button>
+          <button type="button" class="link danger" @click="ruleRows.splice(i, 1)">{{ t('common.delete') }}</button>
+        </div>
+        <label class="field">{{ t('customers.ruleDomain') }}<textarea v-model="r.domain" rows="2" spellcheck="false" :placeholder="t('customers.ruleDomainPlaceholder')" /></label>
+        <div class="two">
+          <label class="field">{{ t('customers.ruleIp') }}<input v-model="r.ip" spellcheck="false" :placeholder="t('customers.ruleIpPlaceholder')" /></label>
+          <label class="field">{{ t('customers.rulePort') }}<input v-model="r.port" spellcheck="false" :placeholder="t('customers.rulePortPlaceholder')" /></label>
+        </div>
+        <div class="two">
+          <label class="field">{{ t('customers.ruleNetwork') }}<Select v-model="r.network" :options="networkOptions" /></label>
+          <label class="field">{{ t('customers.ruleTo') }}<Select v-model="r.to" :options="ruleTargets" /></label>
+        </div>
+      </div>
+      <div class="row rule-add">
+        <button v-if="ruleRows.length < 20" type="button" class="link" @click="addRule()">{{ t('customers.ruleAdd') }}</button>
+        <span v-if="ruleRows.length < 20" class="muted small">{{ t('customers.rulePresets') }}</span>
+        <template v-if="ruleRows.length < 20">
+          <button v-for="p in RULE_PRESETS" :key="p.key" type="button" class="link" @click="addRule(p.row)">{{ t(`customers.rulePreset_${p.key}`) }}</button>
+        </template>
+      </div>
+      <p class="small">{{ t('customers.rulesRest', { exit: baseExit(rulesFor) }) }}</p>
+      <p class="muted small hint">{{ t('customers.rulesHint') }}</p>
+    </form>
+    <template #footer>
+      <span class="spacer" />
+      <button @click="rulesFor = null">{{ t('common.cancel') }}</button>
+      <button class="primary" form="rules-form" :disabled="savingRules">{{ savingRules ? t('customers.rulesSaving') : t('customers.rulesSave') }}</button>
+    </template>
+  </Modal>
+
   <Modal v-if="renameFor" :title="t('customers.renameTitle', { panel: renameFor.panel_name, email: renameFor.email })" @close="renameFor = null">
     <form id="rename-form" class="form" @submit.prevent="saveRename">
       <label class="field">
@@ -796,6 +904,23 @@ h2 {
 }
 .names {
   cursor: help;
+}
+.rule-card {
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rule-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rule-add {
+  flex-wrap: wrap;
+  gap: 6px 12px;
 }
 .hops {
   display: flex;
