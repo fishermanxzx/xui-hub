@@ -5,14 +5,16 @@
 // 返回线路记录和客户端的分享链接。中途失败会把这次已经建的 client、路由规则、入站撤掉;同一块面板上的开 / 删线路排队执行。
 
 import { addClientTo, ensureInbound, freeEmail, type ClientAdmin, type CreateOptions } from '../clients/create';
-import { addLine, getCustomer, linesOnPanel, linesViaSocks, type Line } from '../customers/repo';
+import { addLine, getCustomer, getLine, linesOnPanel, linesUsingSocks, setLineRoutes, setLineRules, type Line } from '../customers/repo';
 import type { DB } from '../db';
 import { getPanel, InputError, listPanels, type Panel } from '../panels/repo';
 import { errorText, panelKey, serial, using } from '../util';
-import type { SocksEndpoint } from '../socks/repo';
+import { allSocks, getSocks, type SocksEndpoint } from '../socks/repo';
 import { renameLinks, validNodeName } from '../subscription/nodeName';
 import { XUIError } from '../xui/client';
-import { applyRoutes, parseExitSocksId, prepareExit, removeRoutes, socksServer, type RouteAdmin, type UserRoute } from './relay';
+import { applyRoutes, editXray, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, setUserRules, socksServer, type ExitServer, type ResolvedRule, type RouteAdmin, type UserRoute } from './relay';
+import { routesForClient } from './routes';
+import type { LineRule } from './rules';
 
 export interface LineAdmin extends ClientAdmin, RouteAdmin {
   deleteClient(email: string): Promise<void>;
@@ -105,9 +107,9 @@ async function onEachPanel(db: DB, lines: Line[], adminFor: (panel: Panel) => Li
   return failed;
 }
 
-/** 中转线路在面板上的规则是哪几条(入站 tag + email);入站已经不在的略过 */
+/** 中转线路和配了出口规则的线路在面板上的规则是哪几条(入站 tag + email);入站已经不在的略过 */
 async function routesOf(admin: LineAdmin, lines: Line[]): Promise<UserRoute[]> {
-  const relays = lines.filter((l) => l.kind === 'relay');
+  const relays = lines.filter((l) => l.kind === 'relay' || l.rules.length > 0);
   if (!relays.length) return [];
   const tags = new Map((await admin.listInbounds()).map((ib) => [Number(ib.id), ib.tag]));
   return relays.filter((l) => tags.get(l.inbound_id)).map((l) => ({ inboundTag: String(tags.get(l.inbound_id)), email: l.email }));
@@ -139,9 +141,54 @@ export async function removeLine(db: DB, line: Line, adminFor: (panel: Panel) =>
  */
 export async function repointSocksLines(db: DB, socksId: number, to: SocksEndpoint, adminFor: (panel: Panel) => LineAdmin): Promise<void> {
   const server = socksServer(to);
-  const failed = await onEachPanel(db, linesViaSocks(db, socksId), adminFor, async (admin, group) => {
-    const routes = await routesOf(admin, group);
-    if (routes.length) await applyRoutes(admin, routes.map((r) => ({ ...r, server })));
+  const failed = await onEachPanel(db, linesUsingSocks(db, socksId), adminFor, async (admin, group) => {
+    const tags = new Map((await admin.listInbounds()).map((ib) => [Number(ib.id), String(ib.tag ?? '')]));
+    await editXray(admin, (xray) => {
+      if (!Array.isArray(xray.outbounds) || !xray.outbounds.length) throw new Error('读到的 Xray 配置不完整(没有出站)');
+      for (const l of group) {
+        const tag = tags.get(l.inbound_id);
+        if (!tag) continue;
+        if (l.kind === 'relay' && l.exit_socks_id === socksId) routeUserToExit(xray, tag, l.email, server);
+        if (l.rules.some((r) => r.to.kind === 'socks' && r.to.socks_id === socksId)) setUserRules(xray, tag, l.email, resolveRules(db, l.rules, { id: socksId, server }));
+      }
+    });
   });
   if (failed.length) throw new XUIError(`这些中转上的出口没改成:${failed.map((f) => `${f.panel.name}(${errorText(f.error)})`).join('、')}。SOCKS 的新地址没有保存,处理好后再保存一次`);
+}
+
+/** 规则里的 SOCKS 换成它的地址和账号;override:改地址时用新的 */
+function resolveRules(db: DB, rules: LineRule[], override?: { id: number; server: ExitServer }): ResolvedRule[] {
+  return rules.map((r) => {
+    if (r.to.kind !== 'socks') return { ...r, to: r.to };
+    const id = r.to.socks_id;
+    if (override && override.id === id) return { ...r, to: { kind: 'socks', server: override.server } };
+    const s = getSocks(db, id);
+    if (!s) throw new InputError(`规则用的 SOCKS(#${id})已经不在了`);
+    return { ...r, to: { kind: 'socks', server: socksServer(s) } };
+  });
+}
+
+/**
+ * 保存一条线路的出口规则:写到它所在面板的 Xray 路由(本系统写的那几条整组替换,面板上手配的不动),
+ * 重启 Xray(这块面板上的客户端断流几秒),成功了再存记录,并马上按新配置算一遍实际出口。空数组 = 去掉
+ */
+export async function applyLineRules(db: DB, line: Line, rules: LineRule[], adminFor: (panel: Panel) => LineAdmin): Promise<Line> {
+  const panel = getPanel(db, line.panel_id);
+  if (!panel) throw new InputError('这条线路的面板已经不在了');
+  const resolved = resolveRules(db, rules);
+  await serial(panelKey(panel.id), () =>
+    using(adminFor(panel), async (admin) => {
+      const tag = (await admin.listInbounds()).find((ib) => Number(ib.id) === line.inbound_id)?.tag;
+      if (!tag) throw new InputError('面板上找不到这条线路的入站');
+      let edited: any = null;
+      await editXray(admin, (xray) => {
+        if (!Array.isArray(xray.outbounds) || !xray.outbounds.length) throw new Error('读到的 Xray 配置不完整(没有出站)');
+        setUserRules(xray, String(tag), line.email, resolved);
+        edited = xray;
+      });
+      setLineRules(db, line.id, rules);
+      if (edited) setLineRoutes(db, line.id, routesForClient(edited, String(tag), line.email, allSocks(db).map((s) => ({ id: s.id, host: s.host, port: s.port }))));
+    }),
+  );
+  return getLine(db, line.id)!;
 }

@@ -32,7 +32,7 @@ export interface SocksCheck {
   error: string | null;
 }
 
-/** used_by:出口是它的线路数 */
+/** used_by:用到它的线路数(出口是它,或出口规则里用了它) */
 export type SocksView = Omit<SocksProxy, 'password'> & { has_password: boolean; check: SocksCheck | null; used_by: number };
 
 export interface SocksInput {
@@ -123,7 +123,8 @@ function rowToView(row: any): SocksView {
   };
 }
 
-const VIEW_SQL = 'SELECT s.*, (SELECT COUNT(*) FROM lines l WHERE l.exit_socks_id = s.id) AS used_by FROM socks_proxies s';
+const VIEW_SQL = `SELECT s.*, (SELECT COUNT(*) FROM lines l WHERE l.exit_socks_id = s.id
+  OR EXISTS (SELECT 1 FROM json_each(l.rules) r WHERE json_extract(r.value, '$.to.socks_id') = s.id)) AS used_by FROM socks_proxies s`;
 
 export function listSocks(db: DB): SocksView[] {
   return (db.prepare(`${VIEW_SQL} ORDER BY s.name COLLATE NOCASE`).all() as any[]).map(rowToView);

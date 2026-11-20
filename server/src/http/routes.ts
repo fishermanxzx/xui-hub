@@ -35,7 +35,8 @@ import { fetchUpstream, refreshUpstreams, type UpstreamFetcher } from '../subscr
 import { createToken, deleteToken, listTokens, TOKEN_BLOCKED, verifyToken } from './tokens';
 import { listGrants, revokeGrant } from '../mcp/oauth';
 import { enforceCustomers } from '../lines/enforce';
-import { openLine, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
+import { applyLineRules, openLine, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
+import { validRules } from '../lines/rules';
 import { checkSocks } from '../socks/check';
 import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, planSocksUpdate, saveCheck, updateSocks } from '../socks/repo';
 import { trafficReport } from '../traffic/daily';
@@ -479,6 +480,14 @@ export function apiRouter(deps: RouteDeps): Router {
       const line = lineOf(req);
       if (req.body?.node_name !== undefined) setLineName(db, line.id, validNodeName(req.body.node_name));
       return getLine(db, line.id);
+    }),
+  );
+  // 线路的出口规则:写到这块面板的 Xray 路由并重启 Xray,整组替换,空数组 = 去掉
+  r.put(
+    '/customers/:id/lines/:lid/rules',
+    wrap(async (req) => {
+      const line = lineOf(req);
+      return applyLineRules(db, line, validRules(db, req.body?.rules), deps.clientFor);
     }),
   );
   // 面板连不上 / 已经报废时删不掉面板上的 client,带 ?force=1 就只删这条记录

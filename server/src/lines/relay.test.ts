@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createSocks } from '../socks/repo';
 import { memoryDb } from '../testUtil';
-import { applyRoutes, ensureOutbound, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, unrouteUser } from './relay';
+import { applyRoutes, ensureOutbound, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, setUserRules, unrouteUser } from './relay';
 
 const socksOut = (tag: string, address: string, port: number, user?: string, pass?: string) => ({
   tag,
@@ -149,4 +149,40 @@ test('面板上手配的带条件规则(同一个客户端的流媒体走另一�
   // 删线路:只去掉本系统那条
   assert.equal(unrouteUser(xray, 'in-a', 'zhang'), true);
   assert.deepEqual(xray.routing.rules, [manual, { type: 'field', inboundTag: ['in-a'], outboundTag: 'direct' }]);
+});
+
+test('出口规则:带 ruleTag 标记,放在这个客户端自己的出口规则和入站兜底之前;整组替换只换本系统写的;直出 / 拦截用已有出站,没有就加', () => {
+  const manual = { type: 'field', inboundTag: ['in-a'], user: ['zhang'], domain: ['geosite:openai'], outboundTag: 'direct' };
+  const xray: any = {
+    outbounds: [{ tag: 'direct', protocol: 'freedom' }],
+    routing: { rules: [{ type: 'field', ip: ['geoip:private'], outboundTag: 'direct' }, manual, { type: 'field', inboundTag: ['in-a'], outboundTag: 'direct' }] },
+  };
+  const us = { address: '198.51.100.9', port: 1080, user: '', pass: '' };
+  const usTag = routeUserToExit(xray, 'in-a', 'zhang', { address: '203.0.113.5', port: 1080, user: '', pass: '' });
+  setUserRules(xray, 'in-a', 'zhang', [
+    { domain: ['geosite:netflix'], ip: [], port: '', network: '', to: { kind: 'socks', server: us } },
+    { domain: [], ip: ['geoip:cn'], port: '443', network: 'udp,tcp', to: { kind: 'direct' } },
+    { domain: ['geosite:category-ads-all'], ip: [], port: '', network: '', to: { kind: 'block' } },
+  ]);
+  const rules = xray.routing.rules;
+  assert.deepEqual(rules.map((r: any) => r.ruleTag ?? null), [null, null, 'xui-hub:in-a:zhang:1', 'xui-hub:in-a:zhang:2', 'xui-hub:in-a:zhang:3', null, null]);
+  assert.deepEqual(rules[2], { type: 'field', ruleTag: 'xui-hub:in-a:zhang:1', inboundTag: ['in-a'], user: ['zhang'], domain: ['geosite:netflix'], outboundTag: 'socks-198.51.100.9-1080' });
+  assert.deepEqual([rules[3].ip, rules[3].port, rules[3].network, rules[3].outboundTag], [['geoip:cn'], '443', 'tcp,udp', 'direct']);
+  assert.equal(rules[4].outboundTag, 'blocked');
+  assert.deepEqual(rules[5], { type: 'field', inboundTag: ['in-a'], user: ['zhang'], outboundTag: usTag });
+  assert.deepEqual(xray.outbounds.map((o: any) => [o.tag, o.protocol]), [['direct', 'freedom'], [usTag, 'socks'], ['socks-198.51.100.9-1080', 'socks'], ['blocked', 'blackhole']]);
+
+  // 再换一次出口(改 SOCKS 地址):本系统的条件规则还在原位,手配的不动
+  routeUserToExit(xray, 'in-a', 'zhang', { address: '203.0.113.6', port: 1080, user: '', pass: '' });
+  assert.deepEqual(xray.routing.rules.filter((r: any) => r.ruleTag).length, 3);
+  // 整组换成一条:旧的去掉、没人用的 socks 出站删掉,手配的还在
+  setUserRules(xray, 'in-a', 'zhang', [{ domain: ['netflix.com'], ip: [], port: '', network: 'tcp', to: { kind: 'direct' } }]);
+  assert.deepEqual(xray.routing.rules.filter((r: any) => r.ruleTag).map((r: any) => [r.domain, r.network, r.outboundTag]), [[['netflix.com'], 'tcp', 'direct']]);
+  assert.ok(!xray.outbounds.some((o: any) => o.tag === 'socks-198.51.100.9-1080'));
+  assert.ok(xray.routing.rules.includes(manual));
+  // 别的客户端的规则互不影响;删线路:本系统的出口规则和条件规则都去掉,手配的留着
+  setUserRules(xray, 'in-a', 'li', [{ domain: ['a.com'], ip: [], port: '', network: '', to: { kind: 'block' } }]);
+  assert.equal(unrouteUser(xray, 'in-a', 'zhang'), true);
+  assert.deepEqual(xray.routing.rules.map((r: any) => r.ruleTag ?? r.user?.[0] ?? 'catch'), ['catch', 'zhang', 'xui-hub:in-a:li:1', 'catch']);
+  assert.equal(xray.routing.rules[1], manual);
 });

@@ -131,10 +131,75 @@ export function routeUserToExit(xray: any, inboundTag: string, email: string, se
   return outTag;
 }
 
-/** 去掉某个客户端的出口规则(删线路时),他用的出站没人用了也删掉;没有这条规则就返回 false */
+/** 出口规则(lines/rules.ts)写到面板上带的 ruleTag 前缀;本系统只认、只改带它的条件规则 */
+const MANAGED = 'xui-hub:';
+
+/** 是不是本系统给这个客户端写的出口规则(带条件的那几条) */
+const isManagedRule = (r: any, inboundTag: string, email: string) =>
+  typeof r?.ruleTag === 'string' &&
+  r.ruleTag.startsWith(MANAGED) &&
+  Array.isArray(r?.inboundTag) &&
+  r.inboundTag.length === 1 &&
+  r.inboundTag[0] === inboundTag &&
+  Array.isArray(r?.user) &&
+  r.user.length === 1 &&
+  r.user[0] === email;
+
+export type ResolvedTarget = { kind: 'socks'; server: ExitServer } | { kind: 'direct' } | { kind: 'block' };
+
+export interface ResolvedRule {
+  domain: string[];
+  ip: string[];
+  port: string;
+  network: string;
+  to: ResolvedTarget;
+}
+
+/** 某种协议的出站:已有就用第一个,没有就加一个不重名的 */
+function outboundOf(xray: any, protocol: 'freedom' | 'blackhole', base: string): string {
+  xray.outbounds = Array.isArray(xray.outbounds) ? xray.outbounds : [];
+  const found = xray.outbounds.find((o: any) => o?.protocol === protocol && typeof o?.tag === 'string' && o.tag);
+  if (found) return found.tag;
+  const taken = new Set(xray.outbounds.map((o: any) => o?.tag));
+  let tag = base;
+  for (let i = 2; taken.has(tag); i++) tag = `${base}-${i}`;
+  xray.outbounds.push({ tag, protocol });
+  return tag;
+}
+
+/**
+ * 把这个客户端的出口规则换成 rules(空 = 去掉):按顺序放在他自己的出口规则和接住这个入站的兜底规则之前,
+ * 没命中的流量照旧走原来的出口。只替换本系统写的(带 ruleTag 标记的),面板上手配的不动;旧规则用的出站没人用了就删掉
+ */
+export function setUserRules(xray: any, inboundTag: string, email: string, rules: ResolvedRule[]): void {
+  const all: any[] = Array.isArray(xray.routing?.rules) ? xray.routing.rules : [];
+  const old = all.filter((r) => isManagedRule(r, inboundTag, email));
+  const rest = all.filter((r) => !old.includes(r));
+  const fresh = rules.map((r, i) => {
+    const outboundTag = r.to.kind === 'socks' ? ensureOutbound(xray, r.to.server) : r.to.kind === 'direct' ? outboundOf(xray, 'freedom', 'direct') : outboundOf(xray, 'blackhole', 'blocked');
+    return {
+      type: 'field',
+      ruleTag: `${MANAGED}${inboundTag}:${email}:${i + 1}`,
+      inboundTag: [inboundTag],
+      user: [email],
+      ...(r.domain.length ? { domain: r.domain } : {}),
+      ...(r.ip.length ? { ip: r.ip } : {}),
+      ...(r.port ? { port: r.port } : {}),
+      ...(r.network ? { network: r.network === 'udp,tcp' ? 'tcp,udp' : r.network } : {}),
+      outboundTag,
+    };
+  });
+  const at = rest.findIndex((r) => isUserRule(r, inboundTag, email) || catchesInbound(r, inboundTag));
+  if (at >= 0) rest.splice(at, 0, ...fresh);
+  else rest.push(...fresh);
+  xray.routing = { ...(xray.routing ?? {}), rules: rest };
+  for (const r of old) dropUnusedOutbound(xray, r.outboundTag);
+}
+
+/** 去掉某个客户端的出口规则(删线路时):本系统给他加的出口规则和条件规则;用的出站没人用了也删掉。一条都没有就返回 false */
 export function unrouteUser(xray: any, inboundTag: string, email: string): boolean {
   const rules: any[] = Array.isArray(xray.routing?.rules) ? xray.routing.rules : [];
-  const mine = rules.filter((r) => isUserRule(r, inboundTag, email));
+  const mine = rules.filter((r) => isUserRule(r, inboundTag, email) || isManagedRule(r, inboundTag, email));
   if (!mine.length) return false;
   xray.routing = { ...(xray.routing ?? {}), rules: rules.filter((r) => !mine.includes(r)) };
   for (const r of mine) dropUnusedOutbound(xray, r.outboundTag);
@@ -142,7 +207,7 @@ export function unrouteUser(xray: any, inboundTag: string, email: string): boole
 }
 
 /** 读中转的 Xray 配置 → 改 → 有变化才写回并重启 Xray(上面所有客户端断流几秒)。返回改没改。调用方要先占住这块面板(panelKey) */
-async function editXray(admin: RouteAdmin, edit: (xray: any) => void): Promise<boolean> {
+export async function editXray(admin: RouteAdmin, edit: (xray: any) => void): Promise<boolean> {
   const raw = await admin.xraySettings();
   const xray = xrayConfig(raw);
   const before = JSON.stringify(xray);

@@ -73,6 +73,7 @@ Authorization: Bearer xh_……
 |---|---|---|
 | POST | `/customers/:id/lines` | 开线路,见下 |
 | GET | `/customers/:id/lines/:lineId/links` | 这条线路的分享链接 |
+| PUT | `/customers/:id/lines/:lineId/rules` | 设置出口规则(整组替换,空数组 = 去掉),见下。写到面板的 Xray 路由并重启 Xray,这块面板上的客户端会断几秒 |
 | PATCH | `/customers/:id/lines/:lineId` | 改自定义节点名。请求体:`node_name`(最多 64 个字符,空字符串 = 用面板生成的名字)。只改这里,面板上不动 |
 | DELETE | `/customers/:id/lines/:lineId` | 删线路(面板上的客户端一起删);面板连不上时加 `?force=1` 只删记录 |
 
@@ -93,6 +94,17 @@ Authorization: Bearer xh_……
 `kind` 可省略:给了 `exit` 就是走 SOCKS,没给就是直出。要从另一台机器出,先在那台机器上建 socks / mixed 入站并登记到 SOCKS 页。旧版本的 `"exit": { "kind": "panel", … }` 不再支持,会返回 400。
 
 开线路时也可以带 `"node_name": "香港 01"`:客户拉订阅时看到的节点名,不给就用面板生成的。线路对象里的 `node_name` 就是它(空 = 没自定义),订阅、分享链接里都用这个名字。
+
+**出口规则**:请求体 `{ "rules": [...] }`,按顺序匹配,先命中的生效;没命中的流量走线路原来的出口。每条:
+
+- `domain`:域名数组(`example.com`、`geosite:netflix`,或 `domain:` / `full:` / `keyword:` / `regexp:` 开头);
+- `ip`:IP、网段或 `geoip:国家代码`;
+- `port`:如 `443`、`1000-2000`、`80,443`;
+- `network`:`tcp` / `udp` / `tcp,udp`;
+- 上面四项至少填一样,填了的要同时满足;
+- `to`:出口,`{ "kind": "socks", "socks_id": 1 }`(SOCKS 页登记的)、`{ "kind": "direct" }`(直出)、`{ "kind": "block" }`(拦截)。
+
+每条线路最多 20 条。写到面板上的规则带 `ruleTag`(`xui-hub:入站:客户端:序号`),xui-hub 只改带这个标记的,面板上手配的规则不动。返回线路对象,`rules` 是存下的规则,`routes` 是按新配置算出的实际出口。规则里用到的 SOCKS 改地址时规则跟着改;被规则用着的 SOCKS 删不了。
 
 线路对象里的 `routes` 是面板上实际的出口,每分钟同步时读面板的 Xray 路由规则算出来(只读,不改面板),`routes_at` 是读取时间;还没读到时为 `null`。按规则顺序,每项:
 

@@ -261,6 +261,10 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE lines ADD COLUMN routes TEXT;
   ALTER TABLE lines ADD COLUMN routes_at INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- 线路的出口规则(在 xui-hub 里配、写到面板 Xray 路由):JSON 数组,见 lines/rules.ts
+  ALTER TABLE lines ADD COLUMN rules TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 export function openDb(file: string): DB {

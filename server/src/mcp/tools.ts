@@ -76,6 +76,7 @@ function customerView(c: any, ctx: ToolContext) {
       email: l.email,
       node_name: l.node_name || null,
       // 面板上实际的出口(按路由规则顺序,每分钟同步时读):when 为空 = 其余流量
+      rules: l.rules?.length ? l.rules : undefined,
       routes: l.routes
         ? l.routes.map((h: any) => ({ when: h.fallback ? 'rest' : h.when, kind: h.to.kind, outbound: h.to.tag, address: h.to.address, socks_id: h.to.socks_id }))
         : null,
@@ -269,6 +270,45 @@ export const TOOLS: ToolDef[] = [
     run: async (a, ctx) => {
       const l = await call(ctx, 'PATCH', `/customers/${Number(a.customer_id)}/lines/${Number(a.line_id)}`, { node_name: a.node_name });
       return { line_id: l.id, node_name: l.node_name || null };
+    },
+  },
+  {
+    name: 'set_line_rules',
+    title: '设置线路的出口规则',
+    description:
+      '给一条线路配「条件 → 出口」的规则(整组替换,空数组 = 去掉),写到它所在面板的 Xray 路由并重启 Xray(这块面板上的客户端会断几秒)。没命中规则的流量照旧走线路原来的出口。面板上手配的规则不动。',
+    inputSchema: obj(
+      {
+        customer_id: customerId,
+        line_id: int('线路 id', { minimum: 1 }),
+        rules: {
+          type: 'array',
+          maxItems: 20,
+          items: {
+            type: 'object',
+            properties: {
+              domain: { type: 'array', items: { type: 'string' }, description: '域名:example.com、geosite:netflix、domain: / full: / keyword: / regexp: 开头的写法' },
+              ip: { type: 'array', items: { type: 'string' }, description: 'IP、网段或 geoip:国家代码' },
+              port: str('端口,如 443、1000-2000、80,443'),
+              network: { type: 'string', enum: ['tcp', 'udp', 'tcp,udp'] },
+              to: {
+                type: 'object',
+                description: '出口:{kind:"socks",socks_id}(SOCKS 页登记的)、{kind:"direct"}(直出)、{kind:"block"}(拦截)',
+                properties: { kind: { type: 'string', enum: ['socks', 'direct', 'block'] }, socks_id: { type: 'integer' } },
+                required: ['kind'],
+              },
+            },
+            required: ['to'],
+            additionalProperties: false,
+          },
+        },
+      },
+      ['customer_id', 'line_id', 'rules'],
+    ),
+    annotations: { destructiveHint: false, idempotentHint: true },
+    run: async (a, ctx) => {
+      const l = await call(ctx, 'PUT', `/customers/${Number(a.customer_id)}/lines/${Number(a.line_id)}/rules`, { rules: a.rules });
+      return { line_id: l.id, rules: l.rules, routes: l.routes };
     },
   },
   {
