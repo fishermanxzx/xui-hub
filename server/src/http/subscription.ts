@@ -10,7 +10,7 @@ import { customerIdBySubToken, getCustomer, touchSubFetch, type CustomerView } f
 import type { Converter } from '../subscription/convert';
 import { DEFAULT_CONVERT_OPTIONS, isBrowserUA, isShadowrocketUA, isStashUA, targetFromParam, targetFromUA, type Target } from '../subscription/format';
 import { buildLoon, buildQuantumultX } from '../subscription/apple';
-import { applyMihomoTemplate, lowerMode, withRealityMlkem, withTrojanFingerprint } from '../subscription/mihomo';
+import { applyMihomoTemplate, lowerMode, noLanAccess, withRealityMlkem, withTrojanFingerprint } from '../subscription/mihomo';
 import { parseNodes } from '../subscription/nodes';
 import { buildSingbox, singboxLegacyDns } from '../subscription/singbox';
 import { customerIdByLink } from '../subscription/customLinks';
@@ -135,7 +135,7 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
     const fp = stash ? body : withTrojanFingerprint(body);
     // support-x25519mlkem768 只给 mihomo 系的客户端:Shadowrocket 带上它后,伪装站不支持后量子的 REALITY 节点连不上
     // (2026-11-20 实测:同一节点 base64 链接能连、带这一项的 Clash 配置连不上),Stash 也不认
-    const out = lowerMode(stash || isShadowrocketUA(ua) ? fp : withRealityMlkem(fp));
+    const out = noLanAccess(lowerMode(stash || isShadowrocketUA(ua) ? fp : withRealityMlkem(fp)));
     return deps.mihomoTemplate(customerName) ? applyMihomoTemplate(out, { stash }) : out;
   };
 

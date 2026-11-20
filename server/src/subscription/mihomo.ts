@@ -1,5 +1,7 @@
 // Mihomo(Clash Meta)基础模板:替换 subconverter 生成的 Clash 配置头部(proxies: 之前的全局设置),
 // 内容参照主流面板,Clash 系与 Stash 各一套。proxies 及之后(节点、策略组、ACL4SSR 规则)一字不动。
+// 默认对所有客户生效(subconverter 自己的头部没有 dns 段),MIHOMO_TEMPLATE=off 关闭。
+// 不开局域网访问(allow-lan: false):开着的话,连同一个 Wi-Fi 的人能直接用客户电脑上的代理端口。
 
 import YAML from 'yaml';
 
@@ -7,8 +9,7 @@ import YAML from 'yaml';
 const CLASH_HEADER = `tcp-concurrent: true
 unified-delay: true
 mixed-port: 7890
-allow-lan: true
-bind-address: '*'
+allow-lan: false
 mode: rule
 log-level: info
 external-controller: '127.0.0.1:9090'
@@ -30,8 +31,7 @@ dns:
 
 // Stash 不支持 tcp-concurrent / unified-delay / geosite 等 Mihomo 专有写法,DNS 用 DoH
 const STASH_HEADER = `mixed-port: 7890
-allow-lan: true
-bind-address: '*'
+allow-lan: false
 mode: rule
 log-level: info
 external-controller: '127.0.0.1:9090'
@@ -101,11 +101,18 @@ export function lowerMode(yamlText: string): string {
   return head.replace(/^(mode:[ \t]*)(['"]?)(rule|global|direct)\2[ \t]*$/im, (_m, key: string, _q, mode: string) => key + mode.toLowerCase()) + (at < 0 ? '' : yamlText.slice(at));
 }
 
-/** MIHOMO_TEMPLATE:all = 全部;逗号分隔的订阅名 = 只对这些生效(灰度);空 = 关闭 */
+/** 模板关掉时 subconverter 的头部是 allow-lan: true,同样改成 false(只动 proxies: 之前的那一行) */
+export function noLanAccess(yamlText: string): string {
+  const at = yamlText.search(/^proxies:/m);
+  const head = at < 0 ? yamlText : yamlText.slice(0, at);
+  return head.replace(/^allow-lan:[ \t]*true[ \t]*$/m, 'allow-lan: false') + (at < 0 ? '' : yamlText.slice(at));
+}
+
+/** MIHOMO_TEMPLATE:空或 all = 全部(默认);off = 关闭;逗号分隔的客户名 = 只对这些生效 */
 export function mihomoTemplateMatcher(setting: string): (customerName: string) => boolean {
   const value = setting.trim();
-  if (!value) return () => false;
-  if (value.toLowerCase() === 'all') return () => true;
+  if (!value || value.toLowerCase() === 'all') return () => true;
+  if (['off', 'none', 'false', '0'].includes(value.toLowerCase())) return () => false;
   const names = new Set(value.split(',').map((s) => s.trim()).filter(Boolean));
   return (name) => names.has(name);
 }
