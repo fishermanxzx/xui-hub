@@ -61,6 +61,7 @@ function customerView(c: any, ctx: ToolContext) {
       panel_id: l.panel_id,
       protocol: l.protocol === 'hysteria' ? 'hy2' : l.protocol,
       email: l.email,
+      node_name: l.node_name || null,
       exit: l.kind === 'relay' ? l.exit_label || l.exit_panel_name || l.exit_socks_name : null,
       enabled: l.enable,
       used_gb: +((l.up + l.down) / GB).toFixed(2),
@@ -199,6 +200,7 @@ export const TOOLS: ToolDef[] = [
         protocol: { type: 'string', enum: ['vless', 'hy2'], description: '协议,默认 vless(reality)' },
         inbound_id: int('挂到面板上哪个已有入站(不传则按协议自动选或新建)', { minimum: 1 }),
         exit_socks_id: int('出口:SOCKS 代理 id(list_socks 返回的);不传就从这块面板直出', { minimum: 1 }),
+        node_name: str('自定义节点名:客户拉订阅时看到的名字;不传就用面板生成的', { maxLength: 64 }),
       },
       ['customer_id', 'panel_id'],
     ),
@@ -206,8 +208,20 @@ export const TOOLS: ToolDef[] = [
     run: async (a, ctx) => {
       const body: any = { panel_id: a.panel_id, inbound: a.inbound_id ? { id: a.inbound_id } : { protocol: a.protocol ?? 'vless' } };
       if (a.exit_socks_id) body.exit = { kind: 'socks', socks_id: a.exit_socks_id };
+      if (a.node_name !== undefined) body.node_name = a.node_name;
       const r = await call(ctx, 'POST', `/customers/${Number(a.customer_id)}/lines`, body);
-      return { line_id: r.line.id, panel: r.line.panel_name, protocol: r.line.protocol === 'hysteria' ? 'hy2' : r.line.protocol, email: r.line.email, exit: r.line.exit_label || null, links: r.links, created: r.created };
+      return { line_id: r.line.id, panel: r.line.panel_name, protocol: r.line.protocol === 'hysteria' ? 'hy2' : r.line.protocol, email: r.line.email, node_name: r.line.node_name || null, exit: r.line.exit_label || null, links: r.links, created: r.created };
+    },
+  },
+  {
+    name: 'rename_line',
+    title: '改节点名',
+    description: '改一条线路的自定义节点名(客户拉订阅时看到的名字),空字符串 = 恢复用面板生成的名字。只改 xui-hub 里的记录,面板上不动,下次拉订阅生效。',
+    inputSchema: obj({ customer_id: customerId, line_id: int('线路 id', { minimum: 1 }), node_name: str('新的节点名,最多 64 个字符;空字符串 = 用面板生成的', { maxLength: 64 }) }, ['customer_id', 'line_id', 'node_name']),
+    annotations: { destructiveHint: false, idempotentHint: true },
+    run: async (a, ctx) => {
+      const l = await call(ctx, 'PATCH', `/customers/${Number(a.customer_id)}/lines/${Number(a.line_id)}`, { node_name: a.node_name });
+      return { line_id: l.id, node_name: l.node_name || null };
     },
   },
   {

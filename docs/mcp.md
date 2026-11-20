@@ -58,6 +58,7 @@ claude mcp add --transport http xui-hub https://hub.example.com:8788/mcp --heade
 | `remove_device` | 移除一台设备 |
 | `open_line` | 开线路:直出,或经登记的 SOCKS 出去 |
 | `get_line_links` | 线路的分享链接 |
+| `rename_line` | 改线路的自定义节点名(客户拉订阅时看到的名字) |
 | `delete_line` | 删线路 |
 | `list_panels` | 面板列表和状态 |
 | `list_panel_inbounds` | 面板上的入站和客户端 |

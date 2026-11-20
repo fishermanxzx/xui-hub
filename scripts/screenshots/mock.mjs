@@ -24,7 +24,7 @@ const socks = [
 
 let lid = 0;
 const line = (customer_id, o) => ({
-  id: ++lid, customer_id, exit_kind: null, exit_panel_id: null, exit_panel_name: null, exit_port: null, exit_socks_id: null, exit_socks_name: null, exit_label: '',
+  id: ++lid, customer_id, exit_kind: null, exit_panel_id: null, exit_panel_name: null, exit_port: null, exit_socks_id: null, exit_socks_name: null, exit_label: '', node_name: '',
   created_at: now - 12 * DAY, enable: true, auto_disabled: false, last_online: now - 180_000, synced_at: now - 20_000, ...o,
 });
 const customer = (id, name, remark, quotaGb, expireDays, lines, extra = {}) => {
@@ -40,7 +40,7 @@ const customer = (id, name, remark, quotaGb, expireDays, lines, extra = {}) => {
 const customers = [
   customer(1, '张三', '月付 30', 200, 18, [
     line(1, { kind: 'direct', panel_id: 2, panel_name: '美国-1', inbound_id: 1, inbound_remark: 'vless-reality', protocol: 'vless', email: '张三', up: 2.1 * GB, down: 31.6 * GB }),
-    line(1, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 1, inbound_remark: 'vless-reality', protocol: 'vless', email: '张三', up: 1.3 * GB, down: 22.4 * GB, exit_kind: 'socks', exit_socks_id: 4, exit_socks_name: '日本-1 自建', exit_label: 'SOCKS 日本-1 自建' }),
+    line(1, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 1, inbound_remark: 'vless-reality', protocol: 'vless', email: '张三', up: 1.3 * GB, down: 22.4 * GB, exit_kind: 'socks', exit_socks_id: 4, exit_socks_name: '日本-1 自建', exit_label: 'SOCKS 日本-1 自建', node_name: '日本 01' }),
     line(1, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 2, inbound_remark: 'hy2', protocol: 'hysteria', email: '张三-2', up: 0.4 * GB, down: 5.6 * GB, exit_kind: 'socks', exit_socks_id: 1, exit_socks_name: '美国家宽-ATT', exit_label: 'SOCKS 美国家宽-ATT' }),
   ]),
   customer(2, '李四', '流量包', 100, 40, [

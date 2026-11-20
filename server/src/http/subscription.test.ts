@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
-import { addLine, createCustomer, getCustomer, resetSubToken, updateCustomer, updateLineStats } from '../customers/repo';
+import { addLine, createCustomer, getCustomer, resetSubToken, setLineName, updateCustomer, updateLineStats } from '../customers/repo';
 import type { Converter } from '../subscription/convert';
 import { listSubFetches, pruneSubFetches } from '../subscription/fetchLog';
 import type { LinkFetcher } from '../subscription/service';
@@ -92,6 +92,18 @@ test('Clash:text/yaml,带文件名、更新间隔、全局流量;默认转换参
     // 认不出的非浏览器 UA 给 Clash;?target= 优先
     assert.match(await (await get(link(token), 'curl/8.0')).text(), /^clash\|/);
     assert.equal(await decode(await get(link(token) + '?target=base64', CLASH_UA)), NODES);
+  } finally {
+    await close();
+  }
+});
+
+test('自定义节点名:订阅里换成线路自己的名字,没设的照旧', async () => {
+  const { db, id, token } = setup();
+  const lines = getCustomer(db, id)!.lines;
+  setLineName(db, lines[0].id, '香港 01');
+  const { link, close } = await serve(db, fakeConverter([]));
+  try {
+    assert.equal(await decode(await get(link(token), V2RAYN_UA)), 'vless://x@1.1.1.1:1#%E9%A6%99%E6%B8%AF%2001\nhysteria2://y@2.2.2.2:2#B');
   } finally {
     await close();
   }

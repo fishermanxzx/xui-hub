@@ -2,6 +2,7 @@
 // 线路换了入站下次拉订阅就是新链接;面板取不到时这条线路不出节点(error 里写原因)。
 
 import type { DB } from '../db';
+import { renameLinks } from './nodeName';
 import { XUIClient } from '../xui/client';
 
 export interface LineLinks {
@@ -28,7 +29,7 @@ export function defaultFetcher(opts: { timeoutMs: number }): LinkFetcher {
 export async function collectLinks(db: DB, customerId: number, fetcher: LinkFetcher): Promise<LineLinks[]> {
   const lines = db
     .prepare(
-      `SELECT l.panel_id, l.email, p.name AS panel_name, p.base_url, p.token
+      `SELECT l.panel_id, l.email, l.node_name, p.name AS panel_name, p.base_url, p.token
        FROM lines l
        JOIN panels p ON p.id = l.panel_id
        WHERE l.customer_id = ?
@@ -42,7 +43,7 @@ export async function collectLinks(db: DB, customerId: number, fetcher: LinkFetc
       try {
         const panel = { name: row.panel_name, base_url: row.base_url, token: row.token };
         const links = (await fetcher(panel, row.email)).filter((l) => typeof l === 'string' && l.includes('://'));
-        return { ...base, links };
+        return { ...base, links: renameLinks(links, row.node_name ?? '') };
       } catch (e: any) {
         return { ...base, links: [], error: e?.message ?? String(e) };
       }

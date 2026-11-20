@@ -55,6 +55,7 @@ Authorization: Bearer xh_……
 |---|---|---|
 | POST | `/customers/:id/lines` | 开线路,见下 |
 | GET | `/customers/:id/lines/:lineId/links` | 这条线路的分享链接 |
+| PATCH | `/customers/:id/lines/:lineId` | 改自定义节点名。请求体:`node_name`(最多 64 个字符,空字符串 = 用面板生成的名字)。只改这里,面板上不动 |
 | DELETE | `/customers/:id/lines/:lineId` | 删线路(面板上的客户端一起删);面板连不上时加 `?force=1` 只删记录 |
 
 开直连线路(在 1 号面板上自动选一个 vless 入站,没有就新建):
@@ -72,6 +73,8 @@ Authorization: Bearer xh_……
 ```
 
 `kind` 可省略:给了 `exit` 就是走 SOCKS,没给就是直出。要从另一台机器出,先在那台机器上建 socks / mixed 入站并登记到 SOCKS 页。旧版本的 `"exit": { "kind": "panel", … }` 不再支持,会返回 400。
+
+开线路时也可以带 `"node_name": "香港 01"`:客户拉订阅时看到的节点名,不给就用面板生成的。线路对象里的 `node_name` 就是它(空 = 没自定义),订阅、分享链接里都用这个名字。
 
 返回 `{ "line": {…}, "links": ["vless://…"], "created": {…} }`。
 

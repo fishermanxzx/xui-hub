@@ -18,6 +18,7 @@ import {
   linesOnPanel,
   listCustomers,
   resetSubToken,
+  setLineName,
   updateCustomer,
   type CustomerView,
   type Line,
@@ -29,6 +30,7 @@ import { getSettings, updateSettings } from '../settings';
 import { checkCustomTemplate, DEFAULT_TEMPLATE, isCustomTemplate, TEMPLATES, validTemplate, type TemplateFetcher } from '../subscription/templates';
 import { listSubFetches, subClientCounts, subIpsSince } from '../subscription/fetchLog';
 import { deleteDevice, deviceCounts, listDevices } from '../subscription/devices';
+import { renameLinks, validNodeName } from '../subscription/nodeName';
 import { createToken, deleteToken, listTokens, TOKEN_BLOCKED, verifyToken } from './tokens';
 import { listGrants, revokeGrant } from '../mcp/oauth';
 import { enforceCustomers } from '../lines/enforce';
@@ -449,7 +451,16 @@ export function apiRouter(deps: RouteDeps): Router {
       const line = lineOf(req);
       const panel = getPanel(db, line.panel_id);
       if (!panel) throw new InputError('线路所在的面板已删除');
-      return withClient(panel, async (client) => ({ links: await client.clientLinks(line.email) }));
+      return withClient(panel, async (client) => ({ links: renameLinks(await client.clientLinks(line.email), line.node_name) }));
+    }),
+  );
+  // 改线路的自定义节点名(只改这里,面板上不动;下次拉订阅生效)
+  r.patch(
+    '/customers/:id/lines/:lid',
+    wrap((req) => {
+      const line = lineOf(req);
+      if (req.body?.node_name !== undefined) setLineName(db, line.id, validNodeName(req.body.node_name));
+      return getLine(db, line.id);
     }),
   );
   // 面板连不上 / 已经报废时删不掉面板上的 client,带 ?force=1 就只删这条记录
