@@ -166,7 +166,7 @@ docker compose pull && docker compose up -d
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | 空 | 证书和私钥路径,两项都填即启用 HTTPS |
 | `PANEL_HOST` | 空 | 一键脚本显示后台地址用的域名或 IP,`xui-hub ssl` 设证书时自动写入;空则从证书里取 |
 | `SUB_BASE_URL` | 空 | 订阅链接的地址前缀,空则用打开后台时的地址 |
-| `MIHOMO_TEMPLATE` | 空 | Clash 订阅附加 Mihomo 基础配置:`all` 或逗号分隔的客户名 |
+| `MIHOMO_TEMPLATE` | 空(= 全部) | Clash 订阅套用 Mihomo 基础配置(DNS、并发连接等):空或 `all` = 全部客户,`off` = 关闭,也可以填逗号分隔的客户名 |
 | `SUB_LOG_DAYS` | `7` | 订阅拉取记录保留天数 |
 | `INTERNAL_PORT` | `8789` | 订阅转换用的内部端口,只绑本机,端口冲突时才需要改 |
 

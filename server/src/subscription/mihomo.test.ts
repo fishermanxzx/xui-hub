@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import YAML from 'yaml';
-import { applyMihomoTemplate, lowerMode, mihomoTemplateMatcher, withRealityMlkem, withTrojanFingerprint } from './mihomo';
+import { applyMihomoTemplate, lowerMode, mihomoTemplateMatcher, noLanAccess, withRealityMlkem, withTrojanFingerprint } from './mihomo';
 
 const BODY = [
   'proxies:',
@@ -20,7 +20,7 @@ const BASE = 'port: 7890\nsocks-port: 7891\nallow-lan: true\nmode: Rule\nlog-lev
 
 test('替换头部为 Mihomo 模板,去掉 port/socks-port,proxies 之后一字不改', () => {
   const out = applyMihomoTemplate(BASE);
-  assert.ok(out.startsWith('tcp-concurrent: true\nunified-delay: true\nmixed-port: 7890\nallow-lan: true\nbind-address: \'*\'\nmode: rule\n'));
+  assert.ok(out.startsWith('tcp-concurrent: true\nunified-delay: true\nmixed-port: 7890\nallow-lan: false\nmode: rule\n'));
   assert.ok(out.endsWith(BODY));
   const doc = YAML.parse(out);
   assert.equal(doc.port, undefined);
@@ -54,9 +54,22 @@ test('不是 Clash 配置时原样返回', () => {
   assert.equal(applyMihomoTemplate('no proxies here'), 'no proxies here');
 });
 
-test('灰度开关', () => {
-  assert.equal(mihomoTemplateMatcher('')('zhu'), false);
+test('不开局域网访问:两套模板都是 allow-lan: false、不写 bind-address;模板关掉时 subconverter 的头部也改', () => {
+  for (const stash of [false, true]) {
+    const doc = YAML.parse(applyMihomoTemplate(BASE, { stash }));
+    assert.deepEqual([doc['allow-lan'], doc['bind-address']], [false, undefined]);
+  }
+  // proxies 之后(节点、规则)不动
+  const off = noLanAccess(`${BASE}allow-lan: true\n`);
+  assert.ok(off.startsWith('port: 7890\nsocks-port: 7891\nallow-lan: false\nmode: Rule\n'));
+  assert.ok(off.endsWith(`${BODY}allow-lan: true\n`));
+  assert.equal(noLanAccess('no proxies'), 'no proxies');
+});
+
+test('开关:默认(空)和 all 全部生效,off 关闭,也可以只给几位客户', () => {
+  assert.equal(mihomoTemplateMatcher('')('zhu'), true);
   assert.equal(mihomoTemplateMatcher('ALL')('zhu'), true);
+  for (const off of ['off', 'OFF', 'none', 'false', '0']) assert.equal(mihomoTemplateMatcher(off)('zhu'), false, off);
   const some = mihomoTemplateMatcher('李四, zhu');
   assert.equal(some('zhu'), true);
   assert.equal(some('李四'), true);

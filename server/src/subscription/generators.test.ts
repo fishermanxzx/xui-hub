@@ -40,8 +40,11 @@ test('按 UA 里的 sing-box 版本决定 DNS 写法', () => {
 test('sing-box:结构与节点字段', () => {
   const nodes = parseNodes([VLESS, VLESS_NOFLOW, HY2]);
   const cfg = buildSingbox(nodes, { legacyDns: false, insecure: true }) as any;
-  assert.deepEqual(cfg.dns.servers, [{ type: 'udp', tag: 'remote', server: '1.1.1.1' }, { type: 'udp', tag: 'cn', server: '119.29.29.29' }]);
-  assert.deepEqual(cfg.route.default_domain_resolver, { server: 'remote' });
+  // 国外 DNS 用 DoH 经代理(直连会被投毒,SOCKS 出口没有 UDP 也能用),国内直连;只要 IPv4
+  assert.deepEqual(cfg.dns.servers, [{ type: 'https', tag: 'remote', server: '1.1.1.1', detour: '节点选择' }, { type: 'udp', tag: 'cn', server: '119.29.29.29' }]);
+  assert.deepEqual([cfg.dns.final, cfg.dns.strategy, cfg.dns.rules], ['remote', 'ipv4_only', [{ rule_set: ['geosite-cn'], action: 'route', server: 'cn' }]]);
+  // 节点自己的域名用国内 DNS 解析(经代理解析代理的地址会转圈)
+  assert.deepEqual(cfg.route.default_domain_resolver, { server: 'cn' });
   const [direct, select, auto, v1, v2, hy] = cfg.outbounds;
   assert.deepEqual(direct, { tag: 'DIRECT', type: 'direct', domain_resolver: { server: 'cn' } });
   assert.deepEqual(select.outbounds, ['自动选择', 'us-1.2.3.4', 'hk', 'us-9.9.9.9']);
@@ -58,7 +61,10 @@ test('sing-box:结构与节点字段', () => {
   });
 
   const legacy = buildSingbox(nodes, { legacyDns: true, insecure: true }) as any;
-  assert.deepEqual(legacy.dns.servers, [{ tag: 'remote', address: '1.1.1.1' }, { tag: 'cn', address: '119.29.29.29' }]);
+  // 1.11 不写 detour 走默认出站(代理),国内 DNS 要显式直连
+  assert.deepEqual(legacy.dns.servers, [{ tag: 'remote', address: 'https://1.1.1.1/dns-query', detour: '节点选择' }, { tag: 'cn', address: '119.29.29.29', detour: 'DIRECT' }]);
+  assert.deepEqual(legacy.dns.rules[0], { outbound: 'any', action: 'route', server: 'cn' });
+  assert.equal(legacy.dns.strategy, 'ipv4_only');
   assert.equal(legacy.route.default_domain_resolver, undefined);
   assert.deepEqual(legacy.outbounds[0], { tag: 'DIRECT', type: 'direct' });
 });

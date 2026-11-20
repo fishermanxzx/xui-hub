@@ -75,11 +75,33 @@ function outbound(node: ProxyNode, insecure: boolean): Record<string, unknown> {
  */
 export function buildSingbox(nodes: ProxyNode[], opts: { legacyDns: boolean; insecure: boolean }): Record<string, unknown> {
   const tags = nodes.map((n) => n.name);
+  // DNS:
+  // - 国外(remote)用 DoH 并经代理:1.12 起 DNS 服务器不写 detour 就是直连,直连查 1.1.1.1 会被投毒
+  //   (实测 www.google.com 解析成假 IP);走 TCP 的 DoH,SOCKS 出口不支持 UDP 时也能用
+  // - 国内(cn)直连。节点自己的域名也用它解析:经代理去解析代理的地址会转圈。
+  //   1.11 不写 detour 走的是默认出站(也就是代理),所以旧写法要显式写 DIRECT
+  // - 只要 IPv4:服务器多数没有 IPv6,给 AAAA 记录会让应用先试 IPv6 再退回,白等一下
   const dns = opts.legacyDns
-    ? { servers: [{ tag: 'remote', address: '1.1.1.1' }, { tag: 'cn', address: '119.29.29.29' }] }
-    : { servers: [{ type: 'udp', tag: 'remote', server: '1.1.1.1' }, { type: 'udp', tag: 'cn', server: '119.29.29.29' }] };
+    ? {
+        servers: [
+          { tag: 'remote', address: 'https://1.1.1.1/dns-query', detour: SELECT },
+          { tag: 'cn', address: '119.29.29.29', detour: 'DIRECT' },
+        ],
+        // 1.11 没有 domain_resolver:出站自己解析服务器地址的查询用 outbound 规则交给国内 DNS
+        rules: [
+          { outbound: 'any', action: 'route', server: 'cn' },
+          { rule_set: ['geosite-cn'], action: 'route', server: 'cn' },
+        ],
+      }
+    : {
+        servers: [
+          { type: 'https', tag: 'remote', server: '1.1.1.1', detour: SELECT },
+          { type: 'udp', tag: 'cn', server: '119.29.29.29' },
+        ],
+        rules: [{ rule_set: ['geosite-cn'], action: 'route', server: 'cn' }],
+      };
   return {
-    dns: { ...dns, rules: [{ rule_set: ['geosite-cn'], action: 'route', server: 'cn' }], final: 'remote' },
+    dns: { ...dns, final: 'remote', strategy: 'ipv4_only' },
     inbounds: [
       {
         tag: 'tun-in',
@@ -121,7 +143,8 @@ export function buildSingbox(nodes: ProxyNode[], opts: { legacyDns: boolean; ins
       ],
       auto_detect_interface: true,
       final: SELECT,
-      ...(opts.legacyDns ? {} : { default_domain_resolver: { server: 'remote' } }),
+      // 节点(出站)的域名用国内 DNS 直连解析
+      ...(opts.legacyDns ? {} : { default_domain_resolver: { server: 'cn' } }),
       rule_set: RULE_SETS,
     },
     experimental: {
