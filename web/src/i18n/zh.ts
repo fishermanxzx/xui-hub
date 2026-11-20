@@ -496,8 +496,6 @@ export default {
     exitDirect: '从这块面板直出',
     exitSocks: '经 SOCKS 代理出去',
     noSocks: '(SOCKS 页还没登记)',
-    socksOk: ' · 可用',
-    socksBad: ' · 上次测试失败',
     openedSummary: '{exit},客户端在 {panel} 的入站 {inbound}({proto}),名字 {email}。把链接或二维码发给客户。',
     open: '开通',
     opening: '开通中…',

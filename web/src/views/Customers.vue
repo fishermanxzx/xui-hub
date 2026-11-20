@@ -227,7 +227,13 @@ const PROTOCOL_OPTIONS: SelectOption<ClientProtocol>[] = [
   { value: 'hy2', label: 'hy2(hysteria2)' },
 ];
 const panelOptions = (list: Panel[]): SelectOption<number>[] => list.map((p) => ({ value: p.id, label: p.name + (p.check_error ? t('customers.unreachable') : ''), disabled: !!p.check_error }));
-const socksOptions = computed<SelectOption<number>[]>(() => socksList.value.map((s) => ({ value: s.id, label: `${s.name} · ${s.host}:${s.port}${s.check ? (s.check.ok ? t('customers.socksOk') : t('customers.socksBad')) : ''}` })));
+/** 出口下拉:只显示 IP(同一 IP 有几个端口时带上端口);名字和 IP 不一样时名字放前面 */
+const socksOptions = computed<SelectOption<number>[]>(() =>
+  socksList.value.map((s) => {
+    const addr = socksList.value.some((o) => o.id !== s.id && o.host === s.host) ? `${s.host}:${s.port}` : s.host;
+    return { value: s.id, label: s.name === s.host || s.name === addr ? addr : `${s.name}(${addr})` };
+  }),
+);
 const templateOptions = computed<SelectOption<string>[]>(() => [...templates.value.map((x) => ({ value: x.id === templateDefault.value ? '' : x.id, label: `${tplText(x, 'name')} — ${tplText(x, 'desc')}` })), { value: 'custom', label: t('customers.customTemplateOption') }]);
 
 function openLineFor(c: Customer) {

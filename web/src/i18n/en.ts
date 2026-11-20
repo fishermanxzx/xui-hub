@@ -498,8 +498,6 @@ const en: Messages = {
     exitDirect: 'Straight out of this panel',
     exitSocks: 'Out through a SOCKS proxy',
     noSocks: ' (none registered on the SOCKS page)',
-    socksOk: ' · OK',
-    socksBad: ' · last test failed',
     openedSummary: '{exit}. The client is on inbound {inbound} ({proto}) of {panel}, named {email}. Send the link or QR code to the customer.',
     open: 'Open',
     opening: 'Opening…',
