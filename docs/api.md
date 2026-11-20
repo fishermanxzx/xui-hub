@@ -94,6 +94,14 @@ Authorization: Bearer xh_……
 
 开线路时也可以带 `"node_name": "香港 01"`:客户拉订阅时看到的节点名,不给就用面板生成的。线路对象里的 `node_name` 就是它(空 = 没自定义),订阅、分享链接里都用这个名字。
 
+线路对象里的 `routes` 是面板上实际的出口,每分钟同步时读面板的 Xray 路由规则算出来(只读,不改面板),`routes_at` 是读取时间;还没读到时为 `null`。按规则顺序,每项:
+
+- `when`:条件,如 `{ "domain": ["geosite:netflix"] }`,键有 `domain` / `ip` / `port` / `sourcePort` / `source` / `protocol` / `attrs` / `network`;
+- `to`:去向,`kind` 是 `direct`(直出)/ `block`(拦截)/ `socks`(SOCKS 页登记过的,带 `socks_id`)/ `proxy`(面板上别的出站)/ `balancer`(负载均衡)/ `unknown`(规则指向的出站面板上没有),另有 `tag`(出站名)和 `address`(出站连的地址);
+- `fallback`:`true` 表示这是其余流量的去向(最后一项)。
+
+只列点名了这个客户端的规则和最后的兜底;不点名客户端、带条件的全局规则(如屏蔽 bittorrent)对谁都一样,不列。
+
 返回 `{ "line": {…}, "links": ["vless://…"], "created": {…} }`。
 
 ## 其它

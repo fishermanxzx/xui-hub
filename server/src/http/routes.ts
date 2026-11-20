@@ -48,6 +48,7 @@ export interface PanelClient extends ClientAdmin, PanelReader, PanelProbe, LineA
   setClientsEnabled(emails: string[], enable: boolean): Promise<void>;
   resetClientTraffic(email: string): Promise<void>;
   serverStatus(): Promise<{ panelVersion: string; xrayVersion: string; xrayState: string; xrayError: string }>;
+  xraySettings(): Promise<unknown>;
   xrayVersions(): Promise<string[]>;
   panelUpdateInfo(): Promise<{ channel: string; current: string; latest: string; available: boolean } | null>;
   installXray(version: string): Promise<void>;

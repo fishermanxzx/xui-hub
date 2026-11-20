@@ -75,6 +75,10 @@ function customerView(c: any, ctx: ToolContext) {
       protocol: l.protocol === 'hysteria' ? 'hy2' : l.protocol,
       email: l.email,
       node_name: l.node_name || null,
+      // 面板上实际的出口(按路由规则顺序,每分钟同步时读):when 为空 = 其余流量
+      routes: l.routes
+        ? l.routes.map((h: any) => ({ when: h.fallback ? 'rest' : h.when, kind: h.to.kind, outbound: h.to.tag, address: h.to.address, socks_id: h.to.socks_id }))
+        : null,
       exit: l.kind === 'relay' ? l.exit_label || l.exit_panel_name || l.exit_socks_name : null,
       enabled: l.enable,
       used_gb: +((l.up + l.down) / GB).toFixed(2),

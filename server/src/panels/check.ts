@@ -1,6 +1,9 @@
 // 面板连通性检查:读一遍入站和 client,记下数量或错误。启动后定期跑,也可手动点。
 
-import { linesOnPanel, updateLineStats } from '../customers/repo';
+import { linesOnPanel, setLineRoutes, updateLineStats } from '../customers/repo';
+import { routesForClient } from '../lines/routes';
+import { allSocks } from '../socks/repo';
+import { xrayConfig } from '../xui/json';
 import type { DB } from '../db';
 import { recordTraffic } from '../traffic/daily';
 import { errorText, mapLimit, using } from '../util';
@@ -12,15 +15,25 @@ export interface PanelProbe {
   listClients(): Promise<any[]>;
   /** 可选:面板版本与 Xray 状态,读不到不算检查失败 */
   serverStatus?(): Promise<{ panelVersion: string; xrayVersion: string; xrayState: string; xrayError: string }>;
+  /** 可选:Xray 配置(看线路实际从哪些出口出去),读不到不算检查失败 */
+  xraySettings?(): Promise<unknown>;
   close?(): Promise<void>;
 }
 
 export function checkPanel(db: DB, panel: Panel, probe: PanelProbe, now = Date.now()): Promise<Panel> {
   return using(probe, async () => {
     try {
-      const [inbounds, raw, status] = await Promise.all([probe.listInbounds(), probe.listClients(), probe.serverStatus?.().catch(() => null)]);
+      // 这块面板上有线路时才读 Xray 配置
+      const hasLines = linesOnPanel(db, panel.id).length > 0;
+      const [inbounds, raw, status, xray] = await Promise.all([
+        probe.listInbounds(),
+        probe.listClients(),
+        probe.serverStatus?.().catch(() => null),
+        hasLines && probe.xraySettings ? probe.xraySettings().catch(() => null) : null,
+      ]);
       const clients = normalizeClients(raw, inbounds);
       syncLines(db, panel.id, clients, now);
+      if (xray) syncRoutes(db, panel.id, inbounds, xrayConfig(xray), now);
       recordTraffic(db, panel.id, clients, now);
       recordCheck(
         db,
@@ -49,6 +62,16 @@ export function syncLines(db: DB, panelId: number, clients: ReturnType<typeof no
     const c = byEmail.get(line.email);
     if (c) updateLineStats(db, line.id, { up: c.up, down: c.down, enable: c.enable, last_online: c.lastOnline }, now);
     else updateLineStats(db, line.id, { up: line.up, down: line.down, enable: false, last_online: line.last_online }, now);
+  }
+}
+
+/** 按面板的 Xray 路由记下每条线路实际的出口;入站已经不在的线路不动 */
+export function syncRoutes(db: DB, panelId: number, inbounds: any[], xray: any, now = Date.now()): void {
+  const tagOf = new Map(inbounds.map((ib) => [Number(ib.id), String(ib.tag ?? '')]));
+  const socks = allSocks(db).map((s) => ({ id: s.id, host: s.host, port: s.port }));
+  for (const line of linesOnPanel(db, panelId)) {
+    const tag = tagOf.get(line.inbound_id);
+    if (tag) setLineRoutes(db, line.id, routesForClient(xray, tag, line.email, socks), now);
   }
 }
 

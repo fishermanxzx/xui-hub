@@ -1,6 +1,7 @@
 // 展示格式化。文案走 i18n:这些函数在模板里调用,切换语言后跟着重算。
 
 import { locale, t } from './i18n';
+import type { RouteHop } from './types';
 
 export function fmtBytes(n: number): string {
   if (!n) return '0';
@@ -141,3 +142,31 @@ export function hostOf(url: string): string {
     return url;
   }
 }
+
+// ---------- 线路实际的出口(面板路由规则) ----------
+
+/** 规则条件 → 一段短文字;列表超过 3 项只列前 3 项 */
+export function routeWhen(when: Record<string, string[]>): string {
+  const short = (v: string[]) => (v.length > 3 ? t('customers.routeMore', { list: v.slice(0, 3).join(', '), n: v.length }) : v.join(', '));
+  const parts = Object.entries(when).map(([k, v]) => {
+    if (k === 'domain' || k === 'ip') return short(v);
+    if (k === 'port') return t('customers.routePort', { v: v.join(',') });
+    if (k === 'sourcePort') return t('customers.routeSourcePort', { v: v.join(',') });
+    if (k === 'source') return t('customers.routeSource', { v: short(v) });
+    if (k === 'protocol') return t('customers.routeProtocol', { v: v.join(', ') });
+    return v.join(', ');
+  });
+  return parts.join(' · ') || t('customers.routeRest');
+}
+
+/** 出口 → 名字:登记过的 SOCKS 用它的名字,直出 / 拦截 / 面板上的出站 / 负载均衡 */
+export function routeTarget(to: RouteHop['to'], socks: { id: number; name: string }[]): string {
+  if (to.kind === 'direct') return t('customers.direct');
+  if (to.kind === 'block') return t('customers.routeBlock');
+  if (to.kind === 'socks') return t('customers.routeSocks', { name: socks.find((s) => s.id === to.socks_id)?.name ?? to.tag });
+  if (to.kind === 'balancer') return t('customers.routeBalancer', { tag: to.tag });
+  if (to.kind === 'unknown') return t('customers.routeUnknown', { tag: to.tag });
+  return to.address ? t('customers.routeProxyAddr', { tag: to.tag, address: to.address }) : t('customers.routeProxy', { tag: to.tag });
+}
+
+export const routeHopText = (h: RouteHop, socks: { id: number; name: string }[]) => t('customers.routeHop', { when: h.fallback ? t('customers.routeRest') : routeWhen(h.when), to: routeTarget(h.to, socks) });

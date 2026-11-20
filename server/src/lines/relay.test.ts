@@ -132,3 +132,21 @@ test('出口:只认 SOCKS 页登记的代理,取它的地址和账号;旧的「�
   assert.throws(() => parseExitSocksId(null), /出口/);
   assert.throws(() => prepareExit(db, 999), /SOCKS 不存在/);
 });
+
+test('面板上手配的带条件规则(同一个客户端的流媒体走另一个出口)不算本系统的:换出口、删线路都不碰', () => {
+  const manual = { type: 'field', inboundTag: ['in-a'], user: ['zhang'], domain: ['geosite:netflix'], outboundTag: 'us' };
+  const xray: any = {
+    outbounds: [{ tag: 'direct', protocol: 'freedom' }, socksOut('us', '198.51.100.9', 1080)],
+    routing: { rules: [manual, { type: 'field', inboundTag: ['in-a'], outboundTag: 'direct' }] },
+  };
+  const out = routeUserToExit(xray, 'in-a', 'zhang', { address: '203.0.113.5', port: 1080, user: '', pass: '' });
+  assert.deepEqual(xray.routing.rules[0], manual);
+  assert.deepEqual(xray.routing.rules[1], { type: 'field', inboundTag: ['in-a'], user: ['zhang'], outboundTag: out });
+  // 再换一次出口:只换本系统那条
+  const out2 = routeUserToExit(xray, 'in-a', 'zhang', { address: '203.0.113.6', port: 1080, user: '', pass: '' });
+  assert.deepEqual(xray.routing.rules.map((r: any) => r.outboundTag), ['us', out2, 'direct']);
+  assert.ok(xray.outbounds.some((o: any) => o.tag === 'us'));
+  // 删线路:只去掉本系统那条
+  assert.equal(unrouteUser(xray, 'in-a', 'zhang'), true);
+  assert.deepEqual(xray.routing.rules, [manual, { type: 'field', inboundTag: ['in-a'], outboundTag: 'direct' }]);
+});

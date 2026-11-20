@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { addLine, createCustomer, getLine, updateLineStats } from '../customers/repo';
+import { createSocks } from '../socks/repo';
 import { addPanel, memoryDb, vlessInbound } from '../testUtil';
 import { XUIError } from '../xui/client';
 import { checkAllPanels, checkPanel, type PanelProbe } from './check';
@@ -100,4 +101,34 @@ test('检查全部面板:一块连不上不影响别的,结果按名称排,连�
   const out = await checkAllPanels(db, (p) => probes[p.name]);
   assert.deepEqual(out.map((p) => [p.name, p.check_error, p.client_count]), [['a', null, 1], ['b', '连接失败:超时', null], ['c', null, 0]]);
   assert.deepEqual(Object.values(probes).map((p) => p.closed), [1, 1, 1]);
+});
+
+test('同步时读面板的 Xray 路由,记下每条线路实际的出口;读不到 Xray 配置不算失败、留着上次的;面板上没有线路时不读', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  let reads = 0;
+  const xray = {
+    outbounds: [{ tag: 'direct', protocol: 'freedom' }, { tag: 'us', protocol: 'socks', settings: { servers: [{ address: '198.51.100.9', port: 1080 }] } }],
+    routing: { rules: [{ inboundTag: ['in-443'], user: ['zhang'], domain: ['geosite:netflix'], outboundTag: 'us' }] },
+  };
+  const probe = (over: Partial<PanelProbe> = {}) => fakeProbe([client('zhang')], { xraySettings: async () => (reads++, { xraySetting: JSON.stringify(xray) }), ...over });
+  await checkPanel(db, a, probe(), 100);
+  assert.equal(reads, 0);
+
+  const sockId = createSocks(db, { name: '美国', address: '198.51.100.9:1080' });
+  const id = createCustomer(db, { name: '张三' });
+  const line = addLine(db, { customer_id: id, kind: 'direct', panel_id: a.id, inbound_id: 1, inbound_remark: 'v1', protocol: 'vless', email: 'zhang' });
+  assert.equal(getLine(db, line.id)!.routes, null);
+  await checkPanel(db, a, probe(), 200);
+  assert.equal(reads, 1);
+  const got = getLine(db, line.id)!;
+  assert.equal(got.routes_at, 200);
+  assert.deepEqual(got.routes, [
+    { when: { domain: ['geosite:netflix'] }, to: { kind: 'socks', tag: 'us', address: '198.51.100.9:1080', socks_id: sockId }, fallback: false },
+    { when: {}, to: { kind: 'direct', tag: 'direct' }, fallback: true },
+  ]);
+
+  const ok = await checkPanel(db, a, probe({ xraySettings: timeout }), 300);
+  assert.equal(ok.check_error, null);
+  assert.equal(getLine(db, line.id)!.routes_at, 200);
 });

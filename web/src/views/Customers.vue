@@ -9,7 +9,7 @@ import Modal from '../components/Modal.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
-import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl } from '../format';
+import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
 import { toast, toastError } from '../toast';
 import type { ClientProtocol, Customer, EnforceOp, Line, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
 
@@ -364,7 +364,15 @@ function upstreamHost(url: string): string {
   }
 }
 
+/** 面板上按规则分了多个出口(读到的路由规则不止一条去向) */
+const multiExit = (l: Line) => (l.routes?.length ?? 0) > 1;
+
 function exitText(l: Line): string {
+  // 读到了面板的路由规则:以面板上实际的为准
+  if (l.routes?.length === 1) {
+    const to = l.routes[0].to;
+    return to.kind === 'direct' ? t('customers.direct') : t('customers.exitVia', { name: routeTarget(to, socksList.value) });
+  }
   if (l.kind === 'direct') return t('customers.direct');
   if (l.exit_kind === 'socks') return t('customers.relayToSocks', { name: l.exit_socks_name ?? t('customers.gone') });
   return t('customers.relayToPanel', { name: `${l.exit_panel_name ?? t('customers.gone')}${l.exit_port ? ':' + l.exit_port : ''}` });
@@ -448,7 +456,10 @@ function exitText(l: Line): string {
             <span v-if="l.node_name" class="small node-name" :title="t('customers.nodeNameTitle')">「{{ l.node_name }}」</span>
             <span class="muted small">{{ l.inbound_remark || l.inbound_id }} · {{ proto(l.protocol) }} · {{ l.email }}</span>
           </span>
-          <span class="small exit" :class="{ muted: l.kind === 'direct' }">{{ exitText(l) }}</span>
+          <span v-if="multiExit(l)" class="small exit hops" :title="t('customers.routesTitle', { ago: fmtAgo(l.routes_at) })">
+            <span v-for="(h, i) in l.routes" :key="i" class="hop" :title="routeHopText(h, socksList)">{{ routeHopText(h, socksList) }}</span>
+          </span>
+          <span v-else class="small exit" :class="{ muted: exitText(l) === t('customers.direct') }" :title="l.routes ? t('customers.routesTitle', { ago: fmtAgo(l.routes_at) }) : ''">{{ exitText(l) }}</span>
           <span class="muted small stat">
             {{ t('customers.lineUsage', { used: fmtBytes(l.up + l.down), ago: fmtAgo(l.last_online, '—') }) }}
             <span v-if="!l.enable" class="badge err">{{ l.auto_disabled ? t('customers.autoDisabled') : t('customers.panelDisabled') }}</span>
@@ -785,6 +796,14 @@ h2 {
 }
 .names {
   cursor: help;
+}
+.hops {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hop {
+  overflow-wrap: anywhere;
 }
 .upstream-err {
   min-width: 0;
