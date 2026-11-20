@@ -23,6 +23,10 @@ export function isStashUA(ua: string | undefined): boolean {
   return !!ua && /stash/i.test(ua);
 }
 
+export function isShadowrocketUA(ua: string | undefined): boolean {
+  return !!ua && /shadowrocket/i.test(ua);
+}
+
 /** 识别不出(浏览器、脚本等)返回 null,由调用方决定默认格式 */
 export function targetFromUA(ua: string | undefined): Target | null {
   if (!ua) return null;
