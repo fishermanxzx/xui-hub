@@ -223,6 +223,22 @@ test('Shadowrocket:给 Clash 配置并带流量头(base64 节点它解析不了)
   }
 });
 
+test('REALITY 的 support-x25519mlkem768:Clash Verge 补上,Shadowrocket 和 Stash 不加', async () => {
+  const { db, token } = setup();
+  const yaml = 'proxies:\n  - {name: r, server: 1.2.3.4, port: 443, type: vless, uuid: u, reality-opts: {public-key: pk, short-id: ab}, client-fingerprint: chrome}\n';
+  const { link, close } = await serve(db, async () => ({ body: yaml }));
+  try {
+    assert.match(await (await get(link(token), CLASH_UA)).text(), /reality-opts: \{public-key: pk, short-id: ab, support-x25519mlkem768: true\}/);
+    for (const ua of [ROCKET_UA, 'Stash/2.4.0 Clash/1.9.0']) {
+      const body = await (await get(link(token), ua)).text();
+      assert.match(body, /reality-opts: \{public-key: pk, short-id: ab\}/, ua);
+      assert.doesNotMatch(body, /mlkem/, ua);
+    }
+  } finally {
+    await close();
+  }
+});
+
 test('内部回源需密钥且不计入"上次获取";到期 / 超额客户无节点、其他格式 403', async () => {
   const { db, id, token } = setup();
   const { base, link, close } = await serve(db, fakeConverter([]));
