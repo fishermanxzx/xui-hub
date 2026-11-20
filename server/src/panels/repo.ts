@@ -18,6 +18,10 @@ export interface Panel {
   panel_version: string | null;
   xray_version: string | null;
   xray_state: string | null;
+  /** 月成本,null = 没填 */
+  monthly_cost: number | null;
+  /** 到期时间(毫秒),0 = 没填 / 不限期 */
+  expire_at: number;
 }
 
 /** line_count:挂在这块面板上的客户线路数;exit_line_count:旧版本留下的、以它为出口的线路数 */
@@ -27,9 +31,27 @@ export interface PanelInput {
   name?: string;
   base_url?: string;
   token?: string;
+  monthly_cost?: unknown;
+  expire_at?: unknown;
 }
 
 export class InputError extends Error {}
+
+/** 月成本:空 = 没填(null);否则 0 到 1 亿之间,保留两位小数 */
+export function validCost(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0 || n > 1e8) throw new InputError('月成本要是 0 到 1 亿之间的数字,留空 = 不填');
+  return Math.round(n * 100) / 100;
+}
+
+/** 到期时间(毫秒):空 = 0(没填 / 不限期) */
+export function validExpire(value: unknown): number {
+  if (value == null || value === '') return 0;
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n < 0) throw new InputError('到期时间要是毫秒时间戳,0 = 不限期');
+  return n;
+}
 
 export function panelUsage(db: DB, id: number): { line_count: number; exit_line_count: number } {
   return db
@@ -70,8 +92,8 @@ export function createPanel(db: DB, input: PanelInput, now = Date.now()): Panel 
   if (!token) throw new InputError('缺少 API token');
   if (db.prepare('SELECT 1 FROM panels WHERE name = ?').get(name)) throw new InputError(`面板名称已存在:${name}`);
   const info = db
-    .prepare('INSERT INTO panels (name, base_url, token, created_at) VALUES (?, ?, ?, ?)')
-    .run(name, normalizeBaseUrl(input.base_url), token, now);
+    .prepare('INSERT INTO panels (name, base_url, token, monthly_cost, expire_at, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(name, normalizeBaseUrl(input.base_url), token, validCost(input.monthly_cost), validExpire(input.expire_at), now);
   return getPanel(db, Number(info.lastInsertRowid))!;
 }
 
@@ -81,10 +103,12 @@ export function updatePanel(db: DB, id: number, patch: PanelInput): Panel {
   const name = patch.name !== undefined ? patch.name.trim() : current.name;
   if (!name) throw new InputError('面板名称不能为空');
   if (name !== current.name && db.prepare('SELECT 1 FROM panels WHERE name = ?').get(name)) throw new InputError(`面板名称已存在:${name}`);
-  db.prepare('UPDATE panels SET name = ?, base_url = ?, token = ? WHERE id = ?').run(
+  db.prepare('UPDATE panels SET name = ?, base_url = ?, token = ?, monthly_cost = ?, expire_at = ? WHERE id = ?').run(
     name,
     patch.base_url !== undefined ? normalizeBaseUrl(patch.base_url) : current.base_url,
     patch.token?.trim() || current.token, // 留空表示不修改 token
+    patch.monthly_cost !== undefined ? validCost(patch.monthly_cost) : current.monthly_cost,
+    patch.expire_at !== undefined ? validExpire(patch.expire_at) : current.expire_at,
     id,
   );
   return getPanel(db, id)!;

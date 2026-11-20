@@ -133,6 +133,19 @@ export default {
     update: '立即更新',
     updating: '更新中…',
   },
+  cost: {
+    col: '月成本',
+    colExpire: '到期',
+    field: '月成本(空 = 不填)',
+    expireField: '到期日(空 = 不填)',
+    value: '月成本 {v}',
+    expireOn: '{date} 到期',
+    total: '月成本合计 {total}',
+    unset: '{n} 个没填',
+    soon: '{n} 个 7 天内到期',
+    overdue: '{n} 个已过期',
+    hint: '月成本和到期日只用来记账、提醒续费,不影响任何功能。7 天内到期标黄,过期标红。',
+  },
   socks: {
     title: 'SOCKS',
     intro: '登记 SOCKS5 代理,开线路时可选作出口:可以是买的代理,也可以是你自己在别的机器上建的 socks / mixed 入站。测试从 xui-hub 所在机器发起,代理商按来源 IP 放行的话,线路所在面板上的结果可能不同。',
@@ -170,7 +183,7 @@ export default {
     keepBlank: '(留空不修改)',
     addressPlaceholder: "socks5://用户:密码{'@'}主机:端口 或 主机:端口:用户:密码",
     remark: '备注',
-    remarkPlaceholder: '代理商、到期日之类',
+    remarkPlaceholder: '代理商之类',
     hint: "支持 socks5://用户:密码{'@'}主机:端口、主机:端口:用户:密码、主机:端口(无认证)。保存后会自动测一次连通性。",
   },
   panels: {

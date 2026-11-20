@@ -221,6 +221,13 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX sub_links_customer ON sub_links(customer_id);
   `,
+  `
+  -- 面板 / SOCKS 的月成本(NULL = 没填)和到期时间(毫秒,0 = 没填 / 不限期),只用来记账和提醒续费
+  ALTER TABLE panels ADD COLUMN monthly_cost REAL;
+  ALTER TABLE panels ADD COLUMN expire_at INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE socks_proxies ADD COLUMN monthly_cost REAL;
+  ALTER TABLE socks_proxies ADD COLUMN expire_at INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function openDb(file: string): DB {

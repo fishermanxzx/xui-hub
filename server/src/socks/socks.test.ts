@@ -109,3 +109,17 @@ test('在用的 SOCKS 删不了:有线路拿它当出口时先删线路', () => 
   deleteSocks(db, id);
   assert.deepEqual(listSocks(db), []);
 });
+
+test('SOCKS 的月成本和到期:可选;只传要改的;不合法的不收、也不落库', () => {
+  const db = memoryDb();
+  const id = createSocks(db, { name: 'att', address: '1.2.3.4:5', monthly_cost: 3.5, expire_at: 1_800_000_000_000 });
+  assert.deepEqual([getSocksView(db, id)!.monthly_cost, getSocksView(db, id)!.expire_at], [3.5, 1_800_000_000_000]);
+  updateSocks(db, id, { remark: 'x' });
+  assert.deepEqual([getSocksView(db, id)!.monthly_cost, getSocksView(db, id)!.expire_at], [3.5, 1_800_000_000_000]);
+  updateSocks(db, id, { monthly_cost: null, expire_at: '' });
+  assert.deepEqual([getSocksView(db, id)!.monthly_cost, getSocksView(db, id)!.expire_at], [null, 0]);
+  assert.throws(() => updateSocks(db, id, { name: 'new', monthly_cost: -2 }), /月成本/);
+  assert.equal(getSocksView(db, id)!.name, 'att');
+  const other = createSocks(db, { name: 'b', address: '1.2.3.4:6' });
+  assert.deepEqual([getSocksView(db, other)!.monthly_cost, getSocksView(db, other)!.expire_at], [null, 0]);
+});

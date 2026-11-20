@@ -1,7 +1,7 @@
 // SOCKS 代理的存取(开线路时可选作出口)。账号密码只在服务端使用,对外视图不含密码。
 
 import type { DB } from '../db';
-import { InputError } from '../panels/repo';
+import { InputError, validCost, validExpire } from '../panels/repo';
 
 export interface SocksEndpoint {
   host: string;
@@ -14,6 +14,10 @@ export interface SocksProxy extends SocksEndpoint {
   id: number;
   name: string;
   remark: string;
+  /** 月成本,null = 没填 */
+  monthly_cost: number | null;
+  /** 到期时间(毫秒),0 = 没填 / 不限期 */
+  expire_at: number;
   created_at: number;
   updated_at: number;
 }
@@ -36,6 +40,8 @@ export interface SocksInput {
   /** 地址:socks5://用户:密码@主机:端口、用户:密码@主机:端口、主机:端口:用户:密码、主机:端口;修改时留空 = 不改 */
   address?: unknown;
   remark?: unknown;
+  monthly_cost?: unknown;
+  expire_at?: unknown;
 }
 
 const decode = (v: string) => {
@@ -92,7 +98,19 @@ function name(value: unknown): string {
 }
 
 function rowToProxy(row: any): SocksProxy {
-  return { id: row.id, name: row.name, host: row.host, port: row.port, username: row.username, password: row.password, remark: row.remark, created_at: row.created_at, updated_at: row.updated_at };
+  return {
+    id: row.id,
+    name: row.name,
+    host: row.host,
+    port: row.port,
+    username: row.username,
+    password: row.password,
+    remark: row.remark,
+    monthly_cost: row.monthly_cost ?? null,
+    expire_at: row.expire_at ?? 0,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
 }
 
 function rowToView(row: any): SocksView {
@@ -135,8 +153,8 @@ export function createSocks(db: DB, input: SocksInput, now = Date.now()): number
   assertNameFree(db, n);
   const ep = parseSocksAddress(String(input.address ?? ''));
   const info = db
-    .prepare('INSERT INTO socks_proxies (name, host, port, username, password, remark, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(n, ep.host, ep.port, ep.username, ep.password, String(input.remark ?? '').trim(), now, now);
+    .prepare('INSERT INTO socks_proxies (name, host, port, username, password, remark, monthly_cost, expire_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(n, ep.host, ep.port, ep.username, ep.password, String(input.remark ?? '').trim(), validCost(input.monthly_cost), validExpire(input.expire_at), now, now);
   return Number(info.lastInsertRowid);
 }
 
@@ -144,7 +162,11 @@ export function createSocks(db: DB, input: SocksInput, now = Date.now()): number
  * 校验一次修改,算出要写的值,不落库。endpoint 非空 = 换了地址 / 账号:
  * 走它的线路要先在各自面板上跟着改(lines/open.ts 的 repointSocksLines),改成了再 updateSocks
  */
-export function planSocksUpdate(db: DB, id: number, input: SocksInput): { cur: SocksProxy; name: string; remark: string; endpoint: SocksEndpoint | null } {
+export function planSocksUpdate(
+  db: DB,
+  id: number,
+  input: SocksInput,
+): { cur: SocksProxy; name: string; remark: string; monthly_cost: number | null; expire_at: number; endpoint: SocksEndpoint | null } {
   const cur = getSocks(db, id);
   if (!cur) throw new InputError('SOCKS 不存在');
   const n = input.name === undefined ? cur.name : name(input.name);
@@ -152,17 +174,24 @@ export function planSocksUpdate(db: DB, id: number, input: SocksInput): { cur: S
   const address = String(input.address ?? '').trim();
   const ep = address ? parseSocksAddress(address) : null;
   const changed = ep && (ep.host !== cur.host || ep.port !== cur.port || ep.username !== cur.username || ep.password !== cur.password);
-  return { cur, name: n, remark: input.remark === undefined ? cur.remark : String(input.remark ?? '').trim(), endpoint: changed ? ep : null };
+  return {
+    cur,
+    name: n,
+    remark: input.remark === undefined ? cur.remark : String(input.remark ?? '').trim(),
+    monthly_cost: input.monthly_cost === undefined ? cur.monthly_cost : validCost(input.monthly_cost),
+    expire_at: input.expire_at === undefined ? cur.expire_at : validExpire(input.expire_at),
+    endpoint: changed ? ep : null,
+  };
 }
 
 export function updateSocks(db: DB, id: number, input: SocksInput, now = Date.now()): void {
   const plan = planSocksUpdate(db, id, input);
   const ep = plan.endpoint ?? plan.cur;
   db.prepare(
-    `UPDATE socks_proxies SET name = ?, host = ?, port = ?, username = ?, password = ?, remark = ?, updated_at = ?
+    `UPDATE socks_proxies SET name = ?, host = ?, port = ?, username = ?, password = ?, remark = ?, monthly_cost = ?, expire_at = ?, updated_at = ?
      ${plan.endpoint ? ', check_at = NULL, check_ok = NULL, check_ms = NULL, check_ip = NULL, check_loc = NULL, check_error = NULL' : ''}
      WHERE id = ?`,
-  ).run(plan.name, ep.host, ep.port, ep.username, ep.password, plan.remark, now, id);
+  ).run(plan.name, ep.host, ep.port, ep.username, ep.password, plan.remark, plan.monthly_cost, plan.expire_at, now, id);
 }
 
 /** 还有线路拿它当出口时不让删(删了那些线路所在面板上的出站还指着它,记录却对不上了) */
