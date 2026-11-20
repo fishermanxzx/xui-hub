@@ -10,16 +10,16 @@ const DAY = 86_400_000;
 const GB = 1024 ** 3;
 
 const panels = [
-  { id: 1, name: '香港-1', base_url: 'https://hk1.example.com:2053/panel', inbound_count: 2, client_count: 5, panel_version: '3.11.0', xray_version: '26.10.31' },
-  { id: 2, name: '美国-1', base_url: 'https://us1.example.com:2053/panel', inbound_count: 3, client_count: 4, panel_version: '3.11.0', xray_version: '26.10.31' },
-  { id: 3, name: '日本-1', base_url: 'https://jp1.example.com:2053/panel', inbound_count: 2, client_count: 2, panel_version: '3.10.2', xray_version: '26.10.21' },
+  { id: 1, name: '香港-1', base_url: 'https://hk1.example.com:2053/panel', inbound_count: 2, client_count: 5, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 45, expire_at: now + 52 * DAY },
+  { id: 2, name: '美国-1', base_url: 'https://us1.example.com:2053/panel', inbound_count: 3, client_count: 4, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 30, expire_at: now + 5 * DAY },
+  { id: 3, name: '日本-1', base_url: 'https://jp1.example.com:2053/panel', inbound_count: 2, client_count: 2, panel_version: '3.10.2', xray_version: '26.10.21', monthly_cost: null, expire_at: 0 },
 ].map((p) => ({ ...p, created_at: now - 40 * DAY, checked_at: now - 20_000, check_ok_at: now - 20_000, check_error: null, xray_state: 'running' }));
 
 const socks = [
-  { id: 1, name: '美国家宽-ATT', host: 'isp-us.example.net', port: 10002, username: 'user01', has_password: true, remark: '月付,每月 5 号到期', check: { at: now - 600_000, ok: true, ms: 182, ip: '203.0.113.45', loc: 'US', error: null } },
-  { id: 2, name: '台湾家宽', host: 'tw.example.net', port: 52755, username: 'tw88', has_password: true, remark: '', check: { at: now - 900_000, ok: true, ms: 96, ip: '198.51.100.23', loc: 'TW', error: null } },
-  { id: 3, name: '备用机房', host: '192.0.2.77', port: 1080, username: '', has_password: false, remark: '临时', check: { at: now - 3_600_000, ok: false, ms: 10000, ip: null, loc: null, error: '连接代理失败:超时(10 秒)' } },
-  { id: 4, name: '日本-1 自建', host: 'jp1.example.com', port: 31825, username: 'jp-relay', has_password: true, remark: '日本-1 上自己建的 mixed 入站', check: { at: now - 300_000, ok: true, ms: 64, ip: '192.0.2.31', loc: 'JP', error: null } },
+  { id: 1, name: '美国家宽-ATT', host: 'isp-us.example.net', port: 10002, username: 'user01', has_password: true, remark: '月付', monthly_cost: 15, expire_at: now + 15 * DAY, check: { at: now - 600_000, ok: true, ms: 182, ip: '203.0.113.45', loc: 'US', error: null } },
+  { id: 2, name: '台湾家宽', host: 'tw.example.net', port: 52755, username: 'tw88', has_password: true, remark: '', monthly_cost: 12.5, expire_at: now + 3 * DAY, check: { at: now - 900_000, ok: true, ms: 96, ip: '198.51.100.23', loc: 'TW', error: null } },
+  { id: 3, name: '备用机房', host: '192.0.2.77', port: 1080, username: '', has_password: false, remark: '临时', monthly_cost: null, expire_at: now - 2 * DAY, check: { at: now - 3_600_000, ok: false, ms: 10000, ip: null, loc: null, error: '连接代理失败:超时(10 秒)' } },
+  { id: 4, name: '日本-1 自建', host: 'jp1.example.com', port: 31825, username: 'jp-relay', has_password: true, remark: '日本-1 上自己建的 mixed 入站', monthly_cost: null, expire_at: 0, check: { at: now - 300_000, ok: true, ms: 64, ip: '192.0.2.31', loc: 'JP', error: null } },
 ].map((s) => ({ ...s, created_at: now - 30 * DAY, updated_at: now - DAY }));
 
 let lid = 0;
