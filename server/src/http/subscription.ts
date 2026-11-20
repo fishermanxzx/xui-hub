@@ -12,7 +12,7 @@ import { DEFAULT_CONVERT_OPTIONS, isBrowserUA, isShadowrocketUA, isStashUA, targ
 import { buildLoon, buildQuantumultX } from '../subscription/apple';
 import { applyMihomoTemplate, lowerMode, noLanAccess, withRealityMlkem, withTrojanFingerprint } from '../subscription/mihomo';
 import { parseNodes } from '../subscription/nodes';
-import { buildSingbox, singboxLegacyDns } from '../subscription/singbox';
+import { buildSingbox, singboxIndependentCache, singboxLegacyDns } from '../subscription/singbox';
 import { customerIdByLink } from '../subscription/customLinks';
 import { clientIp, recordSubFetch } from '../subscription/fetchLog';
 import { collectLinks, encodeSubscription, mergeLinks, userinfoHeader, type LinkFetcher } from '../subscription/service';
@@ -71,7 +71,7 @@ function renderOwn(target: Target, links: string[], ua: string | undefined): str
   const nodes = parseNodes(links);
   // 跳过证书校验(与 subconverter 的 scv=true 一致):落地机多用 IP 证书 / 自签证书
   const insecure = DEFAULT_CONVERT_OPTIONS.scv !== 'false';
-  if (target === 'singbox') return JSON.stringify(buildSingbox(nodes, { legacyDns: singboxLegacyDns(ua), insecure }));
+  if (target === 'singbox') return JSON.stringify(buildSingbox(nodes, { legacyDns: singboxLegacyDns(ua), insecure, independentCache: singboxIndependentCache(ua) }));
   if (target === 'quanx') return buildQuantumultX(nodes);
   return buildLoon(nodes, { insecure });
 }
@@ -136,7 +136,7 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
     // support-x25519mlkem768 只给 mihomo 系的客户端:Shadowrocket 带上它后,伪装站不支持后量子的 REALITY 节点连不上
     // (2026-11-20 实测:同一节点 base64 链接能连、带这一项的 Clash 配置连不上),Stash 也不认
     const out = noLanAccess(lowerMode(stash || isShadowrocketUA(ua) ? fp : withRealityMlkem(fp)));
-    return deps.mihomoTemplate(customerName) ? applyMihomoTemplate(out, { stash }) : out;
+    return deps.mihomoTemplate(customerName) ? applyMihomoTemplate(out) : out;
   };
 
   const handle = (fn: (req: Request, res: Response) => Promise<void>) => async (req: Request, res: Response) => {

@@ -18,29 +18,24 @@ const BODY = [
 ].join('\n');
 const BASE = 'port: 7890\nsocks-port: 7891\nallow-lan: true\nmode: Rule\nlog-level: info\nexternal-controller: 127.0.0.1:9090\n' + BODY;
 
-test('替换头部为 Mihomo 模板,去掉 port/socks-port,proxies 之后一字不改', () => {
+test('替换头部为 Mihomo 模板(照代理商的抄),去掉原头部的端口和 external-controller,proxies 之后一字不改', () => {
   const out = applyMihomoTemplate(BASE);
-  assert.ok(out.startsWith('tcp-concurrent: true\nunified-delay: true\nmixed-port: 7890\nallow-lan: false\nmode: rule\n'));
+  assert.ok(out.startsWith('mixed-port: 7890\nallow-lan: false\nmode: rule\nlog-level: silent\nipv6: false\nunified-delay: true\ntcp-concurrent: true\n'));
   assert.ok(out.endsWith(BODY));
   const doc = YAML.parse(out);
-  assert.equal(doc.port, undefined);
-  assert.equal(doc['socks-port'], undefined);
-  assert.equal(doc['mixed-port'], 7890);
-  assert.equal(doc.dns['enhanced-mode'], 'fake-ip');
-  assert.equal(doc.dns['respect-rules'], true);
-  assert.deepEqual(doc.dns.fallback, ['https://dns.google/dns-query', 'tls://1.1.1.1:853']);
-  assert.deepEqual(doc.dns['fallback-filter'].geosite, ['gfw']);
+  assert.deepEqual([doc.port, doc['socks-port'], doc['external-controller'], doc['mixed-port']], [undefined, undefined, undefined, 7890]);
+  // 嗅探、记住所选节点、地理数据
+  assert.deepEqual(doc.sniffer, { enable: true, 'parse-pure-ip': true, 'override-destination': false, 'force-dns-mapping': true, sniff: { TLS: { ports: [443] }, HTTP: { ports: [80, 8080, 8443] } } });
+  assert.deepEqual([doc['find-process-mode'], doc.profile, doc['geodata-mode'], doc['geo-auto-update']], ['strict', { 'store-selected': true }, true, false]);
+  assert.deepEqual(Object.keys(doc['geox-url']), ['geoip', 'geosite', 'mmdb']);
+  // DNS:fake-ip;国外 DoH 按规则走代理,国内和局域网域名用国内 DoT,节点域名用国内 DoT
+  assert.deepEqual([doc.dns['enhanced-mode'], doc.dns['respect-rules'], doc.dns.ipv6], ['fake-ip', true, false]);
+  assert.deepEqual(doc.dns.nameserver, ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query']);
+  assert.deepEqual(doc.dns['proxy-server-nameserver'], ['tls://223.5.5.5:853', 'tls://120.53.53.53:853']);
+  assert.deepEqual(doc.dns['nameserver-policy'], { 'geosite:cn,private': ['tls://223.5.5.5:853', 'tls://120.53.53.53:853'] });
+  assert.equal(doc.dns.fallback, undefined);
   assert.equal(doc.rules.length, 2);
   assert.equal(doc.proxies[0].name, '🇺🇸 us-1');
-});
-
-test('Stash 用自己的模板:没有 Mihomo 专有项,DNS 走 DoH', () => {
-  const doc = YAML.parse(applyMihomoTemplate(BASE, { stash: true }));
-  assert.equal(doc['tcp-concurrent'], undefined);
-  assert.equal(doc['unified-delay'], undefined);
-  assert.equal(doc['mixed-port'], 7890);
-  assert.deepEqual(doc.dns.nameserver, ['https://doh.pub/dns-query', 'https://dns.alidns.com/dns-query']);
-  assert.equal(doc.dns['fake-ip-filter'], undefined);
 });
 
 test('原头部里模板没覆盖的项保留', () => {
@@ -54,11 +49,9 @@ test('不是 Clash 配置时原样返回', () => {
   assert.equal(applyMihomoTemplate('no proxies here'), 'no proxies here');
 });
 
-test('不开局域网访问:两套模板都是 allow-lan: false、不写 bind-address;模板关掉时 subconverter 的头部也改', () => {
-  for (const stash of [false, true]) {
-    const doc = YAML.parse(applyMihomoTemplate(BASE, { stash }));
-    assert.deepEqual([doc['allow-lan'], doc['bind-address']], [false, undefined]);
-  }
+test('不开局域网访问:模板是 allow-lan: false、不写 bind-address;模板关掉时 subconverter 的头部也改', () => {
+  const doc = YAML.parse(applyMihomoTemplate(BASE));
+  assert.deepEqual([doc['allow-lan'], doc['bind-address']], [false, undefined]);
   // proxies 之后(节点、规则)不动
   const off = noLanAccess(`${BASE}allow-lan: true\n`);
   assert.ok(off.startsWith('port: 7890\nsocks-port: 7891\nallow-lan: false\nmode: Rule\n'));
