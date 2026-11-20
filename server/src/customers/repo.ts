@@ -5,6 +5,7 @@ import type { DB } from '../db';
 import { InputError } from '../panels/repo';
 import { customLinksByCustomer, setCustomLinks } from '../subscription/customLinks';
 import { validTemplate } from '../subscription/templates';
+import type { RouteHop } from '../lines/routes';
 import { setUpstreams, upstreamsByCustomer, validUpstreamMode, type UpstreamMode, type UpstreamView } from '../subscription/upstream';
 
 export type LineKind = 'direct' | 'relay';
@@ -29,6 +30,9 @@ export interface Line {
   exit_label: string;
   /** 自定义节点名:订阅和分享链接里代替面板生成的名字,空 = 用面板的 */
   node_name: string;
+  /** 面板上实际的出口(按 Xray 路由规则顺序,同步时读);null = 还没读到 */
+  routes: RouteHop[] | null;
+  routes_at: number;
   created_at: number;
   /** 最近一次同步到的客户端流量与状态 */
   up: number;
@@ -140,6 +144,16 @@ const LINE_SQL = `
   LEFT JOIN panels ep ON ep.id = l.exit_panel_id
   LEFT JOIN socks_proxies es ON es.id = l.exit_socks_id`;
 
+function parseRoutes(v: unknown): RouteHop[] | null {
+  if (typeof v !== 'string' || !v) return null;
+  try {
+    const r = JSON.parse(v);
+    return Array.isArray(r) ? r : null;
+  } catch {
+    return null;
+  }
+}
+
 function toLine(row: any): Line {
   return {
     id: row.id,
@@ -159,6 +173,8 @@ function toLine(row: any): Line {
     exit_socks_name: row.exit_socks_name ?? null,
     exit_label: row.exit_label,
     node_name: row.node_name ?? '',
+    routes: parseRoutes(row.routes),
+    routes_at: row.routes_at ?? 0,
     created_at: row.created_at,
     up: row.up ?? 0,
     down: row.down ?? 0,
@@ -375,6 +391,11 @@ export function addLine(db: DB, l: LineInsert, now = Date.now()): Line {
 }
 
 /** 改线路的自定义节点名(只改这里的记录,面板上不动) */
+/** 同步时记下线路实际的出口 */
+export function setLineRoutes(db: DB, id: number, routes: RouteHop[], now = Date.now()): void {
+  db.prepare('UPDATE lines SET routes = ?, routes_at = ? WHERE id = ?').run(JSON.stringify(routes), now, id);
+}
+
 export function setLineName(db: DB, id: number, name: string): void {
   if (!db.prepare('UPDATE lines SET node_name = ? WHERE id = ?').run(name, id).changes) throw new InputError('线路不存在');
 }

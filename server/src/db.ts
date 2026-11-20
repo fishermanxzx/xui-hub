@@ -256,6 +256,11 @@ export const MIGRATIONS: string[] = [
   -- 1 = 订阅里的流量和到期(subscription-userinfo)用外部订阅给的
   ALTER TABLE customers ADD COLUMN upstream_userinfo INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- 线路实际的出口:同步时读面板的 Xray 路由算出来(JSON 数组,见 lines/routes.ts),NULL = 还没读到
+  ALTER TABLE lines ADD COLUMN routes TEXT;
+  ALTER TABLE lines ADD COLUMN routes_at INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function openDb(file: string): DB {

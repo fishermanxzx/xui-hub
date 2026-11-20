@@ -79,9 +79,18 @@ const CONDITIONS = ['domain', 'ip', 'port', 'sourcePort', 'source', 'protocol', 
 /** 只按入站匹配(或不限入站)的兜底规则,没有别的条件 */
 const plainRule = (r: any) => CONDITIONS.every((k) => r?.[k] == null || (Array.isArray(r[k]) && !r[k].length) || r[k] === '');
 
-/** 是不是我们给某个客户端加的规则:只有 inboundTag + user 两个条件 */
+/**
+ * 是不是我们给某个客户端加的规则:只有 inboundTag + user 两个条件。
+ * 带别的条件的(比如在面板上手配的「这个客户端的流媒体走另一个出口」)不算,换出口 / 删线路都不碰它
+ */
 const isUserRule = (r: any, inboundTag: string, email: string) =>
-  Array.isArray(r?.inboundTag) && r.inboundTag.length === 1 && r.inboundTag[0] === inboundTag && Array.isArray(r?.user) && r.user.length === 1 && r.user[0] === email;
+  Array.isArray(r?.inboundTag) &&
+  r.inboundTag.length === 1 &&
+  r.inboundTag[0] === inboundTag &&
+  Array.isArray(r?.user) &&
+  r.user.length === 1 &&
+  r.user[0] === email &&
+  CONDITIONS.every((k) => k === 'user' || r[k] == null || (Array.isArray(r[k]) && !r[k].length) || r[k] === '');
 
 /** 会接住这个入站流量的兜底规则:不限入站、或点名这个入站,且没有别的条件 */
 const catchesInbound = (r: any, inboundTag: string) => r?.enabled !== false && plainRule(r) && (r?.outboundTag || r?.balancerTag) && (!r?.inboundTag?.length || r.inboundTag.includes(inboundTag));

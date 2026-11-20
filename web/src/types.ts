@@ -115,6 +115,14 @@ export type ClientProtocol = 'vless' | 'hy2';
 export type LineKind = 'direct' | 'relay';
 export type CustomerState = 'active' | 'expired' | 'over_quota';
 
+/** 面板路由规则里线路的一个出口(见 server/src/lines/routes.ts) */
+export interface RouteHop {
+  /** 条件:domain / ip / port / network / protocol / source / sourcePort / attrs;空 = 其余流量 */
+  when: Record<string, string[]>;
+  to: { kind: 'direct' | 'block' | 'socks' | 'proxy' | 'balancer' | 'unknown'; tag: string; address?: string; socks_id?: number };
+  fallback: boolean;
+}
+
 export interface Line {
   id: number;
   customer_id: number;
@@ -142,6 +150,9 @@ export interface Line {
   auto_disabled: boolean;
   last_online: number;
   synced_at: number | null;
+  /** 面板上实际的出口(按路由规则顺序,每分钟同步时读);null = 还没读到 */
+  routes: RouteHop[] | null;
+  routes_at: number;
 }
 
 /** 客户的一个外部订阅(别处的订阅地址) */
