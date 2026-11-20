@@ -232,6 +232,28 @@ export const MIGRATIONS: string[] = [
   -- 线路的自定义节点名:订阅和分享链接里代替面板生成的名字,空 = 用面板的
   ALTER TABLE lines ADD COLUMN node_name TEXT NOT NULL DEFAULT '';
   `,
+  `
+  -- 外部订阅:客户拉订阅时把这些地址里的节点一起给出去(或只给这些,见 customers.upstream_mode)。
+  -- links / nodes / skipped / userinfo / ok_at 是上次成功取到的结果,取不到时照常用;tried_at / error 是上次尝试
+  CREATE TABLE upstream_subs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    links TEXT NOT NULL DEFAULT '[]',
+    nodes INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    userinfo TEXT NOT NULL DEFAULT '',
+    ok_at INTEGER NOT NULL DEFAULT 0,
+    tried_at INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX upstream_subs_customer ON upstream_subs(customer_id);
+  -- merge = 外部订阅的节点和自己线路的一起给;replace = 只给外部订阅的
+  ALTER TABLE customers ADD COLUMN upstream_mode TEXT NOT NULL DEFAULT 'merge';
+  -- 1 = 订阅里的流量和到期(subscription-userinfo)用外部订阅给的
+  ALTER TABLE customers ADD COLUMN upstream_userinfo INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function openDb(file: string): DB {

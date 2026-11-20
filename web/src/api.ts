@@ -74,6 +74,7 @@ export const api = {
   openLine: (id: number, body: OpenLineInput) => call<OpenedLine>('POST', `/api/customers/${id}/lines`, body),
   lineLinks: (id: number, lineId: number) => call<{ links: string[] }>('GET', `/api/customers/${id}/lines/${lineId}/links`),
   renameLine: (id: number, lineId: number, node_name: string) => call<Line>('PATCH', `/api/customers/${id}/lines/${lineId}`, { node_name }),
+  refreshUpstreams: (id: number) => call<Customer>('POST', `/api/customers/${id}/upstreams/refresh`),
   /** force:面板上删不掉(连不上、已经不在了)也把这里的线路记录删掉 */
   deleteLine: (id: number, lineId: number, force = false) => call('DELETE', `/api/customers/${id}/lines/${lineId}${force ? '?force=1' : ''}`),
   /** 把面板上已有的客户端归到客户名下(成为直连线路),面板上不改 */

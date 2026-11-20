@@ -43,7 +43,7 @@ const proto = (p: string) => PROTOCOL[p] ?? p;
 const editing = ref<Customer | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', remark: '', quotaGb: '', expire: '', monthlyReset: false, resetDay: '', limitDevices: '', template: '', customTemplate: '', subLinks: '' });
+const form = ref({ name: '', remark: '', quotaGb: '', expire: '', monthlyReset: false, resetDay: '', limitDevices: '', template: '', customTemplate: '', subLinks: '', upstreamUrls: '', upstreamReplace: false, upstreamUserinfo: false });
 /** 内置的 Clash 订阅模板;第一次打开表单时取 */
 const templates = ref<SubTemplate[]>([]);
 /** 内置模板的名字和说明按界面语言给(按模板 id 查文案);语言文件里没有的新模板用服务端给的 */
@@ -57,7 +57,7 @@ function openForm(c: Customer | null) {
   editing.value = c;
   const tpl = c?.sub_template ?? '';
   const custom = /^https:/.test(tpl);
-  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', monthlyReset: !!c?.reset_day, resetDay: c?.reset_day ? String(c.reset_day) : '', limitDevices: c?.limit_devices ? String(c.limit_devices) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '', subLinks: (c?.sub_links ?? []).join('\n') };
+  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', monthlyReset: !!c?.reset_day, resetDay: c?.reset_day ? String(c.reset_day) : '', limitDevices: c?.limit_devices ? String(c.limit_devices) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '', subLinks: (c?.sub_links ?? []).join('\n'), upstreamUrls: (c?.upstreams ?? []).map((u) => u.url).join('\n'), upstreamReplace: c?.upstream_mode === 'replace', upstreamUserinfo: !!c?.upstream_userinfo };
   showForm.value = true;
 }
 
@@ -82,13 +82,15 @@ function opsNote(ops: EnforceOp[]): string {
 
 async function submit() {
   saving.value = true;
-  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template, sub_links: form.value.subLinks.split('\n').map((x) => x.trim()).filter(Boolean) };
+  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template, sub_links: form.value.subLinks.split('\n').map((x) => x.trim()).filter(Boolean), upstream_urls: form.value.upstreamUrls.split('\n').map((x) => x.trim()).filter(Boolean), upstream_mode: form.value.upstreamReplace ? ('replace' as const) : ('merge' as const), upstream_userinfo: form.value.upstreamUserinfo };
   try {
     const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
     showForm.value = false;
     const ops = (saved as { ops?: EnforceOp[] }).ops ?? [];
-    const note = opsNote(ops);
-    toast(note ? t('customers.savedNote', { note }) : t('customers.saved'), ops.some((o) => !o.ok) ? 'err' : 'ok');
+    // 新填的外部订阅保存时马上取了一次:没取到的提醒一下(照样保存了,原因在客户卡片上)
+    const missed = (saved.upstreams ?? []).filter((u) => !u.nodes).length;
+    const note = [opsNote(ops), missed ? t('customers.upstreamMissed', { n: missed }) : ''].filter(Boolean).join('; ');
+    toast(note ? t('customers.savedNote', { note }) : t('customers.saved'), ops.some((o) => !o.ok) || missed ? 'err' : 'ok');
     await load();
     // 新建完直接进开线路
     if (!editing.value) openLineFor(customers.value.find((c) => c.id === saved.id) ?? saved);
@@ -338,6 +340,30 @@ async function removeLine(line: Line) {
   }
 }
 
+const refreshing = ref<number | null>(null);
+async function refreshUpstreams(c: Customer) {
+  refreshing.value = c.id;
+  try {
+    const fresh = await api.refreshUpstreams(c.id);
+    const missed = fresh.upstreams.filter((u) => u.error).length;
+    toast(missed ? t('customers.upstreamRefreshMissed', { n: missed }) : t('customers.upstreamRefreshed'), missed ? 'err' : 'ok');
+    await load();
+  } catch (e) {
+    toastError(e);
+  } finally {
+    refreshing.value = null;
+  }
+}
+
+/** 外部订阅地址只显示域名(完整地址在悬停提示里) */
+function upstreamHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
 function exitText(l: Line): string {
   if (l.kind === 'direct') return t('customers.direct');
   if (l.exit_kind === 'socks') return t('customers.relayToSocks', { name: l.exit_socks_name ?? t('customers.gone') });
@@ -400,6 +426,18 @@ function exitText(l: Line): string {
           <code :title="customSubUrl(c, l)">{{ customSubUrl(c, l) }}</code>
           <button class="link" @click="copyText(customSubUrl(c, l), t('customers.subCopied', { name: c.name }))">{{ t('common.copy') }}</button>
         </div>
+        <div v-for="u in c.upstreams" :key="u.id" class="custom-link small">
+          <span class="muted">{{ t('customers.upstream') }}</span>
+          <code :title="u.url">{{ upstreamHost(u.url) }}</code>
+          <span :class="u.nodes ? '' : 'text-err'">{{ t('customers.upstreamNodes', { n: u.nodes }) }}</span>
+          <span v-if="u.skipped" class="muted" :title="t('customers.upstreamSkippedHint')">{{ t('customers.upstreamSkipped', { n: u.skipped }) }}</span>
+          <span class="muted">{{ u.ok_at ? t('customers.upstreamOk', { ago: fmtAgo(u.ok_at) }) : t('customers.upstreamNever') }}</span>
+          <span v-if="u.error" class="text-warn upstream-err" :title="u.error">{{ t('customers.upstreamErr', { error: u.error }) }}</span>
+        </div>
+        <div v-if="c.upstreams.length" class="custom-link small">
+          <span class="muted">{{ c.upstream_mode === 'replace' ? t('customers.upstreamReplace') : t('customers.upstreamMerge') }}<template v-if="c.upstream_userinfo"> · {{ t('customers.upstreamUserinfoOn') }}</template></span>
+          <button class="link" :disabled="refreshing === c.id" @click="refreshUpstreams(c)">{{ refreshing === c.id ? t('customers.upstreamRefreshing') : t('customers.upstreamRefresh') }}</button>
+        </div>
       </div>
       <ul v-if="c.lines.length" class="lines">
         <li v-for="l in c.lines" :key="l.id" class="line">
@@ -461,6 +499,15 @@ function exitText(l: Line): string {
         <textarea v-model="form.subLinks" rows="2" spellcheck="false" :placeholder="t('customers.subLinksPlaceholder')" />
         <span class="muted small">{{ t('customers.subLinksHint') }}</span>
       </label>
+      <label class="field">
+        {{ t('customers.upstreams') }}
+        <textarea v-model="form.upstreamUrls" rows="2" spellcheck="false" :placeholder="t('customers.upstreamsPlaceholder')" />
+        <span class="muted small">{{ t('customers.upstreamsHint') }}</span>
+      </label>
+      <div v-if="form.upstreamUrls.trim()" class="field">
+        <label class="row small check"><input v-model="form.upstreamReplace" type="checkbox" />{{ t('customers.upstreamReplaceLabel') }}</label>
+        <label class="row small check"><input v-model="form.upstreamUserinfo" type="checkbox" />{{ t('customers.upstreamUserinfoLabel') }}</label>
+      </div>
       <p class="muted small hint">{{ t('customers.formHint') }}</p>
     </form>
     <template #footer>
@@ -703,6 +750,12 @@ h2 {
   min-width: 0;
 }
 .custom-link code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.upstream-err {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

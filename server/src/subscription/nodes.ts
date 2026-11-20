@@ -1,6 +1,7 @@
 // 把面板给的分享链接解析成结构化节点,供 sing-box / Quantumult X / Loon 生成器使用。
-// 支持 vless(reality / TLS / 明文)、vmess、trojan(TLS)和 hysteria2(salamander 混淆);
-// vless / vmess / trojan 的传输层认 tcp、ws、grpc、httpupgrade。其他协议和传输返回 null,由调用方跳过。
+// 支持 vless(reality / TLS / 明文)、vmess、trojan(TLS)、hysteria2(salamander 混淆)、shadowsocks(可带 obfs / v2ray-plugin 插件)
+// 和 tuic;vless / vmess / trojan 的传输层认 tcp、ws、grpc、httpupgrade。其他协议和传输返回 null,由调用方跳过。
+// ss / tuic 多见于外部订阅(见 upstream.ts),面板自己的线路用不到。
 
 /** 传输层和 TLS 参数(vless / vmess / trojan 共用) */
 export interface Transport {
@@ -57,7 +58,27 @@ export interface Hysteria2Node extends Endpoint {
   insecure: boolean;
 }
 
-export type ProxyNode = VlessNode | VmessNode | TrojanNode | Hysteria2Node;
+export interface ShadowsocksNode extends Endpoint {
+  type: 'shadowsocks';
+  method: string;
+  password: string;
+  /** SIP003 插件:obfs-local(simple-obfs)或 v2ray-plugin,参数如 obfs=http;obfs-host=x */
+  plugin?: string;
+  pluginOpts?: Record<string, string>;
+}
+
+export interface TuicNode extends Endpoint {
+  type: 'tuic';
+  uuid: string;
+  password: string;
+  sni?: string;
+  alpn: string[];
+  congestion?: string;
+  udpRelayMode?: string;
+  insecure: boolean;
+}
+
+export type ProxyNode = VlessNode | VmessNode | TrojanNode | Hysteria2Node | ShadowsocksNode | TuicNode;
 
 function decode(value: string): string {
   try {
@@ -114,9 +135,57 @@ function parseVmess(body: string): VmessNode | null {
   };
 }
 
+/** base64 / base64url,不带 = 也行 */
+function b64(text: string): string | null {
+  if (!/^[A-Za-z0-9+/_-]+=*$/.test(text)) return null;
+  return Buffer.from(text.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+}
+
+/** SIP003 插件串 "obfs-local;obfs=http;obfs-host=x" → 插件名 + 参数;simple-obfs 是 obfs-local 的旧名 */
+function parsePlugin(value: string | undefined): Pick<ShadowsocksNode, 'plugin' | 'pluginOpts'> | null {
+  if (!value) return {};
+  const [name, ...parts] = value.split(';');
+  const plugin = name === 'simple-obfs' ? 'obfs-local' : name;
+  if (plugin !== 'obfs-local' && plugin !== 'v2ray-plugin') return null;
+  const pluginOpts: Record<string, string> = {};
+  for (const p of parts) {
+    const eq = p.indexOf('=');
+    if (p) pluginOpts[eq < 0 ? p : p.slice(0, eq)] = eq < 0 ? 'true' : p.slice(eq + 1);
+  }
+  return { plugin, pluginOpts };
+}
+
+/**
+ * ss://:SIP002 写法 ss://<base64url(method:password) 或百分号编码的 method:password>@host:port/?plugin=...#名称,
+ * 也认旧写法 ss://<base64(method:password@host:port)>#名称
+ */
+function parseShadowsocks(link: string): ShadowsocksNode | null {
+  const hash = link.indexOf('#');
+  const name = hash < 0 ? '' : decode(link.slice(hash + 1));
+  let rest = link.slice('ss://'.length, hash < 0 ? undefined : hash);
+  const q = rest.indexOf('?');
+  const query = new URLSearchParams(q < 0 ? '' : rest.slice(q + 1));
+  rest = (q < 0 ? rest : rest.slice(0, q)).replace(/\/$/, '');
+  if (!rest.includes('@')) rest = b64(rest) ?? '';
+  const at = rest.lastIndexOf('@');
+  if (at < 0) return null;
+  const user = rest.slice(0, at);
+  const userinfo = user.includes(':') ? decode(user) : (b64(decode(user)) ?? '');
+  const colon = userinfo.indexOf(':');
+  const hostPort = rest.slice(at + 1);
+  const portAt = hostPort.lastIndexOf(':');
+  const server = hostPort.slice(0, portAt).replace(/^\[|\]$/g, '');
+  const port = Number(hostPort.slice(portAt + 1));
+  if (colon < 1 || portAt < 0 || !server || !validPort(port)) return null;
+  const plugin = parsePlugin(query.get('plugin') ?? undefined);
+  if (!plugin) return null;
+  return { type: 'shadowsocks', name: name || `${server}:${port}`, server, port, method: userinfo.slice(0, colon), password: userinfo.slice(colon + 1), ...plugin };
+}
+
 export function parseNode(link: string): ProxyNode | null {
   const scheme = link.slice(0, link.indexOf('://')).toLowerCase();
   if (scheme === 'vmess') return parseVmess(link.slice('vmess://'.length));
+  if (scheme === 'ss') return parseShadowsocks(link);
   let url: URL;
   try {
     url = new URL(link);
@@ -138,6 +207,21 @@ export function parseNode(link: string): ProxyNode | null {
     const password = secret + (url.password ? `:${decode(url.password)}` : '');
     if (!password) return null;
     return { type: 'hysteria2', ...base, password, sni, alpn, obfs: opt('obfs'), obfsPassword: opt('obfs-password'), insecure };
+  }
+  if (scheme === 'tuic') {
+    const password = decode(url.password);
+    if (!secret || !password) return null;
+    return {
+      type: 'tuic',
+      ...base,
+      uuid: secret,
+      password,
+      sni,
+      alpn,
+      congestion: opt('congestion_control'),
+      udpRelayMode: opt('udp_relay_mode'),
+      insecure: insecure || truthy(q.get('allow_insecure')),
+    };
   }
   if (scheme !== 'vless' && scheme !== 'trojan') return null;
 

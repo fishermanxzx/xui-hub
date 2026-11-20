@@ -35,19 +35,36 @@ Authorization: Bearer xh_……
 | `sub_token` | 订阅链接是 `https://<后台地址>/sub/<sub_token>` |
 | `sub_url` | 配了 `SUB_BASE_URL` 时是完整的订阅链接,否则为 `null` |
 | `sub_links` | 自定义订阅链接:路径(可带参数)的数组,如 `/s/zhangsan`、`/getprofile?name=a&token=b`。访问 `https://<订阅地址>/<路径>` 和访问 `sub_url` 一样。路径不分大小写、忽略末尾的 `/`;链接里写了的参数请求里要有且相等,多带的参数不影响。新建 / 修改时传数组整组替换(也可以传完整网址,只取路径和参数),空数组 = 清空;每位客户最多 20 个,不能和别的客户重复,不能占用 `/api`、`/mcp`、`/assets` 等本程序自己用的路径。重置订阅链接不影响它们 |
+| `upstreams` | 只读:外部订阅,每项 `url`、`nodes`(上次取到的节点数)、`skipped`(协议不支持、没出的节点数)、`userinfo`(那边给的流量和到期:`upload` / `download` / `total` 字节,`expire` 秒)、`ok_at` / `tried_at`(上次成功 / 上次尝试,毫秒)、`error`(上次没取到的原因) |
+| `upstream_urls` | 只写:外部订阅地址的数组(或按行分隔的字符串),整组替换,空数组 = 清空,最多 10 个。地址没变的保留上次取到的结果;新填的保存后马上取一次,取不到也照样保存 |
+| `upstream_mode` | `merge`(默认):外部订阅的节点和自己线路的一起给;`replace`:只给外部订阅的节点 |
+| `upstream_userinfo` | `true`:订阅里的流量和到期(`subscription-userinfo`)和自助页上显示的用外部订阅给的;停用仍按这里的额度和到期 |
 | `lines` | 线路列表 |
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/customers` | 全部客户 |
-| POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_devices`、`sub_template`、`sub_links` |
+| POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_devices`、`sub_template`、`sub_links`、`upstream_urls`、`upstream_mode`、`upstream_userinfo` |
 | PATCH | `/customers/:id` | 修改,只传要改的字段。改了额度 / 到期会立刻停用或恢复他的客户端 |
 | POST | `/customers/:id/renew` | 续期。请求体:`days`(1-3650),`reset_usage`(可选,`true` 时顺带把流量清零)。在现在的到期日上加天数,已到期或没设到期日的从现在起算 |
 | POST | `/customers/:id/reset-usage` | 把已用流量清零 |
 | POST | `/customers/:id/sub-token` | 重置订阅链接,旧链接立即失效 |
+| POST | `/customers/:id/upstreams/refresh` | 外部订阅马上重新取一遍,返回客户(看 `upstreams`) |
 | GET | `/customers/:id/devices` | 拉过订阅的设备(`id`、`ua`、`ip`、`first_at`、`last_at`) |
 | DELETE | `/customers/:id/devices/:deviceId` | 移除一台设备,让出名额 |
 | DELETE | `/customers/:id` | 删除客户,连同他在各面板上的客户端 |
+
+### 外部订阅怎么取
+
+- 客户拉订阅(或打开自助页)时去取,60 秒内取过的直接用上次的结果。请求带 `User-Agent: v2rayN/7.10.5` 和 `X-Xui-Hub-Upstream: 1`,最多等 10 秒、读 5 MB。
+- 那边回的内容可以是:
+  - 节点链接,每行一个(明文或整体 base64);
+  - Clash / Mihomo 配置(取 `proxies`);
+  - sing-box 配置(取 `outbounds`)。
+- 认得的协议:vless、vmess、trojan、ss、hysteria2、tuic、anytls,参数(REALITY、flow、指纹、传输、hy2 混淆等)都带上。其他协议跳过,计入 `skipped`。
+- 节点链接原样进订阅,和自己线路的节点走同一套输出,每种客户端格式都有。sing-box / Quantumult X / Loon 写不出的协议或传输会跳过,和自己线路的规则一样。
+- 取不到(连不上、非 2xx、内容里没有节点)时用上次取到的;一次都没取到过的算作取不到的来源。全部来源都取不到时订阅回 502,客户端保留原来的配置。
+- 收到带 `X-Xui-Hub-Upstream` 头的订阅请求只给自己线路的节点,不再往外取。两边 xui-hub 互相配成外部订阅时不会绕圈。
 
 ## 线路
 

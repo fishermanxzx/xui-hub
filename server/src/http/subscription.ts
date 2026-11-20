@@ -2,6 +2,7 @@
 // 客户另配的自定义链接(任意路径,可带参数)和 /sub/<token> 等价,见 subscription/customLinks.ts。
 // 返回该客户全部线路的统一订阅(全局用量),按 UA 返回 Clash / sing-box / base64 等格式,?target= 可强制指定。
 // 非 base64 格式由内部 subconverter 转换,它带内部密钥回源 /internal/nodes/:id 取原始节点。
+// 客户配了外部订阅的,那边的节点也在里面(和自己线路的一起给,或只给那边的),见 subscription/upstream.ts。
 
 import { Router, type Request, type Response } from 'express';
 import type { DB } from '../db';
@@ -15,6 +16,7 @@ import { buildSingbox, singboxLegacyDns } from '../subscription/singbox';
 import { customerIdByLink } from '../subscription/customLinks';
 import { clientIp, recordSubFetch } from '../subscription/fetchLog';
 import { collectLinks, encodeSubscription, mergeLinks, userinfoHeader, type LinkFetcher } from '../subscription/service';
+import { cachedUpstream, fetchUpstream, HOP_HEADER, refreshUpstreams, userinfoText, type UpstreamFetcher } from '../subscription/upstream';
 import { renderSubPage } from './subPage';
 import { templateUrl } from '../subscription/templates';
 import { admitDevice, deleteDevice, deviceKey, listDevices } from '../subscription/devices';
@@ -32,6 +34,8 @@ export interface SubscriptionDeps {
   mihomoTemplate: (customerName: string) => boolean;
   /** 订阅链接的地址前缀(SUB_BASE_URL);空 = 按这次请求的地址拼 */
   subBaseUrl?: string;
+  /** 拉外部订阅;默认直接请求 */
+  upstreamFetcher?: UpstreamFetcher;
 }
 
 /** 客户端自动更新间隔(小时) */
@@ -87,14 +91,35 @@ function sendOwn(res: Response, target: Target, body: string): void {
 
 export function subscriptionRouter(deps: SubscriptionDeps): Router {
   const { db } = deps;
+  const upstreamFetcher = deps.upstreamFetcher ?? fetchUpstream;
   const r = Router();
 
-  const nodes = async (c: CustomerView) => {
+  /**
+   * 客户的节点:自己各线路的,加上外部订阅的(upstream = false 时不带外部订阅:请求来自别处的 xui-hub 拉外部订阅,见 HOP_HEADER)。
+   * 外部订阅 60 秒内取过就用存着的,取不到也用上次成功的
+   */
+  const nodes = async (c: CustomerView, upstream = true) => {
     if (c.state !== 'active') return [];
-    const lines = await collectLinks(db, c.id, deps.fetcher);
-    // 全部线路都取不到时报错(502):客户端保留原来的配置,不会被一份空订阅冲掉
-    if (lines.length && lines.every((l) => l.error)) throw new Error(`全部 ${lines.length} 条线路都取不到节点`);
-    return mergeLinks(lines);
+    const withUpstream = upstream && c.upstreams.length > 0;
+    const [lines] = await Promise.all([
+      withUpstream && c.upstream_mode === 'replace' ? [] : collectLinks(db, c.id, deps.fetcher),
+      withUpstream ? refreshUpstreams(db, c.id, upstreamFetcher) : undefined,
+    ]);
+    const up = withUpstream ? cachedUpstream(db, c.id) : { links: [], total: 0, failed: 0 };
+    // 全部来源(线路 + 外部订阅)都取不到时报错(502):客户端保留原来的配置,不会被一份空订阅冲掉
+    const sources = lines.length + up.total;
+    const failed = lines.filter((l) => l.error).length + up.failed;
+    if (sources && failed === sources) throw new Error(up.total ? `全部 ${sources} 个来源(线路 / 外部订阅)都取不到节点` : `全部 ${sources} 条线路都取不到节点`);
+    return [...new Set([...mergeLinks(lines), ...up.links])];
+  };
+
+  /** 请求来自别处 xui-hub 拉外部订阅:只给自己线路的节点 */
+  const isHop = (req: Request) => !!req.get(HOP_HEADER);
+
+  /** 订阅里的流量和到期:客户设了用外部订阅的、那边也给了,就用那边的;否则用自己的 */
+  const userinfoOf = (c: CustomerView, upstream: boolean) => {
+    const theirs = upstream && c.upstream_userinfo && c.upstreams.length ? cachedUpstream(db, c.id).userinfo : null;
+    return theirs ? userinfoText(theirs) : userinfoHeader(c);
   };
 
   /** ?target= 优先;其次按 UA;浏览器给节点链接(纯文本直接显示);认不出的其他 UA 给 Clash */
@@ -132,18 +157,34 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
         res.status(404).type('text/plain').send('not found');
         return;
       }
-      res.type('text/plain; charset=utf-8').send(encodeSubscription(await nodes(customer)));
+      // hop=1:原请求来自别处 xui-hub 拉外部订阅,这里同样不带外部订阅
+      res.type('text/plain; charset=utf-8').send(encodeSubscription(await nodes(customer, req.query.hop !== '1')));
     }),
   );
 
   /** 给这位客户回订阅(/sub/<token> 和自定义链接都走这里) */
   const subscribe = async (customer: CustomerView, req: Request, res: Response): Promise<void> => {
     const ua = req.get('user-agent');
+    const upstream = !isHop(req);
+    // 外部订阅先取一遍(60 秒内取过的不取):流量头、自助页和节点都用这一份
+    const refresh = async () => {
+      if (upstream && customer.state === 'active' && customer.upstreams.length) await refreshUpstreams(db, customer.id, upstreamFetcher);
+    };
     // 浏览器直接打开(没指定格式):给客户看的自助页。?target=base64 仍然拿节点
     if (req.query.target === undefined && isBrowserUA(ua) && (req.get('accept') ?? '').includes('text/html')) {
       const base = deps.subBaseUrl || `${req.protocol}://${req.get('host')}`;
+      await refresh();
+      const up = customer.upstreams.length ? cachedUpstream(db, customer.id) : null;
       res.set({ 'Cache-Control': 'no-store', 'Content-Type': 'text/html; charset=utf-8' });
-      res.send(renderSubPage({ customer, url: `${base}/sub/${customer.sub_token}`, devices: listDevices(db, customer.id), removed: req.query.removed === '1' }));
+      res.send(
+        renderSubPage({
+          customer,
+          url: `${base}/sub/${customer.sub_token}`,
+          devices: listDevices(db, customer.id),
+          removed: req.query.removed === '1',
+          upstream: up ? { nodes: up.links.length, replace: customer.upstream_mode === 'replace', userinfo: customer.upstream_userinfo ? up.userinfo : null } : undefined,
+        }),
+      );
       return;
     }
     const target = requestedTarget(req);
@@ -155,9 +196,10 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
       return;
     }
     touchSubFetch(db, customer.id, ua ?? '');
-    res.set(formatHeaders(target, customer.name, userinfoHeader(customer)));
+    await refresh();
+    res.set(formatHeaders(target, customer.name, userinfoOf(customer, upstream)));
     if (target === 'base64') {
-      res.send(encodeSubscription(await nodes(customer)));
+      res.send(encodeSubscription(await nodes(customer, upstream)));
       return;
     }
     if (customer.state !== 'active') {
@@ -165,14 +207,14 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
       return;
     }
     if (OWN_TARGETS.has(target)) {
-      sendOwn(res, target, renderOwn(target, await nodes(customer), ua));
+      sendOwn(res, target, renderOwn(target, await nodes(customer, upstream), ua));
       return;
     }
     if (!deps.convert) {
       res.status(503).type('text/plain').send('converter unavailable');
       return;
     }
-    const source = `${deps.internalBaseUrl}/internal/nodes/${customer.id}?key=${encodeURIComponent(deps.internalSecret)}`;
+    const source = `${deps.internalBaseUrl}/internal/nodes/${customer.id}?key=${encodeURIComponent(deps.internalSecret)}${upstream ? '' : '&hop=1'}`;
     res.send(withTemplate(req, target, customer.name, (await deps.convert(target, source, { ...DEFAULT_CONVERT_OPTIONS, config: templateUrl(customer.sub_template) })).body));
   };
 

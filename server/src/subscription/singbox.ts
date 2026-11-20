@@ -1,4 +1,4 @@
-// sing-box 配置生成(Hiddify、SFA/SFI/SFM 等)。结构参照主流面板:
+// sing-box 配置生成(Hiddify、SFA/SFI/SFM 等)。节点协议:vless / vmess / trojan / hysteria2 / shadowsocks / tuic。结构参照主流面板:
 // 两个组(节点选择 / 自动选择),国内域名与 IP 直连、广告拦截,规则集从 SagerNet / Loyalsoldier 远程下载。
 // sing-box 1.12 起 DNS 服务器换了新写法(旧写法 1.14 删除),按客户端版本输出对应写法。
 
@@ -46,6 +46,22 @@ function outbound(node: ProxyNode, insecure: boolean): Record<string, unknown> {
       password: node.password,
       ...(node.obfs ? { obfs: { type: node.obfs, password: node.obfsPassword ?? '' } } : {}),
       tls: tls(node, insecure || node.insecure),
+    };
+  }
+  if (node.type === 'shadowsocks') {
+    const opts = Object.entries(node.pluginOpts ?? {})
+      .map(([k, v]) => (v === 'true' && k === 'tls' ? k : `${k}=${v}`))
+      .join(';');
+    return { type: 'shadowsocks', tag: node.name, server: node.server, server_port: node.port, method: node.method, password: node.password, ...(node.plugin ? { plugin: node.plugin, plugin_opts: opts } : {}) };
+  }
+  if (node.type === 'tuic') {
+    return {
+      ...base,
+      uuid: node.uuid,
+      password: node.password,
+      ...(node.congestion ? { congestion_control: node.congestion } : {}),
+      ...(node.udpRelayMode ? { udp_relay_mode: node.udpRelayMode } : {}),
+      tls: tls({ ...node, alpn: node.alpn.length ? node.alpn : ['h3'] }, insecure || node.insecure),
     };
   }
   if (node.type === 'trojan') return { ...base, password: node.password, tls: tls(node, insecure || node.insecure), ...transport(node) };

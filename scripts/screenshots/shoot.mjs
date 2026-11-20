@@ -20,7 +20,7 @@ async function shot(name, { width = 1280, height = 800, hash, before } = {}) {
   await page.screenshot({ path: `${OUT}/${name}.png` });
   console.log('saved', name);
 }
-await shot('customers', { hash: 'customers', height: 860 });
+await shot('customers', { hash: 'customers', height: 900 });
 await shot('open-line', { hash: 'customers', height: 900, before: async () => {
   await clickText('开线路', 0);
   await sleep(300);

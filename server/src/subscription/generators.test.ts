@@ -192,3 +192,30 @@ test('vless 传输与 vmess:Quantumult X、Loon 只写 tcp / ws,grpc 和 httpupg
     '',
   ]);
 });
+
+test('shadowsocks / tuic(多见于外部订阅):sing-box 都出;QX 出 ss(含 obfs、v2ray-plugin);Loon 出 ss(只认 obfs);tuic 两边都不出', () => {
+  const plain = `ss://${Buffer.from('aes-128-gcm:pw').toString('base64url')}@203.0.113.1:8388#ss`;
+  const obfs = `ss://${Buffer.from('aes-128-gcm:pw').toString('base64url')}@203.0.113.2:8388/?plugin=${encodeURIComponent('obfs-local;obfs=http;obfs-host=bing.com')}#obfs`;
+  const v2p = `ss://${Buffer.from('aes-128-gcm:pw').toString('base64url')}@203.0.113.3:443/?plugin=${encodeURIComponent('v2ray-plugin;mode=websocket;host=w.example.com;path=/ws;tls')}#v2p`;
+  const tuic = 'tuic://uuid:tp@203.0.113.4:443?sni=t.example.com&congestion_control=bbr&udp_relay_mode=native#tuic';
+  const nodes = parseNodes([plain, obfs, v2p, tuic]);
+  assert.equal(nodes.length, 4);
+
+  const sing = buildSingbox(nodes, { legacyDns: false, insecure: true }).outbounds as any[];
+  assert.deepEqual(sing.find((o) => o.tag === 'ss'), { type: 'shadowsocks', tag: 'ss', server: '203.0.113.1', server_port: 8388, method: 'aes-128-gcm', password: 'pw' });
+  assert.deepEqual([sing.find((o) => o.tag === 'obfs').plugin, sing.find((o) => o.tag === 'obfs').plugin_opts], ['obfs-local', 'obfs=http;obfs-host=bing.com']);
+  assert.equal(sing.find((o) => o.tag === 'v2p').plugin_opts, 'mode=websocket;host=w.example.com;path=/ws;tls');
+  const t = sing.find((o) => o.tag === 'tuic');
+  assert.deepEqual([t.type, t.uuid, t.password, t.congestion_control, t.udp_relay_mode, t.tls.server_name, t.tls.alpn], ['tuic', 'uuid', 'tp', 'bbr', 'native', 't.example.com', ['h3']]);
+
+  const qx = Buffer.from(buildQuantumultX(nodes), 'base64').toString().trim().split('\r\n');
+  assert.deepEqual(qx, [
+    'shadowsocks=203.0.113.1:8388,method=aes-128-gcm,password=pw,fast-open=false,udp-relay=true,tag=ss',
+    'shadowsocks=203.0.113.2:8388,method=aes-128-gcm,password=pw,obfs=http,obfs-host=bing.com,fast-open=false,udp-relay=true,tag=obfs',
+    'shadowsocks=203.0.113.3:443,method=aes-128-gcm,password=pw,obfs=wss,obfs-host=w.example.com,obfs-uri=/ws,fast-open=false,udp-relay=true,tag=v2p',
+  ]);
+  assert.deepEqual(buildLoon(nodes, { insecure: true }).trim().split('\r\n'), [
+    'ss=Shadowsocks,203.0.113.1,8388,aes-128-gcm,"pw",fast-open=false,udp=true',
+    'obfs=Shadowsocks,203.0.113.2,8388,aes-128-gcm,"pw",obfs-name=http,obfs-host=bing.com,fast-open=false,udp=true',
+  ]);
+});
