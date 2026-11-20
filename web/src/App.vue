@@ -16,7 +16,8 @@ type Tab = 'customers' | 'panels' | 'traffic' | 'socks' | 'settings';
 const TABS: Tab[] = ['customers', 'panels', 'traffic', 'socks', 'settings'];
 function tabFromHash(): Tab {
   const id = location.hash.slice(1);
-  return TABS.includes(id as Tab) ? (id as Tab) : 'panels';
+  // 默认打开客户页(日常最常用)
+  return TABS.includes(id as Tab) ? (id as Tab) : 'customers';
 }
 const tab = ref<Tab>(tabFromHash());
 window.addEventListener('hashchange', () => (tab.value = tabFromHash()));
