@@ -5,7 +5,10 @@
 
 import YAML from 'yaml';
 
-// Mihomo 内核(Clash Verge / Mihomo Party / FlClash / ClashMeta 等)
+// Mihomo 内核(Clash Verge / Mihomo Party / FlClash / ClashMeta 等)。
+// - sniffer:从 TLS / HTTP 里嗅出域名,纯 IP 的连接也嗅(parse-pure-ip),只用来匹配规则、不改连接目标
+// - profile.store-selected:重启后记住各分组手动选的节点
+// - 地理数据用 geoip.dat / geosite.dat(geodata-mode),不自动更新;首次下载经 gh-proxy.com 加速(国内直连 GitHub 常下不动)
 const CLASH_HEADER = `tcp-concurrent: true
 unified-delay: true
 mixed-port: 7890
@@ -13,6 +16,22 @@ allow-lan: false
 mode: rule
 log-level: info
 external-controller: '127.0.0.1:9090'
+find-process-mode: strict
+profile: {store-selected: true}
+sniffer:
+    enable: true
+    parse-pure-ip: true
+    override-destination: false
+    force-dns-mapping: true
+    sniff:
+        TLS: {ports: [443]}
+        HTTP: {ports: [80, 8080, 8443]}
+geodata-mode: true
+geo-auto-update: false
+geox-url:
+    geoip: 'https://gh-proxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat'
+    geosite: 'https://gh-proxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat'
+    mmdb: 'https://gh-proxy.com/https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/country.mmdb'
 dns:
     enable: true
     ipv6: false

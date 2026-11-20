@@ -30,6 +30,13 @@ test('替换头部为 Mihomo 模板,去掉 port/socks-port,proxies 之后一字�
   assert.equal(doc.dns['respect-rules'], true);
   assert.deepEqual(doc.dns.fallback, ['https://dns.google/dns-query', 'tls://1.1.1.1:853']);
   assert.deepEqual(doc.dns['fallback-filter'].geosite, ['gfw']);
+  // 嗅探、记住所选节点、地理数据
+  assert.deepEqual(doc.sniffer, { enable: true, 'parse-pure-ip': true, 'override-destination': false, 'force-dns-mapping': true, sniff: { TLS: { ports: [443] }, HTTP: { ports: [80, 8080, 8443] } } });
+  assert.deepEqual([doc['find-process-mode'], doc.profile, doc['geodata-mode'], doc['geo-auto-update']], ['strict', { 'store-selected': true }, true, false]);
+  assert.deepEqual(Object.keys(doc['geox-url']), ['geoip', 'geosite', 'mmdb']);
+  // Stash 不认这些
+  const stash = YAML.parse(applyMihomoTemplate(BASE, { stash: true }));
+  assert.deepEqual([stash.sniffer, stash['geodata-mode'], stash['geox-url'], stash.profile], [undefined, undefined, undefined, undefined]);
   assert.equal(doc.rules.length, 2);
   assert.equal(doc.proxies[0].name, '🇺🇸 us-1');
 });
