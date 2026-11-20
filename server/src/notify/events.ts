@@ -79,7 +79,7 @@ export function thresholdEvents(db: DB, s: Settings['notify'], now: number, cust
       if (!alreadyNotified(db, key)) {
         markNotified(db, key, now);
         const days = Math.max(0, Math.ceil((c.expire_at - now) / 86_400_000));
-        out.push({ event: 'customer_expiring', title: `客户「${c.name}」${days === 0 ? '今天' : `${days} 天后`}到期`, text: `到期日 ${fmtDate(c.expire_at)},${c.lines.length} 条线路`, at: now });
+        out.push({ event: 'customer_expiring', title: `客户「${c.name}」${days === 0 ? '今天' : `${days} 天后`}到期`, text: `到期日 ${fmtDate(c.expire_at)},${c.lines.length} 条线路` + (c.monthly_fee != null ? `,月费 ${c.monthly_fee}` : ''), at: now });
       }
     }
     if (s.quota_warn && c.quota_bytes > 0 && c.used >= (c.quota_bytes * s.quota_warn_pct) / 100) {

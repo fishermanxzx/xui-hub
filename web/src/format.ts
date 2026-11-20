@@ -101,6 +101,26 @@ export function costSummary(items: { monthly_cost: number | null; expire_at: num
   };
 }
 
+/** 客户月费合计:已到期的不算(还没续费);再减去面板和 SOCKS 的月成本 = 结余。按分算,不出 0.1 + 0.2 那种小数 */
+export function feeSummary(customers: { monthly_fee: number | null; state: string }[], costs: { monthly_cost: number | null }[]) {
+  const cents = (n: number | null) => Math.round((n ?? 0) * 100);
+  const paying = customers.filter((c) => c.state !== 'expired');
+  const income = paying.reduce((sum, c) => sum + cents(c.monthly_fee), 0);
+  const cost = costs.reduce((sum, x) => sum + cents(x.monthly_cost), 0);
+  return {
+    /** 有客户填了月费才显示这一行 */
+    show: customers.some((c) => c.monthly_fee != null),
+    income: income / 100,
+    payers: paying.filter((c) => c.monthly_fee != null).length,
+    unset: paying.filter((c) => c.monthly_fee == null).length,
+    expired: customers.filter((c) => c.state === 'expired' && c.monthly_fee != null).length,
+    /** 面板 / SOCKS 有填月成本的才算结余 */
+    hasCost: costs.some((x) => x.monthly_cost != null),
+    cost: cost / 100,
+    balance: (income - cost) / 100,
+  };
+}
+
 /** 客户的订阅链接:服务端配了 SUB_BASE_URL 用它,否则用当前打开后台的地址 */
 export function subUrl(c: { sub_url: string | null; sub_token: string }): string {
   return c.sub_url ?? `${location.origin}/sub/${c.sub_token}`;

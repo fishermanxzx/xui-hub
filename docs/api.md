@@ -28,6 +28,7 @@ Authorization: Bearer xh_……
 | `reset_day` | 按月重置流量:0 = 不重置,1-28 = 开启。客户有到期时间时重置日跟着到期日走(每月到期日那一刻,续费后跟着变),这个数只在没有到期时间时当「每月几号 0 点」用 |
 | `next_reset_at` | 只读:下次按月重置的时间(毫秒),0 = 没开 |
 | `limit_devices` | 能拉订阅的设备数上限,0 = 不限 |
+| `monthly_fee` | 月费(每月收这位客户多少),`null` = 没填;只用来记账,不影响任何功能。写的时候传 `null` 或空字符串 = 清掉 |
 | `sub_devices` | 已经拉过订阅的设备数 |
 | `sub_template` | Clash 订阅模板:空 = 默认,内置模板 id,或 https 模板地址 |
 | `used` | 已用流量(字节,各线路之和) |
@@ -44,7 +45,7 @@ Authorization: Bearer xh_……
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/customers` | 全部客户 |
-| POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_devices`、`sub_template`、`sub_links`、`upstreams`、`upstream_mode`、`upstream_userinfo` |
+| POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_devices`、`monthly_fee`、`sub_template`、`sub_links`、`upstreams`、`upstream_mode`、`upstream_userinfo` |
 | PATCH | `/customers/:id` | 修改,只传要改的字段。改了额度 / 到期会立刻停用或恢复他的客户端 |
 | POST | `/customers/:id/renew` | 续期。请求体:`days`(1-3650),`reset_usage`(可选,`true` 时顺带把流量清零)。在现在的到期日上加天数,已到期或没设到期日的从现在起算 |
 | POST | `/customers/:id/reset-usage` | 把已用流量清零 |

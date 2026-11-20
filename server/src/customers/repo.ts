@@ -2,7 +2,7 @@
 
 import { randomBytes } from 'node:crypto';
 import type { DB } from '../db';
-import { InputError } from '../panels/repo';
+import { InputError, validCost } from '../panels/repo';
 import { customLinksByCustomer, setCustomLinks } from '../subscription/customLinks';
 import { validTemplate } from '../subscription/templates';
 import type { RouteHop } from '../lines/routes';
@@ -62,6 +62,8 @@ export interface Customer {
   sub_template: string;
   /** 能拉订阅的设备数上限,0 = 不限 */
   limit_devices: number;
+  /** 月费(每月收多少),null = 没填;只用来记账 */
+  monthly_fee: number | null;
   /** 订阅链接 /sub/<token> 里的 token,每个客户一个;重置后旧链接失效 */
   sub_token: string;
   /** 上次拉取订阅的时间和客户端(User-Agent) */
@@ -97,6 +99,8 @@ export interface CustomerInput {
   reset_day?: unknown;
   sub_template?: unknown;
   limit_devices?: unknown;
+  /** 月费:空 = 不填 */
+  monthly_fee?: unknown;
   /** 自定义订阅链接:整组替换,地址数组或按行分隔的字符串 */
   sub_links?: unknown;
   /** 外部订阅:整组替换,数组(每项是地址或 { url, node_name })或按行分隔的地址 */
@@ -223,6 +227,7 @@ function withLines(db: DB, rows: any[], now = Date.now()): CustomerView[] {
     return {
       ...c,
       upstream_userinfo: !!c.upstream_userinfo,
+      monthly_fee: c.monthly_fee ?? null,
       lines,
       used_up,
       used_down,
@@ -249,8 +254,8 @@ const newSubToken = () => randomBytes(18).toString('base64url');
 export function createCustomer(db: DB, input: CustomerInput, now = Date.now()): number {
   return db.transaction(() => {
     const info = db
-      .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_template, limit_devices, sub_token, upstream_mode, upstream_userinfo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, validTemplate(input.sub_template), validLimitDevices(input.limit_devices), newSubToken(), validUpstreamMode(input.upstream_mode), input.upstream_userinfo === true ? 1 : 0, now, now);
+      .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_template, limit_devices, monthly_fee, sub_token, upstream_mode, upstream_userinfo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, validTemplate(input.sub_template), validLimitDevices(input.limit_devices), validCost(input.monthly_fee, '月费'), newSubToken(), validUpstreamMode(input.upstream_mode), input.upstream_userinfo === true ? 1 : 0, now, now);
     const id = Number(info.lastInsertRowid);
     if (input.sub_links !== undefined) setCustomLinks(db, id, input.sub_links);
     if (input.upstreams !== undefined) setUpstreams(db, id, input.upstreams);
@@ -276,7 +281,7 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
   if (!cur) throw new InputError('客户不存在');
   const resetDay = input.reset_day === undefined ? cur.reset_day : validResetDay(input.reset_day);
   const expireAt = input.expire_at === undefined ? cur.expire_at : nonNegativeInt(input.expire_at, '到期时间');
-  const update = db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, reset_day = ?, last_reset_at = ?, sub_template = ?, limit_devices = ?, upstream_mode = ?, upstream_userinfo = ?, updated_at = ? WHERE id = ?');
+  const update = db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, reset_day = ?, last_reset_at = ?, sub_template = ?, limit_devices = ?, monthly_fee = ?, upstream_mode = ?, upstream_userinfo = ?, updated_at = ? WHERE id = ?');
   const values = [
     input.name === undefined ? cur.name : validName(input.name),
     input.remark === undefined ? cur.remark : String(input.remark ?? '').trim(),
@@ -287,6 +292,7 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
     resetDay !== cur.reset_day || (resetDay > 0 && expireAt !== cur.expire_at) ? now : cur.last_reset_at,
     input.sub_template === undefined ? cur.sub_template : validTemplate(input.sub_template),
     input.limit_devices === undefined ? cur.limit_devices : validLimitDevices(input.limit_devices),
+    input.monthly_fee === undefined ? cur.monthly_fee : validCost(input.monthly_fee, '月费'),
     input.upstream_mode === undefined ? cur.upstream_mode : validUpstreamMode(input.upstream_mode),
     input.upstream_userinfo === undefined ? cur.upstream_userinfo : input.upstream_userinfo === true ? 1 : 0,
     now,

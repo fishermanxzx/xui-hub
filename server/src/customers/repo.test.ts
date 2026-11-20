@@ -55,6 +55,24 @@ test('客户增改:名称、额度、到期时间的校验;没传的字段不动
   assert.equal(getCustomer(db, 999), undefined);
 });
 
+test('月费:不填 = null,保留两位小数;改别的字段不动它,留空 = 清掉;负数 / 非数字报错', () => {
+  const db = memoryDb();
+  const a = createCustomer(db, { name: 'a' });
+  assert.equal(getCustomer(db, a)!.monthly_fee, null);
+  const b = createCustomer(db, { name: 'b', monthly_fee: '29.999' });
+  assert.equal(getCustomer(db, b)!.monthly_fee, 30);
+  updateCustomer(db, b, { remark: 'x' });
+  assert.equal(getCustomer(db, b)!.monthly_fee, 30);
+  updateCustomer(db, b, { monthly_fee: 0 });
+  assert.equal(getCustomer(db, b)!.monthly_fee, 0);
+  updateCustomer(db, b, { monthly_fee: 15.5 });
+  assert.equal(listCustomers(db).find((c) => c.id === b)!.monthly_fee, 15.5);
+  updateCustomer(db, b, { monthly_fee: '' });
+  assert.equal(getCustomer(db, b)!.monthly_fee, null);
+  assert.throws(() => createCustomer(db, { name: 'c', monthly_fee: -1 }), /月费要是 0 到 1 亿之间的数字/);
+  assert.throws(() => updateCustomer(db, a, { monthly_fee: 'abc' }), /月费要是/);
+});
+
 test('订阅 token:每个客户一个,能反查客户;重置后旧的立即失效;记下最近一次拉取', () => {
   const db = memoryDb();
   const a = createCustomer(db, { name: 'a' });

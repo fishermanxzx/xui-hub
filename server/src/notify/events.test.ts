@@ -46,9 +46,15 @@ test('停用 / 恢复按客户汇总;快到期和流量预警各只提醒一次,
 
   const first = thresholdEvents(db, DEFAULT_SETTINGS.notify, now);
   assert.deepEqual(first.map((m) => [m.event, m.title]), [['customer_expiring', '客户「zhu」2 天后到期'], ['customer_quota', '客户「zhu」流量已用 95%']]);
+  assert.doesNotMatch(first[0].text, /月费/);
   assert.deepEqual(thresholdEvents(db, DEFAULT_SETTINGS.notify, now + 1000), []);
   // 关掉提醒项
   assert.deepEqual(thresholdEvents(db, { ...DEFAULT_SETTINGS.notify, expiring: false, quota_warn: false }, now), []);
+  // 填了月费:快到期的提醒带上月费,续费时知道该收多少
+  const fee = createCustomer(db, { name: 'fee', expire_at: now + 86_400_000, monthly_fee: 30 });
+  const ev2 = thresholdEvents(db, DEFAULT_SETTINGS.notify, now).find((m) => m.title.includes('fee'));
+  assert.ok(fee && ev2);
+  assert.match(ev2.text, /,月费 30$/);
 });
 
 test('渠道:没配就没有;测试用的假渠道一个成一个败,broadcast 各报各的', async () => {
