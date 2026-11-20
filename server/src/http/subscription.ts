@@ -38,8 +38,8 @@ export interface SubscriptionDeps {
   upstreamFetcher?: UpstreamFetcher;
 }
 
-/** 客户端自动更新间隔(小时) */
-const UPDATE_INTERVAL_HOURS = '24';
+/** 客户端自动更新间隔(小时):1 小时,线路 / 外部订阅 / 出口有变化时客户端很快能拿到 */
+const UPDATE_INTERVAL_HOURS = '1';
 
 /**
  * 按格式给响应头(参照主流面板的做法):
