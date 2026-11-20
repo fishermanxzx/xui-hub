@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { renameLink, renameLinks, validNodeName } from './nodeName';
+import { renameLink, renameLinks, validNodeName, linkName, renameByTemplate } from './nodeName';
 
 test('节点名:换掉 # 后面的名字;vmess 换 ps;多个链接依次加编号;空名不动', () => {
   assert.equal(renameLink('vless://u@1.2.3.4:443?security=reality&sni=a.com#old%20name', '香港 01'), 'vless://u@1.2.3.4:443?security=reality&sni=a.com#%E9%A6%99%E6%B8%AF%2001');
@@ -17,4 +17,15 @@ test('节点名校验:去空格、最长 64、不许控制字符', () => {
   assert.equal(validNodeName(undefined), '');
   assert.throws(() => validNodeName('a'.repeat(65)), /64/);
   assert.throws(() => validNodeName('a\nb'), /控制字符/);
+});
+
+test('外部订阅的节点名:空不动;固定名字依次编号;{name} 是原名、{n} 是序号;vmess 改 ps', () => {
+  const vmess = `vmess://${Buffer.from(JSON.stringify({ v: '2', ps: '日本 01', add: 'v.example.com', port: '443', id: 'u' })).toString('base64')}`;
+  const links = ['vless://u@203.0.113.1:443?security=reality#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BD%2001', vmess];
+  assert.deepEqual(links.map(linkName), ['🇺🇸 美国 01', '日本 01']);
+  assert.deepEqual(renameByTemplate(links, ''), links);
+  assert.deepEqual(renameByTemplate(links, '专线').map(linkName), ['专线', '专线 2']);
+  assert.deepEqual(renameByTemplate(links, '专线-{name}').map(linkName), ['专线-🇺🇸 美国 01', '专线-日本 01']);
+  assert.deepEqual(renameByTemplate(links, '美国 {n}').map(linkName), ['美国 1', '美国 2']);
+  assert.equal(linkName('vless://u@203.0.113.1:443'), '');
 });

@@ -5,9 +5,12 @@
 // - 每次取到就存下来:那边取不到时用上次成功的结果,客户端不会被一份空订阅冲掉。
 // - 60 秒内取过就不再重复取(Clash 等格式一次请求里要用两回)。
 // - 客户停用 / 到期时和自己的线路一样不出节点,也不去拉。
+// - 只取那边的节点:Clash / sing-box 配置里的分组、规则一概不要,输出用的是本系统的模板和配置;
+//   节点名可以按每个外部订阅改(node_name,见 nodeName.ts 的 renameByTemplate)。
 
 import type { DB } from '../db';
 import { InputError } from '../panels/repo';
+import { linkName, renameByTemplate, validNodeName } from './nodeName';
 import { parseUpstreamBody } from './upstreamParse';
 
 export const MAX_UPSTREAMS = 10;
@@ -37,6 +40,10 @@ export interface Userinfo {
 export interface UpstreamView {
   id: number;
   url: string;
+  /** 节点名:空 = 用对方的;可带 {name} / {n} */
+  node_name: string;
+  /** 订阅里的节点名(改名之后的,最多列 100 个) */
+  names: string[];
   /** 上次成功取到的节点数(取不到时照常用这些) */
   nodes: number;
   /** 认不出协议、没出的节点数 */
@@ -56,12 +63,21 @@ export function validUpstreamMode(value: unknown): UpstreamMode {
   throw new InputError('upstream_mode 只能是 merge(和自己线路的节点一起给)或 replace(只给外部订阅的节点)');
 }
 
-/** 后台填的地址:数组或按行分隔的字符串;去重,保持顺序 */
-export function validUpstreamUrls(raw: unknown): string[] {
+export interface UpstreamInput {
+  url: string;
+  /** undefined = 不改(已有的保留原来的,新加的为空) */
+  node_name?: string;
+}
+
+/**
+ * 后台填的外部订阅:数组(每项是地址,或 { url, node_name })或按行分隔的地址;去重,保持顺序
+ */
+export function validUpstreams(raw: unknown): UpstreamInput[] {
   const list = Array.isArray(raw) ? raw : String(raw ?? '').split(/\r?\n/);
-  const out: string[] = [];
+  const out: UpstreamInput[] = [];
   for (const item of list) {
-    const s = String(item ?? '').trim();
+    const obj = item && typeof item === 'object' ? (item as Record<string, unknown>) : null;
+    const s = String((obj ? obj.url : item) ?? '').trim();
     if (!s) continue;
     if (s.length > MAX_URL_LEN) throw new InputError(`外部订阅地址不能超过 ${MAX_URL_LEN} 个字符`);
     let url: URL | undefined;
@@ -71,26 +87,42 @@ export function validUpstreamUrls(raw: unknown): string[] {
       url = undefined;
     }
     if (!url || (url.protocol !== 'https:' && url.protocol !== 'http:')) throw new InputError('外部订阅要填完整地址,以 http:// 或 https:// 开头');
-    if (!out.includes(s)) out.push(s);
+    if (out.some((u) => u.url === s)) continue;
+    out.push({ url: s, node_name: obj && obj.node_name !== undefined ? validNodeName(obj.node_name) : undefined });
   }
   if (out.length > MAX_UPSTREAMS) throw new InputError(`外部订阅每位客户最多 ${MAX_UPSTREAMS} 个`);
   return out;
 }
 
-/** 整组替换;地址没变的保留上次取到的结果 */
+/** 只要地址(校验用) */
+export const validUpstreamUrls = (raw: unknown): string[] => validUpstreams(raw).map((u) => u.url);
+
+/** 整组替换;地址没变的保留上次取到的结果,没给节点名的保留原来的节点名 */
 export function setUpstreams(db: DB, customerId: number, raw: unknown): void {
-  const urls = validUpstreamUrls(raw);
+  const list = validUpstreams(raw);
   const current = db.prepare('SELECT id, url FROM upstream_subs WHERE customer_id = ?').all(customerId) as { id: number; url: string }[];
   const del = db.prepare('DELETE FROM upstream_subs WHERE id = ?');
-  for (const row of current) if (!urls.includes(row.url)) del.run(row.id);
-  const insert = db.prepare('INSERT INTO upstream_subs (customer_id, url, position) VALUES (?, ?, ?)');
-  const move = db.prepare('UPDATE upstream_subs SET position = ? WHERE id = ?');
-  urls.forEach((url, i) => {
-    const row = current.find((r) => r.url === url);
-    if (row) move.run(i, row.id);
-    else insert.run(customerId, url, i);
+  for (const row of current) if (!list.some((u) => u.url === row.url)) del.run(row.id);
+  const insert = db.prepare('INSERT INTO upstream_subs (customer_id, url, node_name, position) VALUES (?, ?, ?, ?)');
+  const move = db.prepare('UPDATE upstream_subs SET position = ?, node_name = COALESCE(?, node_name) WHERE id = ?');
+  list.forEach((u, i) => {
+    const row = current.find((r) => r.url === u.url);
+    if (row) move.run(i, u.node_name ?? null, row.id);
+    else insert.run(customerId, u.url, u.node_name ?? '', i);
   });
 }
+
+function storedLinks(json: string): string[] {
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 存着的节点链接按这个外部订阅的节点名改好 */
+const renamedLinks = (r: { links: string; node_name: string }) => renameByTemplate(storedLinks(r.links), r.node_name);
 
 export function parseUserinfo(header: string | null | undefined): Userinfo | null {
   if (!header) return null;
@@ -121,10 +153,21 @@ export function sumUserinfo(list: (Userinfo | null)[]): Userinfo | null {
 
 export const userinfoText = (u: Userinfo) => `upload=${u.upload}; download=${u.download}; total=${u.total}; expire=${u.expire}`;
 
-const toView = (r: any): UpstreamView => ({ id: r.id, url: r.url, nodes: r.nodes, skipped: r.skipped, userinfo: parseUserinfo(r.userinfo), ok_at: r.ok_at, tried_at: r.tried_at, error: r.error });
+const toView = (r: any): UpstreamView => ({
+  id: r.id,
+  url: r.url,
+  node_name: r.node_name,
+  names: renamedLinks(r).slice(0, 100).map(linkName),
+  nodes: r.nodes,
+  skipped: r.skipped,
+  userinfo: parseUserinfo(r.userinfo),
+  ok_at: r.ok_at,
+  tried_at: r.tried_at,
+  error: r.error,
+});
 
 export function upstreamsByCustomer(db: DB, customerId?: number): Map<number, UpstreamView[]> {
-  const cols = 'id, customer_id, url, nodes, skipped, userinfo, ok_at, tried_at, error';
+  const cols = 'id, customer_id, url, node_name, links, nodes, skipped, userinfo, ok_at, tried_at, error';
   const rows = (customerId === undefined
     ? db.prepare(`SELECT ${cols} FROM upstream_subs ORDER BY customer_id, position, id`).all()
     : db.prepare(`SELECT ${cols} FROM upstream_subs WHERE customer_id = ? ORDER BY position, id`).all(customerId)) as any[];
@@ -133,17 +176,10 @@ export function upstreamsByCustomer(db: DB, customerId?: number): Map<number, Up
   return out;
 }
 
-/** 存着的结果:节点链接(按顺序)、一次都没取到过的个数、流量 */
+/** 存着的结果:节点链接(按顺序、改好名字)、一次都没取到过的个数、流量 */
 export function cachedUpstream(db: DB, customerId: number): { links: string[]; total: number; failed: number; userinfo: Userinfo | null } {
-  const rows = db.prepare('SELECT links, userinfo FROM upstream_subs WHERE customer_id = ? ORDER BY position, id').all(customerId) as { links: string; userinfo: string }[];
-  const lists = rows.map((r) => {
-    try {
-      const v = JSON.parse(r.links);
-      return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
-    } catch {
-      return [];
-    }
-  });
+  const rows = db.prepare('SELECT links, node_name, userinfo FROM upstream_subs WHERE customer_id = ? ORDER BY position, id').all(customerId) as { links: string; node_name: string; userinfo: string }[];
+  const lists = rows.map(renamedLinks);
   return { links: lists.flat(), total: rows.length, failed: lists.filter((l) => !l.length).length, userinfo: sumUserinfo(rows.map((r) => parseUserinfo(r.userinfo))) };
 }
 

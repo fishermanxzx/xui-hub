@@ -444,7 +444,7 @@ const yamlConverter: Converter = async (_target, source) => {
 
 test('外部订阅(合并):每种格式都带上外部的节点;流量头默认用客户自己的,开了透传用外部的', async () => {
   const { db, id, token } = setup();
-  updateCustomer(db, id, { upstream_urls: [UP_URL] });
+  updateCustomer(db, id, { upstreams: [UP_URL] });
   const calls: string[] = [];
   const conv: Call[] = [];
   const { link, close } = await serve(db, fakeConverter(conv), () => false, fetcher, upstream(calls));
@@ -472,7 +472,7 @@ test('外部订阅(合并):每种格式都带上外部的节点;流量头默认�
 
 test('外部订阅(只给外部的):不去取自己线路的节点;外部的 REALITY 节点照样按客户端补 / 不补 mlkem', async () => {
   const { db, id, token } = setup();
-  updateCustomer(db, id, { upstream_urls: [UP_URL], upstream_mode: 'replace' });
+  updateCustomer(db, id, { upstreams: [UP_URL], upstream_mode: 'replace' });
   const panels: LinkFetcher = async () => {
     throw new Error('不该去取面板');
   };
@@ -490,7 +490,7 @@ test('外部订阅(只给外部的):不去取自己线路的节点;外部的 REA
 
 test('外部订阅:取不到时用上次的;从没取到过且只给外部的 → 502;别处 xui-hub 来拉(带标记头)只给自己线路的', async () => {
   const { db, id, token } = setup();
-  updateCustomer(db, id, { upstream_urls: [UP_URL], upstream_mode: 'replace' });
+  updateCustomer(db, id, { upstreams: [UP_URL], upstream_mode: 'replace' });
   let ok = false;
   const calls: string[] = [];
   const flaky = upstream(calls, () => (ok ? { status: 200, body: UP_LINK, userinfo: null } : { status: 500, body: 'oops', userinfo: null }));
@@ -520,7 +520,7 @@ test('外部订阅:取不到时用上次的;从没取到过且只给外部的 �
 
 test('外部订阅:客户到期 / 超额时不去取,也不出节点', async () => {
   const { db, id, token } = setup();
-  updateCustomer(db, id, { upstream_urls: [UP_URL], upstream_mode: 'replace', expire_at: 1 });
+  updateCustomer(db, id, { upstreams: [UP_URL], upstream_mode: 'replace', expire_at: 1 });
   const calls: string[] = [];
   const { link, close } = await serve(db, fakeConverter([]), () => false, fetcher, upstream(calls));
   try {
@@ -535,7 +535,7 @@ test('外部订阅:客户到期 / 超额时不去取,也不出节点', async () 
 
 test('自助页:列出外部订阅的节点数,不露地址;开了透传时流量和到期显示外部的', async () => {
   const { db, id, token } = setup();
-  updateCustomer(db, id, { upstream_urls: [UP_URL] });
+  updateCustomer(db, id, { upstreams: [UP_URL] });
   const { link, close } = await serve(db, fakeConverter([]), () => false, fetcher, upstream([]));
   const page = async () => (await fetch(link(token), { headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html' } })).text();
   try {
@@ -550,6 +550,33 @@ test('自助页:列出外部订阅的节点数,不露地址;开了透传时流�
     assert.match(html, /已用 0 KB \/ 3 KB/);
     assert.match(html, /到期:2100-01-01/);
     assert.match(html, /<div class="muted">1 个节点 · /);
+  } finally {
+    await close();
+  }
+});
+
+test('外部订阅:只要节点,分组和规则用本系统的(Clash 模板、sing-box 配置);节点名可以改', async () => {
+  const { db, id, token } = setup();
+  updateCustomer(db, id, { upstreams: [{ url: UP_URL, node_name: '美国家宽' }], upstream_mode: 'replace', sub_template: 'ACL4SSR_Online_Full' });
+  const theirs = `proxy-groups:
+  - {name: 上游的分组, type: select, proxies: [reseller]}
+rules:
+  - DOMAIN-SUFFIX,upstream-rule.example,上游的分组
+proxies:
+  - {name: reseller, type: vless, server: 203.0.113.20, port: 443, uuid: up, tls: true, flow: xtls-rprx-vision, reality-opts: {public-key: PK, short-id: ab}}
+`;
+  const conv: Call[] = [];
+  const { link, close } = await serve(db, fakeConverter(conv), () => false, fetcher, upstream([], () => ({ status: 200, body: theirs, userinfo: null })));
+  try {
+    const clash = await (await get(link(token), CLASH_UA)).text();
+    // subconverter 拿到的是本系统的模板,节点源只有节点链接
+    assert.equal(conv[0].options.config, templateUrl('ACL4SSR_Online_Full'));
+    assert.doesNotMatch(clash, /upstream-rule|上游的分组/);
+    assert.match(clash, /#%E7%BE%8E%E5%9B%BD%E5%AE%B6%E5%AE%BD$/);
+    const sing = JSON.parse(await (await get(link(token), SING_UA)).text());
+    assert.deepEqual(sing.outbounds.find((o: any) => o.type === 'selector').outbounds, ['自动选择', '美国家宽']);
+    assert.doesNotMatch(JSON.stringify(sing), /upstream-rule|上游的分组/);
+    assert.match(await decode(await get(link(token), V2RAYN_UA)), /^vless:\/\/up@203\.0\.113\.20:443\?.*#%E7%BE%8E%E5%9B%BD%E5%AE%B6%E5%AE%BD$/);
   } finally {
     await close();
   }

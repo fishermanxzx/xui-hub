@@ -148,6 +148,10 @@ export interface Line {
 export interface Upstream {
   id: number;
   url: string;
+  /** 节点名:空 = 用对方的;可带 {name}(原名)/ {n}(序号) */
+  node_name: string;
+  /** 订阅里的节点名(改名之后的,最多 100 个) */
+  names: string[];
   /** 上次成功取到的节点数(取不到时照常用这些) */
   nodes: number;
   /** 认不出协议、没出的节点数 */
@@ -235,7 +239,7 @@ export interface CustomerInput {
   sub_template?: string;
   limit_devices?: number;
   sub_links?: string[];
-  upstream_urls?: string[];
+  upstreams?: { url: string; node_name?: string }[];
   upstream_mode?: 'merge' | 'replace';
   upstream_userinfo?: boolean;
 }

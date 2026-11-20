@@ -55,7 +55,16 @@ function customerView(c: any, ctx: ToolContext) {
     custom_sub_urls: (c.sub_links ?? []).map((l: string) => `${c.sub_url ? String(c.sub_url).replace(/\/sub\/[^/]*$/, '') : ctx.baseUrl}${l}`),
     sub_last_fetched_at: iso(c.sub_fetched_at ?? 0),
     // 外部订阅:节点数是上次成功取到的(取不到时照常用这些),error 是上次没取到的原因
-    upstreams: (c.upstreams ?? []).map((u: any) => ({ url: u.url, nodes: u.nodes, skipped: u.skipped || undefined, last_ok_at: iso(u.ok_at), error: u.error || null })),
+    upstreams: (c.upstreams ?? []).map((u: any) => ({
+      url: u.url,
+      node_name: u.node_name || null,
+      nodes: u.nodes,
+      // 订阅里的节点名(改名之后的)
+      names: (u.names ?? []).slice(0, 30),
+      skipped: u.skipped || undefined,
+      last_ok_at: iso(u.ok_at),
+      error: u.error || null,
+    })),
     upstream_mode: c.upstreams?.length ? c.upstream_mode : undefined,
     upstream_userinfo: c.upstreams?.length ? c.upstream_userinfo : undefined,
     lines: (c.lines ?? []).map((l: any) => ({
@@ -76,7 +85,7 @@ function customerView(c: any, ctx: ToolContext) {
 /** quota_gb / expire_at(ISO 或 +N 天)换成接口要的字节和毫秒 */
 function customerInput(a: any): Record<string, unknown> {
   const body: Record<string, unknown> = {};
-  for (const k of ['name', 'remark', 'reset_day', 'limit_devices', 'sub_template', 'sub_links', 'upstream_urls', 'upstream_mode', 'upstream_userinfo']) if (a[k] !== undefined) body[k] = a[k];
+  for (const k of ['name', 'remark', 'reset_day', 'limit_devices', 'sub_template', 'sub_links', 'upstreams', 'upstream_mode', 'upstream_userinfo']) if (a[k] !== undefined) body[k] = a[k];
   if (a.quota_gb !== undefined) body.quota_bytes = Math.round(Number(a.quota_gb) * GB);
   if (a.expire_at !== undefined) {
     if (a.expire_at === '' || a.expire_at === null) body.expire_at = 0;
@@ -105,12 +114,25 @@ const customerFields = {
     maxItems: 20,
     description: '自定义订阅链接(整组替换,空数组 = 清空):路径,可带参数,如 /s/zhangsan 或 /getprofile?name=a&token=b;也可以贴完整网址(只取路径和参数)。访问它和访问 sub_url 一样,常用来沿用别的系统发出去的旧链接',
   },
-  upstream_urls: {
+  upstreams: {
     type: 'array',
-    items: { type: 'string' },
+    items: {
+      anyOf: [
+        { type: 'string', description: '订阅地址(已有的保留原来的节点名)' },
+        {
+          type: 'object',
+          properties: {
+            url: str('订阅地址'),
+            node_name: str('节点名:空字符串 = 用对方的;{name} 代表原名、{n} 代表序号(如「美国 {n}」「专线-{name}」);不带这两个就是固定名字,多个节点依次加 2、3', { maxLength: 64 }),
+          },
+          required: ['url'],
+          additionalProperties: false,
+        },
+      ],
+    },
     maxItems: 10,
     description:
-      '外部订阅地址(整组替换,空数组 = 清空):别处的订阅链接(如出口代理商给的),内容可以是节点链接 / base64、Clash 配置或 sing-box 配置。客户拉自己的订阅时,那边的节点也在里面,每种格式都有;取不到时用上次取到的',
+      '外部订阅(整组替换,空数组 = 清空):别处的订阅链接(如出口代理商给的),内容可以是节点链接 / base64、Clash 配置或 sing-box 配置。只取那边的节点,分组和规则用本系统的;客户拉自己的订阅时那边的节点也在里面,每种格式都有,取不到时用上次取到的',
   },
   upstream_mode: { type: 'string', enum: ['merge', 'replace'], description: '外部订阅的用法:merge = 和自己线路的节点一起给(默认);replace = 只给外部订阅的节点' },
   upstream_userinfo: { type: 'boolean', description: 'true = 订阅里的流量和到期(subscription-userinfo)用外部订阅给的;false = 用客户在 xui-hub 里的(默认)' },

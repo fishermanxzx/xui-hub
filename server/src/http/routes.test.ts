@@ -476,13 +476,13 @@ test('外部订阅:保存时新填的马上取一次(取不到也照样保存),�
   try {
     const A = 'https://sub.example.com/a';
     const B = 'https://sub.example.com/b';
-    const made = await call('POST', '/customers', { name: '小王', upstream_urls: [A], upstream_mode: 'replace' });
+    const made = await call('POST', '/customers', { name: '小王', upstreams: [A], upstream_mode: 'replace' });
     assert.equal(made.status, 200);
     assert.deepEqual([made.body.upstream_mode, made.body.upstream_userinfo, made.body.upstreams.map((u: any) => [u.url, u.nodes, u.error])], ['replace', false, [[A, 2, '']]]);
     assert.deepEqual(calls, [A]);
 
     up = false;
-    const edited = await call('PATCH', `/customers/${made.body.id}`, { upstream_urls: `${A}\n${B}`, upstream_userinfo: true });
+    const edited = await call('PATCH', `/customers/${made.body.id}`, { upstreams: `${A}\n${B}`, upstream_userinfo: true });
     assert.equal(edited.status, 200);
     assert.deepEqual(edited.body.upstreams.map((u: any) => [u.url, u.nodes, !!u.error]), [[A, 2, false], [B, 0, true]]);
     assert.equal(edited.body.upstream_userinfo, true);
@@ -493,7 +493,7 @@ test('外部订阅:保存时新填的马上取一次(取不到也照样保存),�
     assert.deepEqual(fresh.body.upstreams.map((u: any) => [u.nodes, u.error]), [[2, ''], [2, '']]);
     assert.equal(calls.length, 4);
 
-    assert.equal((await call('PATCH', `/customers/${made.body.id}`, { upstream_urls: ['sub.example.com/x'] })).status, 400);
+    assert.equal((await call('PATCH', `/customers/${made.body.id}`, { upstreams: ['sub.example.com/x'] })).status, 400);
     assert.equal((await call('POST', '/customers/999/upstreams/refresh')).status, 400);
   } finally {
     await close();

@@ -92,8 +92,8 @@ export interface CustomerInput {
   limit_devices?: unknown;
   /** 自定义订阅链接:整组替换,地址数组或按行分隔的字符串 */
   sub_links?: unknown;
-  /** 外部订阅地址:整组替换,地址数组或按行分隔的字符串 */
-  upstream_urls?: unknown;
+  /** 外部订阅:整组替换,数组(每项是地址或 { url, node_name })或按行分隔的地址 */
+  upstreams?: unknown;
   upstream_mode?: unknown;
   upstream_userinfo?: unknown;
 }
@@ -224,7 +224,7 @@ export function createCustomer(db: DB, input: CustomerInput, now = Date.now()): 
       .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, validTemplate(input.sub_template), validLimitDevices(input.limit_devices), newSubToken(), validUpstreamMode(input.upstream_mode), input.upstream_userinfo === true ? 1 : 0, now, now);
     const id = Number(info.lastInsertRowid);
     if (input.sub_links !== undefined) setCustomLinks(db, id, input.sub_links);
-    if (input.upstream_urls !== undefined) setUpstreams(db, id, input.upstream_urls);
+    if (input.upstreams !== undefined) setUpstreams(db, id, input.upstreams);
     return id;
   })();
 }
@@ -266,7 +266,7 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
   db.transaction(() => {
     update.run(...values);
     if (input.sub_links !== undefined) setCustomLinks(db, id, input.sub_links);
-    if (input.upstream_urls !== undefined) setUpstreams(db, id, input.upstream_urls);
+    if (input.upstreams !== undefined) setUpstreams(db, id, input.upstreams);
   })();
 }
 

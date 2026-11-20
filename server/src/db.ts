@@ -239,6 +239,8 @@ export const MIGRATIONS: string[] = [
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     url TEXT NOT NULL,
+    -- 节点名:空 = 用对方的;可带 {name}(原名)/ {n}(序号),见 subscription/nodeName.ts 的 renameByTemplate
+    node_name TEXT NOT NULL DEFAULT '',
     position INTEGER NOT NULL DEFAULT 0,
     links TEXT NOT NULL DEFAULT '[]',
     nodes INTEGER NOT NULL DEFAULT 0,

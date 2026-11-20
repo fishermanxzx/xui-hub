@@ -53,7 +53,7 @@ const customers = [
     sub_clients: 3,
     sub_ips: 5,
     // 外部订阅:出口代理商给的订阅地址,节点和自己的线路一起给
-    upstreams: [{ id: 1, url: 'https://sub.example.org/api/v1/client/subscribe?token=demo', nodes: 6, skipped: 0, userinfo: null, ok_at: now - 420_000, tried_at: now - 420_000, error: '' }],
+    upstreams: [{ id: 1, url: 'https://sub.example.org/api/v1/client/subscribe?token=demo', node_name: '美国 {n}', names: ['美国 1', '美国 2', '美国 3', '美国 4', '美国 5', '美国 6'], nodes: 6, skipped: 0, userinfo: null, ok_at: now - 420_000, tried_at: now - 420_000, error: '' }],
   }),
 ];
 
