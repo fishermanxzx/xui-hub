@@ -35,7 +35,7 @@ const customer = (id, name, remark, quotaGb, expireDays, lines, extra = {}) => {
   const expire_at = expireDays == null ? 0 : now + expireDays * DAY;
   const state = expire_at && expire_at <= now ? 'expired' : quota_bytes && used >= quota_bytes ? 'over_quota' : 'active';
   const token = ['8Fq2mXvT1kLr9aZc0WbnYeHd', 'pV7sQ3uJxN5tRg2Kc8LmZa1E', 'Hy6dTz4BwC9eXo3MfN1qKs7U'][id - 1];
-  return { id, name, remark, quota_bytes, expire_at, sub_token: token, sub_url: `https://hub.example.com/sub/${token}`, sub_fetched_at: now - 2_400_000, sub_fetched_ua: 'clash-verge/v2.2.3', sub_clients: 2, sub_ips: 2, created_at: now - 30 * DAY, updated_at: now - DAY, lines, used_up, used_down, used, state, sub_links: [], upstreams: [], upstream_mode: 'merge', upstream_userinfo: false, ...extra };
+  return { id, name, remark, quota_bytes, expire_at, sub_token: token, sub_url: `https://hub.example.com/sub/${token}`, sub_fetched_at: now - 2_400_000, sub_fetched_ua: 'clash-verge/v2.2.3', sub_clients: 2, sub_ips: 2, created_at: now - 30 * DAY, updated_at: now - DAY, lines, used_up, used_down, used, state, sub_links: [], upstreams: [], upstream_mode: 'merge', upstream_userinfo: false, monthly_fee: null, ...extra };
 };
 const customers = [
   customer(1, '张三', '月付 30', 200, 18, [
@@ -51,16 +51,17 @@ const customers = [
         { when: {}, to: { kind: 'socks', tag: 'socks-jp', address: 'jp1.example.com:31825', socks_id: 4 }, fallback: true },
       ] }),
     line(1, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 2, inbound_remark: 'hy2', protocol: 'hysteria', email: '张三-2', up: 0.4 * GB, down: 5.6 * GB, exit_kind: 'socks', exit_socks_id: 1, exit_socks_name: '美国家宽-ATT', exit_label: 'SOCKS 美国家宽-ATT' }),
-  ]),
+  ], { monthly_fee: 30 }),
   customer(2, '李四', '流量包', 100, 40, [
     line(2, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 1, inbound_remark: 'vless-reality', protocol: 'vless', email: '李四', up: 6.2 * GB, down: 94.1 * GB, enable: false, auto_disabled: true, exit_kind: 'socks', exit_socks_id: 2, exit_socks_name: '台湾家宽', exit_label: 'SOCKS 台湾家宽' }),
-  ], { sub_fetched_ua: 'Shadowrocket/2701 CFNetwork/3826 Darwin/24.6.0', sub_clients: 1, sub_ips: 1 }),
+  ], { sub_fetched_ua: 'Shadowrocket/2701 CFNetwork/3826 Darwin/24.6.0', sub_clients: 1, sub_ips: 1, monthly_fee: 50 }),
   customer(3, '王五', '', 0, 3, [
     line(3, { kind: 'direct', panel_id: 3, panel_name: '日本-1', inbound_id: 1, inbound_remark: 'hy2', protocol: 'hysteria', email: '王五', up: 0.8 * GB, down: 12.9 * GB }),
   ], {
     sub_fetched_ua: 'SFA/1.12.4 (sing-box 1.12.4)',
     sub_clients: 3,
     sub_ips: 5,
+    monthly_fee: 45,
     // 外部订阅:出口代理商给的订阅地址,节点和自己的线路一起给
     upstreams: [{ id: 1, url: 'https://sub.example.org/api/v1/client/subscribe?token=demo', node_name: '美国 {n}', names: ['美国 1', '美国 2', '美国 3', '美国 4', '美国 5', '美国 6'], nodes: 6, skipped: 0, userinfo: null, ok_at: now - 420_000, tried_at: now - 420_000, error: '' }],
   }),

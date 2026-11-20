@@ -265,6 +265,10 @@ export const MIGRATIONS: string[] = [
   -- 线路的出口规则(在 xui-hub 里配、写到面板 Xray 路由):JSON 数组,见 lines/rules.ts
   ALTER TABLE lines ADD COLUMN rules TEXT NOT NULL DEFAULT '[]';
   `,
+  `
+  -- 客户的月费(每月收多少,NULL = 没填),只用来记账
+  ALTER TABLE customers ADD COLUMN monthly_fee REAL;
+  `,
 ];
 
 export function openDb(file: string): DB {

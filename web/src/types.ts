@@ -203,6 +203,8 @@ export interface Customer {
   sub_template: string;
   /** 能拉订阅的设备数上限,0 = 不限 */
   limit_devices: number;
+  /** 月费,null = 没填;只用来记账 */
+  monthly_fee: number | null;
   /** 订阅链接 /sub/<token> 里的 token */
   sub_token: string;
   /** 订阅链接;未配置 SUB_BASE_URL 时为 null,前端用当前地址拼 */
@@ -260,6 +262,7 @@ export interface CustomerInput {
   reset_day?: number;
   sub_template?: string;
   limit_devices?: number;
+  monthly_fee?: number | null;
   sub_links?: string[];
   upstreams?: { url: string; node_name?: string }[];
   upstream_mode?: 'merge' | 'replace';

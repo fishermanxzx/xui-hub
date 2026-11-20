@@ -9,13 +9,16 @@ import Modal from '../components/Modal.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
-import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
+import { bytesToGb, dateInputToMs, dueLevel, feeSummary, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
 import { toast, toastError } from '../toast';
 import type { ClientProtocol, Customer, EnforceOp, Line, LineRule, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
 
 const customers = ref<Customer[]>([]);
 const panels = ref<Panel[]>([]);
 const socksList = ref<Socks[]>([]);
+
+/** 月费合计和结余(面板 + SOCKS 的月成本) */
+const fees = computed(() => feeSummary(customers.value, [...panels.value, ...socksList.value]));
 
 const templateDefault = ref('');
 async function load() {
@@ -43,7 +46,7 @@ const proto = (p: string) => PROTOCOL[p] ?? p;
 const editing = ref<Customer | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', remark: '', quotaGb: '', expire: '', monthlyReset: false, resetDay: '', limitDevices: '', template: '', customTemplate: '', subLinks: '', upstreams: [] as { url: string; node_name: string }[], upstreamReplace: false, upstreamUserinfo: false });
+const form = ref({ name: '', remark: '', fee: '', quotaGb: '', expire: '', monthlyReset: false, resetDay: '', limitDevices: '', template: '', customTemplate: '', subLinks: '', upstreams: [] as { url: string; node_name: string }[], upstreamReplace: false, upstreamUserinfo: false });
 /** 内置的 Clash 订阅模板;第一次打开表单时取 */
 const templates = ref<SubTemplate[]>([]);
 /** 内置模板的名字和说明按界面语言给(按模板 id 查文案);语言文件里没有的新模板用服务端给的 */
@@ -57,7 +60,7 @@ function openForm(c: Customer | null) {
   editing.value = c;
   const tpl = c?.sub_template ?? '';
   const custom = /^https:/.test(tpl);
-  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', monthlyReset: !!c?.reset_day, resetDay: c?.reset_day ? String(c.reset_day) : '', limitDevices: c?.limit_devices ? String(c.limit_devices) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '', subLinks: (c?.sub_links ?? []).join('\n'), upstreams: (c?.upstreams ?? []).map((u) => ({ url: u.url, node_name: u.node_name })), upstreamReplace: c?.upstream_mode === 'replace', upstreamUserinfo: !!c?.upstream_userinfo };
+  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', fee: c?.monthly_fee == null ? '' : String(c.monthly_fee), quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', monthlyReset: !!c?.reset_day, resetDay: c?.reset_day ? String(c.reset_day) : '', limitDevices: c?.limit_devices ? String(c.limit_devices) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '', subLinks: (c?.sub_links ?? []).join('\n'), upstreams: (c?.upstreams ?? []).map((u) => ({ url: u.url, node_name: u.node_name })), upstreamReplace: c?.upstream_mode === 'replace', upstreamUserinfo: !!c?.upstream_userinfo };
   showForm.value = true;
 }
 
@@ -82,7 +85,7 @@ function opsNote(ops: EnforceOp[]): string {
 
 async function submit() {
   saving.value = true;
-  const body = { name: form.value.name, remark: form.value.remark, quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template, sub_links: form.value.subLinks.split('\n').map((x) => x.trim()).filter(Boolean), upstreams: form.value.upstreams.map((u) => ({ url: u.url.trim(), node_name: u.node_name.trim() })).filter((u) => u.url), upstream_mode: form.value.upstreamReplace ? ('replace' as const) : ('merge' as const), upstream_userinfo: form.value.upstreamUserinfo };
+  const body = { name: form.value.name, remark: form.value.remark, monthly_fee: form.value.fee === '' ? null : Number(form.value.fee), quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template, sub_links: form.value.subLinks.split('\n').map((x) => x.trim()).filter(Boolean), upstreams: form.value.upstreams.map((u) => ({ url: u.url.trim(), node_name: u.node_name.trim() })).filter((u) => u.url), upstream_mode: form.value.upstreamReplace ? ('replace' as const) : ('merge' as const), upstream_userinfo: form.value.upstreamUserinfo };
   try {
     const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
     showForm.value = false;
@@ -453,6 +456,15 @@ function exitText(l: Line): string {
     <div>
       <h2>{{ t('customers.title') }}</h2>
       <p class="muted small">{{ t('customers.intro') }}</p>
+      <p v-if="fees.show" class="small summary" :title="t('customers.feeSummaryHint')">
+        <span>{{ t('customers.feeTotal', { total: fmtCost(fees.income), n: fees.payers }) }}</span>
+        <span v-if="fees.unset" class="muted">{{ t('customers.feeUnset', { n: fees.unset }) }}</span>
+        <span v-if="fees.expired" class="muted">{{ t('customers.feeExpired', { n: fees.expired }) }}</span>
+        <template v-if="fees.hasCost">
+          <span class="muted">{{ t('customers.feeCost', { total: fmtCost(fees.cost) }) }}</span>
+          <span :class="{ 'text-err': fees.balance < 0 }">{{ t('customers.feeBalance', { v: fmtCost(fees.balance) }) }}</span>
+        </template>
+      </p>
     </div>
     <div class="row">
       <button :disabled="syncing || !customers.length" :title="t('customers.syncHint')" @click="syncNow">{{ syncing ? t('customers.syncing') : t('customers.syncNow') }}</button>
@@ -474,6 +486,7 @@ function exitText(l: Line): string {
           <span class="small" :class="{ 'text-warn': dueLevel(c.expire_at) === 'warn', 'text-err': dueLevel(c.expire_at) === 'err', muted: !c.expire_at }" :title="fmtDate(c.expire_at)">
             {{ fmtDue(c.expire_at) }}
           </span>
+          <span v-if="c.monthly_fee != null" class="muted small">{{ t('customers.feeValue', { v: fmtCost(c.monthly_fee) }) }}</span>
           <span v-if="c.sub_template" class="muted small" :title="c.sub_template">{{ t('customers.template', { name: templateName(c.sub_template) }) }}</span>
           <span v-if="c.limit_devices" class="small" :class="c.sub_devices >= c.limit_devices ? 'text-warn' : 'muted'" :title="t('customers.devicesHint')">{{ t('customers.devices', { n: c.sub_devices, max: c.limit_devices }) }}</span>
           <span v-if="c.next_reset_at" class="muted small" :title="c.expire_at ? t('customers.resetFollows') : t('customers.resetEveryDay', { day: c.reset_day })">{{ t('customers.nextReset', { date: fmtDate(c.next_reset_at) }) }}</span>
@@ -549,7 +562,10 @@ function exitText(l: Line): string {
   <Modal v-if="showForm" :title="editing ? t('customers.editTitle', { name: editing.name }) : t('customers.create')" @close="showForm = false">
     <form id="customer-form" class="form" @submit.prevent="submit">
       <label class="field">{{ t('customers.name') }}<input v-model="form.name" required :placeholder="t('customers.namePlaceholder')" /></label>
-      <label class="field">{{ t('customers.remark') }}<input v-model="form.remark" /></label>
+      <div class="two">
+        <label class="field">{{ t('customers.remark') }}<input v-model="form.remark" /></label>
+        <label class="field">{{ t('customers.monthlyFee') }}<input v-model="form.fee" type="number" min="0" step="0.01" /></label>
+      </div>
       <div class="two">
         <label class="field">{{ t('customers.quota') }}<input v-model="form.quotaGb" type="number" min="0" step="1" /></label>
         <div class="field">
@@ -786,6 +802,11 @@ h2 {
 .toolbar p {
   margin: 4px 0 0;
   max-width: 64ch;
+}
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
 }
 .topo-hint {
   margin: 0 0 8px;

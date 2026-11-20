@@ -37,11 +37,11 @@ export interface PanelInput {
 
 export class InputError extends Error {}
 
-/** 月成本:空 = 没填(null);否则 0 到 1 亿之间,保留两位小数 */
-export function validCost(value: unknown): number | null {
+/** 月成本 / 月费:空 = 没填(null);否则 0 到 1 亿之间,保留两位小数 */
+export function validCost(value: unknown, label = '月成本'): number | null {
   if (value == null || value === '') return null;
   const n = Number(value);
-  if (!Number.isFinite(n) || n < 0 || n > 1e8) throw new InputError('月成本要是 0 到 1 亿之间的数字,留空 = 不填');
+  if (!Number.isFinite(n) || n < 0 || n > 1e8) throw new InputError(`${label}要是 0 到 1 亿之间的数字,留空 = 不填`);
   return Math.round(n * 100) / 100;
 }
 

@@ -47,9 +47,9 @@ claude mcp add --transport http xui-hub https://hub.example.com:8788/mcp --heade
 
 | 工具 | 作用 |
 |---|---|
-| `list_customers` | 全部客户:状态、流量、到期、订阅链接、线路 |
+| `list_customers` | 全部客户:状态、流量、到期、月费、订阅链接、线路 |
 | `create_customer` | 新建客户 |
-| `update_customer` | 改名称、额度、到期、清零日、设备数上限、订阅模板、自定义订阅链接、外部订阅 |
+| `update_customer` | 改名称、额度、到期、清零日、设备数上限、月费、订阅模板、自定义订阅链接、外部订阅 |
 | `refresh_upstreams` | 外部订阅马上重新取一遍 |
 | `renew_customer` | 续期若干天,可顺带清零流量 |
 | `reset_customer_usage` | 清零已用流量 |
