@@ -228,6 +228,10 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE socks_proxies ADD COLUMN monthly_cost REAL;
   ALTER TABLE socks_proxies ADD COLUMN expire_at INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- 线路的自定义节点名:订阅和分享链接里代替面板生成的名字,空 = 用面板的
+  ALTER TABLE lines ADD COLUMN node_name TEXT NOT NULL DEFAULT '';
+  `,
 ];
 
 export function openDb(file: string): DB {

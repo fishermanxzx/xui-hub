@@ -26,6 +26,8 @@ export interface Line {
   exit_socks_id: number | null;
   exit_socks_name: string | null;
   exit_label: string;
+  /** 自定义节点名:订阅和分享链接里代替面板生成的名字,空 = 用面板的 */
+  node_name: string;
   created_at: number;
   /** 最近一次同步到的客户端流量与状态 */
   up: number;
@@ -145,6 +147,7 @@ function toLine(row: any): Line {
     exit_socks_id: row.exit_socks_id ?? null,
     exit_socks_name: row.exit_socks_name ?? null,
     exit_label: row.exit_label,
+    node_name: row.node_name ?? '',
     created_at: row.created_at,
     up: row.up ?? 0,
     down: row.down ?? 0,
@@ -331,16 +334,22 @@ export interface LineInsert {
   exit_port?: number | null;
   exit_socks_id?: number | null;
   exit_label?: string;
+  node_name?: string;
 }
 
 export function addLine(db: DB, l: LineInsert, now = Date.now()): Line {
   const info = db
     .prepare(
-      `INSERT INTO lines (customer_id, kind, panel_id, inbound_id, inbound_remark, protocol, email, exit_kind, exit_panel_id, exit_port, exit_socks_id, exit_label, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO lines (customer_id, kind, panel_id, inbound_id, inbound_remark, protocol, email, exit_kind, exit_panel_id, exit_port, exit_socks_id, exit_label, node_name, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(l.customer_id, l.kind, l.panel_id, l.inbound_id, l.inbound_remark, l.protocol, l.email, l.exit_kind ?? null, l.exit_panel_id ?? null, l.exit_port ?? null, l.exit_socks_id ?? null, l.exit_label ?? '', now);
+    .run(l.customer_id, l.kind, l.panel_id, l.inbound_id, l.inbound_remark, l.protocol, l.email, l.exit_kind ?? null, l.exit_panel_id ?? null, l.exit_port ?? null, l.exit_socks_id ?? null, l.exit_label ?? '', l.node_name ?? '', now);
   return getLine(db, Number(info.lastInsertRowid))!;
+}
+
+/** 改线路的自定义节点名(只改这里的记录,面板上不动) */
+export function setLineName(db: DB, id: number, name: string): void {
+  if (!db.prepare('UPDATE lines SET node_name = ? WHERE id = ?').run(name, id).changes) throw new InputError('线路不存在');
 }
 
 export function deleteLine(db: DB, id: number): void {

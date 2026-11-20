@@ -10,6 +10,7 @@ import type { DB } from '../db';
 import { getPanel, InputError, listPanels, type Panel } from '../panels/repo';
 import { errorText, panelKey, serial, using } from '../util';
 import type { SocksEndpoint } from '../socks/repo';
+import { renameLinks, validNodeName } from '../subscription/nodeName';
 import { XUIError } from '../xui/client';
 import { applyRoutes, parseExitSocksId, prepareExit, removeRoutes, socksServer, type RouteAdmin, type UserRoute } from './relay';
 
@@ -24,6 +25,8 @@ export interface OpenLineInput {
   inbound?: { id?: unknown; protocol?: unknown } | null;
   /** 出口:{ kind: 'socks', socks_id }(SOCKS 页登记的代理);不给就从这块面板直出 */
   exit?: unknown;
+  /** 自定义节点名(订阅里显示的名字),不给 = 用面板生成的 */
+  node_name?: unknown;
 }
 
 export interface OpenedLine {
@@ -43,6 +46,7 @@ export async function openLine(db: DB, customerId: number, input: OpenLineInput,
   const panel = getPanel(db, Number(input.panel_id));
   if (!panel) throw new InputError('面板不存在');
   const exit = wantsExit ? prepareExit(db, parseExitSocksId(input.exit)) : null;
+  const nodeName = validNodeName(input.node_name);
 
   return serial(panelKey(panel.id), () =>
     using(adminFor(panel), async (admin) => {
@@ -75,8 +79,9 @@ export async function openLine(db: DB, customerId: number, input: OpenLineInput,
           exit_port: null,
           exit_socks_id: exit?.socks_id ?? null,
           exit_label: exit?.label ?? '',
+          node_name: nodeName,
         });
-        return { line, links, created: { inbound: created ? String(inbound.remark ?? '') : null } };
+        return { line, links: renameLinks(links, nodeName), created: { inbound: created ? String(inbound.remark ?? '') : null } };
       } catch (e) {
         for (const step of undo.reverse()) await step().catch(() => {});
         throw e;

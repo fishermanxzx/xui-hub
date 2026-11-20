@@ -174,6 +174,15 @@ test('客户全流程:建客户、开线路、取链接、超额停用、清零�
     assert.deepEqual((await call('GET', `/panels/${hk.id}/clients/${encodeURIComponent('李四')}/links`)).body, { links: opened.body.links });
     assert.deepEqual((await call('GET', '/panels')).body.map((p: any) => [p.name, p.line_count]), [['hk', 1]]);
 
+    // 自定义节点名:分享链接跟着换;空 = 恢复面板的;别的客户的线路改不了;太长的不收
+    const renamed = await call('PATCH', `/customers/${c.id}/lines/${lid}`, { node_name: ' 香港 01 ' });
+    assert.equal(renamed.body.node_name, '香港 01');
+    assert.match((await call('GET', `/customers/${c.id}/lines/${lid}/links`)).body.links[0], /#%E9%A6%99%E6%B8%AF%2001$/);
+    assert.equal((await call('PATCH', `/customers/${c.id + 99}/lines/${lid}`, { node_name: 'x' })).status, 400);
+    assert.match((await call('PATCH', `/customers/${c.id}/lines/${lid}`, { node_name: 'a'.repeat(65) })).body.error, /64/);
+    assert.equal((await call('PATCH', `/customers/${c.id}/lines/${lid}`, { node_name: '' })).body.node_name, '');
+    assert.deepEqual((await call('GET', `/customers/${c.id}/lines/${lid}/links`)).body, { links: opened.body.links });
+
     // 面板上流量超了额度:同步后停用
     data.hk.clients[0].traffic = { up: 600, down: 600 };
     assert.deepEqual((await call('POST', '/sync')).body, { ops: [{ customer: '李四', panel: 'hk', email: '李四', action: 'disable', ok: true }] });

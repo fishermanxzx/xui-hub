@@ -201,6 +201,7 @@ const lf = ref({
   protocol: 'vless' as ClientProtocol,
   exit: 'direct' as 'direct' | 'socks',
   socks_id: 0,
+  node_name: '',
 });
 /** 各面板现取的入站(按面板 id 缓存) */
 const inboundsOf = ref<Record<number, PanelInbound[] | 'loading' | 'error'>>({});
@@ -240,7 +241,7 @@ function openLineFor(c: Customer) {
   lineFor.value = c;
   opened.value = null;
   const usable = panels.value.filter((p) => !p.check_error);
-  lf.value = { panel_id: usable[0]?.id ?? 0, inbound: 'new', protocol: 'vless', exit: 'direct', socks_id: socksList.value[0]?.id ?? 0 };
+  lf.value = { panel_id: usable[0]?.id ?? 0, inbound: 'new', protocol: 'vless', exit: 'direct', socks_id: socksList.value[0]?.id ?? 0, node_name: '' };
   void fetchInbounds(lf.value.panel_id);
 }
 watch(
@@ -263,6 +264,7 @@ async function open() {
   const viaSocks = f.exit === 'socks';
   const body: OpenLineInput = { kind: viaSocks ? 'relay' : 'direct', panel_id: f.panel_id, inbound: f.inbound === 'new' ? { protocol: f.protocol } : { id: f.inbound } };
   if (viaSocks) body.exit = { kind: 'socks', socks_id: f.socks_id };
+  if (f.node_name.trim()) body.node_name = f.node_name.trim();
   if (viaSocks && !confirm(t('customers.confirmRelay', { panel: panels.value.find((p) => p.id === f.panel_id)?.name ?? '' }))) return;
   opening.value = true;
   try {
@@ -292,6 +294,30 @@ async function showLinks(line: Line) {
     toastError(e);
   } finally {
     loadingLinks.value = 0;
+  }
+}
+
+// ---------- 线路:改节点名 ----------
+const renameFor = ref<Line | null>(null);
+const renameText = ref('');
+const renaming = ref(false);
+function openRename(line: Line) {
+  renameFor.value = line;
+  renameText.value = line.node_name;
+}
+async function saveRename() {
+  const line = renameFor.value;
+  if (!line) return;
+  renaming.value = true;
+  try {
+    await api.renameLine(line.customer_id, line.id, renameText.value.trim());
+    renameFor.value = null;
+    toast(t('customers.renamed'));
+    await load();
+  } catch (e) {
+    toastError(e);
+  } finally {
+    renaming.value = false;
   }
 }
 
@@ -380,6 +406,7 @@ function exitText(l: Line): string {
           <span class="chip" :class="l.kind">{{ l.kind === 'direct' ? t('customers.direct') : t('customers.relay') }}</span>
           <span class="where">
             <strong>{{ l.panel_name }}</strong>
+            <span v-if="l.node_name" class="small node-name" :title="t('customers.nodeNameTitle')">「{{ l.node_name }}」</span>
             <span class="muted small">{{ l.inbound_remark || l.inbound_id }} · {{ proto(l.protocol) }} · {{ l.email }}</span>
           </span>
           <span class="small exit" :class="{ muted: l.kind === 'direct' }">{{ exitText(l) }}</span>
@@ -389,6 +416,7 @@ function exitText(l: Line): string {
           </span>
           <span class="l-ops">
             <button class="link" :disabled="loadingLinks === l.id" @click="showLinks(l)">{{ loadingLinks === l.id ? t('common.loading') : t('customers.links') }}</button>
+            <button class="link" @click="openRename(l)">{{ t('customers.rename') }}</button>
             <button class="link danger" @click="removeLine(l)">{{ t('common.delete') }}</button>
           </span>
         </li>
@@ -474,6 +502,10 @@ function exitText(l: Line): string {
           </div>
           <p class="muted small hint">{{ t('customers.relayHint') }}</p>
         </div>
+        <label class="field">
+          {{ t('customers.nodeNameOptional') }}
+          <input v-model="lf.node_name" maxlength="64" :placeholder="t('customers.nodeNamePlaceholder')" />
+        </label>
       </div>
     </template>
     <template v-else>
@@ -544,6 +576,21 @@ function exitText(l: Line): string {
   <Modal v-if="topoFor" :title="t('customers.topoTitle', { name: topoFor.name })" wide @close="topoFor = null">
     <p class="muted small topo-hint">{{ t('customers.topoHint') }}</p>
     <TopologyGraph :customer="topoFor" :panels="panels" :socks="socksList" :height="420" />
+  </Modal>
+
+  <Modal v-if="renameFor" :title="t('customers.renameTitle', { panel: renameFor.panel_name, email: renameFor.email })" @close="renameFor = null">
+    <form id="rename-form" class="form" @submit.prevent="saveRename">
+      <label class="field">
+        {{ t('customers.nodeName') }}
+        <input v-model="renameText" maxlength="64" autofocus :placeholder="t('customers.nodeNamePlaceholder')" />
+      </label>
+      <p class="muted small hint">{{ t('customers.nodeNameHint') }}</p>
+    </form>
+    <template #footer>
+      <span class="spacer" />
+      <button @click="renameFor = null">{{ t('common.cancel') }}</button>
+      <button class="primary" form="rename-form" :disabled="renaming">{{ renaming ? t('common.saving') : t('common.save') }}</button>
+    </template>
   </Modal>
 
   <Modal v-if="linksFor" :title="t('customers.linksTitle', { email: linksFor.line.email })" @close="linksFor = null">
@@ -644,6 +691,9 @@ h2 {
 }
 .sub-meta {
   flex-basis: 100%;
+}
+.node-name {
+  font-weight: 500;
 }
 .custom-link {
   flex-basis: 100%;

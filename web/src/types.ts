@@ -132,6 +132,8 @@ export interface Line {
   exit_socks_id: number | null;
   exit_socks_name: string | null;
   exit_label: string;
+  /** 自定义节点名:订阅里代替面板生成的名字,空 = 用面板的 */
+  node_name: string;
   created_at: number;
   /** 最近一次同步到的客户端流量与状态 */
   up: number;
@@ -312,6 +314,7 @@ export interface OpenLineInput {
   panel_id: number;
   inbound: { id?: number; protocol?: ClientProtocol };
   exit?: { kind: 'socks'; socks_id: number };
+  node_name?: string;
 }
 
 export interface OpenedLine {
