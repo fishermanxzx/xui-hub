@@ -281,17 +281,17 @@ test('没有 subconverter 时非 base64 格式返回 503', async () => {
   }
 });
 
-test('Mihomo 模板:只对开启的客户、只对 Clash 格式生效;Stash 只补 dns', async () => {
+test('Mihomo 模板:只对开启的客户、只对 Clash 格式生效;Stash 用同一份头部', async () => {
   const { db, token, otherToken } = setup();
   const yaml: Converter = async (target) => ({ body: target === 'clash' ? 'port: 7890\nproxies:\n  - {name: A}\nrules:\n  - MATCH,A\n' : 'other' });
   const { link, close } = await serve(db, yaml, (name) => name === '朱先生');
   try {
     const on = await (await get(link(token), CLASH_UA)).text();
-    assert.match(on, /^tcp-concurrent: true\nunified-delay: true\nmixed-port: 7890\n/);
+    assert.match(on, /^mixed-port: 7890\nallow-lan: false\nmode: rule\n/);
     assert.ok(!/^port:/m.test(on));
     assert.match(on, /proxies:\n  - \{name: A\}\nrules:\n  - MATCH,A\n$/);
     const stash = await (await get(link(token), 'Stash/2.7.6 Clash/1.11.0')).text();
-    assert.ok(stash.includes('dns:') && !stash.includes('tcp-concurrent'));
+    assert.equal(stash, on);
     // 非 Clash 格式(仍经 subconverter 的 Surge)不套模板
     assert.equal(await (await get(link(token), 'Surge iOS/3270')).text(), 'other');
     // 未开启的客户不变

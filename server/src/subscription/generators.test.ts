@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildLoon, buildQuantumultX } from './apple';
 import { parseNode, parseNodes } from './nodes';
-import { buildSingbox, singboxLegacyDns } from './singbox';
+import { buildSingbox, singboxIndependentCache, singboxLegacyDns } from './singbox';
 
 const VLESS = 'vless://11111111-2222-3333-4444-555555555555@1.2.3.4:443?type=tcp&encryption=none&security=reality&pbk=PUBKEY&fp=chrome&sni=www.sony.com&sid=ab12&spx=%2F&flow=xtls-rprx-vision&support-x25519mlkem768=1#us-1.2.3.4';
 const VLESS_NOFLOW = 'vless://u2@5.6.7.8:8443?type=tcp&security=reality&pbk=PK2&fp=safari&sni=a.com&sid=cd#hk';
@@ -37,12 +37,28 @@ test('按 UA 里的 sing-box 版本决定 DNS 写法', () => {
   assert.equal(singboxLegacyDns('HiddifyNext/2.5.7 (android) like ClashMeta'), false);
 });
 
+test('sing-box 的 independent_cache:1.14 起弃用不写,更早的和认不出版本的(Hiddify)照写', () => {
+  assert.equal(singboxIndependentCache('SFA/1.14.4 (sing-box 1.14.4)'), false);
+  assert.equal(singboxIndependentCache('SFI/1.13.21 (sing-box 1.13.21)'), true);
+  assert.equal(singboxIndependentCache('SFA/1.11.0 (sing-box 1.11.0)'), true);
+  assert.equal(singboxIndependentCache('HiddifyNext/2.5.7 (android) like ClashMeta v2rayNG v2rayN'), true);
+  const nodes = parseNodes([VLESS]);
+  assert.equal((buildSingbox(nodes, { legacyDns: false, insecure: true, independentCache: false }) as any).dns.independent_cache, undefined);
+  assert.equal((buildSingbox(nodes, { legacyDns: false, insecure: true }) as any).dns.independent_cache, true);
+});
+
 test('sing-box:结构与节点字段', () => {
   const nodes = parseNodes([VLESS, VLESS_NOFLOW, HY2]);
   const cfg = buildSingbox(nodes, { legacyDns: false, insecure: true }) as any;
   // 国外 DNS 用 DoH 经代理(直连会被投毒,SOCKS 出口没有 UDP 也能用),国内直连;只要 IPv4
-  assert.deepEqual(cfg.dns.servers, [{ type: 'https', tag: 'remote', server: '1.1.1.1', detour: '节点选择' }, { type: 'udp', tag: 'cn', server: '119.29.29.29' }]);
-  assert.deepEqual([cfg.dns.final, cfg.dns.strategy, cfg.dns.rules], ['remote', 'ipv4_only', [{ rule_set: ['geosite-cn'], action: 'route', server: 'cn' }]]);
+  assert.deepEqual(cfg.dns.servers, [{ type: 'https', tag: 'remote', server: '1.1.1.1', detour: '节点选择' }, { type: 'https', tag: 'cn', server: '223.5.5.5' }]);
+  assert.deepEqual([cfg.dns.final, cfg.dns.strategy, cfg.dns.independent_cache, cfg.dns.rules], ['remote', 'ipv4_only', true, [{ rule_set: ['geosite-cn'], action: 'route', server: 'cn' }]]);
+  // TUN 只有 IPv4、mixed 栈;本地端口只有一个 mixed(2080);日志 warn
+  assert.deepEqual(cfg.inbounds, [
+    { tag: 'tun-in', type: 'tun', address: ['172.19.0.1/30'], auto_route: true, mtu: 9000, stack: 'mixed', strict_route: true },
+    { tag: 'mixed-in', type: 'mixed', listen: '127.0.0.1', listen_port: 2080 },
+  ]);
+  assert.deepEqual(cfg.log, { level: 'warn', timestamp: true });
   // 节点自己的域名用国内 DNS 解析(经代理解析代理的地址会转圈)
   assert.deepEqual(cfg.route.default_domain_resolver, { server: 'cn' });
   const [direct, select, auto, v1, v2, hy] = cfg.outbounds;
@@ -62,7 +78,7 @@ test('sing-box:结构与节点字段', () => {
 
   const legacy = buildSingbox(nodes, { legacyDns: true, insecure: true }) as any;
   // 1.11 不写 detour 走默认出站(代理),国内 DNS 要显式直连
-  assert.deepEqual(legacy.dns.servers, [{ tag: 'remote', address: 'https://1.1.1.1/dns-query', detour: '节点选择' }, { tag: 'cn', address: '119.29.29.29', detour: 'DIRECT' }]);
+  assert.deepEqual(legacy.dns.servers, [{ tag: 'remote', address: 'https://1.1.1.1/dns-query', detour: '节点选择' }, { tag: 'cn', address: 'https://223.5.5.5/dns-query', detour: 'DIRECT' }]);
   assert.deepEqual(legacy.dns.rules[0], { outbound: 'any', action: 'route', server: 'cn' });
   assert.equal(legacy.dns.strategy, 'ipv4_only');
   assert.equal(legacy.route.default_domain_resolver, undefined);
