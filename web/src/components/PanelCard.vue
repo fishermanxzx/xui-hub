@@ -3,7 +3,7 @@
 import { t } from '../i18n';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
-import { dueLevel, fmtAgo, fmtBytes, fmtDue, hostOf } from '../format';
+import { dueClass, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDue, hostOf } from '../format';
 import { toast, toastError } from '../toast';
 import type { ClientProtocol, CreatedClient, Customer, Panel, PanelClient, PanelDetail, PanelInbound, PanelVersions } from '../types';
 import ClientLinks from './ClientLinks.vue';
@@ -270,6 +270,8 @@ async function removeClient(c: PanelClient) {
           </span>
         </template>
         <span v-else class="muted">{{ t('card.notChecked') }}</span>
+        <span v-if="panel.monthly_cost != null" class="muted">{{ t('cost.value', { v: fmtCost(panel.monthly_cost) }) }}</span>
+        <span v-if="panel.expire_at" :class="dueClass(panel.expire_at, 'muted')">{{ t('cost.expireOn', { date: fmtDate(panel.expire_at) }) }} · {{ fmtDue(panel.expire_at) }}</span>
       </div>
       <div class="ops">
         <button class="primary small-btn" @click="openCreate">{{ t('card.createClient') }}</button>

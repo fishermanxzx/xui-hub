@@ -76,3 +76,21 @@ test('删面板:上面有客户线路要先确认;强制删连线路记录一起
   // 客户还在,只是没线路了
   assert.deepEqual(getCustomer(db, cid)!.lines, []);
 });
+
+test('面板的月成本和到期:可选;空 = 没填;只传要改的;不合法的不收', () => {
+  const db = memoryDb();
+  const p = createPanel(db, { name: 'a', base_url: 'https://x', token: 't' });
+  assert.deepEqual([p.monthly_cost, p.expire_at], [null, 0]);
+  const q = createPanel(db, { name: 'b', base_url: 'https://y', token: 't', monthly_cost: '12.345', expire_at: 1_800_000_000_000 });
+  assert.deepEqual([q.monthly_cost, q.expire_at], [12.35, 1_800_000_000_000]);
+  // 改别的字段不动它们
+  assert.deepEqual([updatePanel(db, q.id, { name: 'bb' }).monthly_cost, getPanel(db, q.id)!.expire_at], [12.35, 1_800_000_000_000]);
+  // 清空
+  const cleared = updatePanel(db, q.id, { monthly_cost: '', expire_at: 0 });
+  assert.deepEqual([cleared.monthly_cost, cleared.expire_at], [null, 0]);
+  assert.equal(updatePanel(db, q.id, { monthly_cost: 0 }).monthly_cost, 0, '0 是填了 0,不是没填');
+  assert.throws(() => updatePanel(db, q.id, { monthly_cost: -1 }), /月成本/);
+  assert.throws(() => updatePanel(db, q.id, { monthly_cost: 'abc' }), /月成本/);
+  assert.throws(() => updatePanel(db, q.id, { expire_at: 1.5 }), /到期时间/);
+  assert.equal(toPanelView(db, getPanel(db, q.id)!).monthly_cost, 0);
+});

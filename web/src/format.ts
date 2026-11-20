@@ -81,6 +81,25 @@ export function dueLevel(ms: number, now = Date.now()): '' | 'warn' | 'err' {
   return d < 0 ? 'err' : d <= 7 ? 'warn' : '';
 }
 
+/** 到期日的颜色:7 天内黄、过期红,其余 normal(或给定的默认 class) */
+export function dueClass(ms: number, normal = ''): string {
+  const level = dueLevel(ms);
+  return level === 'err' ? 'text-err' : level === 'warn' ? 'text-warn' : normal;
+}
+
+/** 金额:最多两位小数 */
+export const fmtCost = (n: number): string => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+/** 面板 / SOCKS 的成本汇总:月成本合计、没填的个数、7 天内到期和已过期的个数 */
+export function costSummary(items: { monthly_cost: number | null; expire_at: number }[], now = Date.now()) {
+  return {
+    total: items.reduce((sum, x) => sum + Math.round((x.monthly_cost ?? 0) * 100), 0) / 100,
+    unset: items.filter((x) => x.monthly_cost == null).length,
+    soon: items.filter((x) => dueLevel(x.expire_at, now) === 'warn').length,
+    overdue: items.filter((x) => dueLevel(x.expire_at, now) === 'err').length,
+  };
+}
+
 /** 客户的订阅链接:服务端配了 SUB_BASE_URL 用它,否则用当前打开后台的地址 */
 export function subUrl(c: { sub_url: string | null; sub_token: string }): string {
   return c.sub_url ?? `${location.origin}/sub/${c.sub_token}`;

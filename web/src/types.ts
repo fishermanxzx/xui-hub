@@ -15,6 +15,9 @@ export interface Panel {
   panel_version: string | null;
   xray_version: string | null;
   xray_state: string | null;
+  /** 月成本,null = 没填;到期时间(毫秒),0 = 没填 */
+  monthly_cost: number | null;
+  expire_at: number;
   /** 记在这块面板上的客户线路数;拿它当落地出口的中转线路数 */
   line_count: number;
   exit_line_count: number;
@@ -36,6 +39,8 @@ export interface PanelInput {
   name?: string;
   base_url?: string;
   token?: string;
+  monthly_cost?: number | null;
+  expire_at?: number;
 }
 
 export interface PanelClient {
@@ -86,6 +91,9 @@ export interface Socks {
   username: string;
   has_password: boolean;
   remark: string;
+  /** 月成本,null = 没填;到期时间(毫秒),0 = 没填 */
+  monthly_cost: number | null;
+  expire_at: number;
   created_at: number;
   updated_at: number;
   check: SocksCheck | null;
@@ -98,6 +106,8 @@ export interface SocksInput {
   /** 新建必填;修改时留空 = 不改 */
   address?: string;
   remark?: string;
+  monthly_cost?: number | null;
+  expire_at?: number;
 }
 
 export type ClientProtocol = 'vless' | 'hy2';

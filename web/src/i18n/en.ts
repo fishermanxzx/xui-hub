@@ -135,6 +135,19 @@ const en: Messages = {
     update: 'Update now',
     updating: 'Updating…',
   },
+  cost: {
+    col: 'Monthly cost',
+    colExpire: 'Expires',
+    field: 'Monthly cost (blank = not set)',
+    expireField: 'Expiry date (blank = not set)',
+    value: 'Cost {v}/mo',
+    expireOn: 'expires {date}',
+    total: 'Monthly cost total {total}',
+    unset: '{n} not set',
+    soon: '{n} expiring within 7 days',
+    overdue: '{n} expired',
+    hint: 'Monthly cost and expiry date are for bookkeeping and renewal reminders only; they change nothing. Highlighted yellow within 7 days of expiry, red once expired.',
+  },
   socks: {
     title: 'SOCKS',
     intro: 'SOCKS5 proxies that lines can use as their exit: proxies you bought, or socks / mixed inbounds you created yourself on other machines. Tests run from the machine xui-hub is on; if the provider only allows certain source IPs, results on the line\'s panel may differ.',
@@ -172,7 +185,7 @@ const en: Messages = {
     keepBlank: ' (leave blank to keep)',
     addressPlaceholder: "socks5://user:pass{'@'}host:port or host:port:user:pass",
     remark: 'Note',
-    remarkPlaceholder: 'Provider, expiry date, etc.',
+    remarkPlaceholder: 'Provider, etc.',
     hint: "Accepted: socks5://user:pass{'@'}host:port, host:port:user:pass, host:port (no auth). Connectivity is tested once after saving.",
   },
   panels: {

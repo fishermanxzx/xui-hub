@@ -1,14 +1,15 @@
 <script setup lang="ts">
 // SOCKS 页:登记购买的 SOCKS5 代理,测连通性(出口 IP / 地区 / 延迟),给客户页的中转当出口用。
 import { t } from '../i18n';
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { api } from '../api';
 import Modal from '../components/Modal.vue';
-import { fmtAgo, region } from '../format';
+import { costSummary, dateInputToMs, dueClass, fmtAgo, fmtCost, fmtDate, fmtDue, msToDateInput, region } from '../format';
 import { toast, toastError } from '../toast';
 import type { Socks, SocksInput } from '../types';
 
 const list = ref<Socks[]>([]);
+const summary = computed(() => costSummary(list.value));
 const checkingAll = ref(false);
 const checking = ref(new Set<number>());
 
@@ -52,16 +53,16 @@ async function checkAll() {
 const editing = ref<Socks | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', address: '', remark: '' });
+const form = ref({ name: '', address: '', remark: '', cost: '', expire: '' });
 
 function openForm(s: Socks | null) {
   editing.value = s;
-  form.value = { name: s?.name ?? '', address: '', remark: s?.remark ?? '' };
+  form.value = { name: s?.name ?? '', address: '', remark: s?.remark ?? '', cost: s?.monthly_cost == null ? '' : String(s.monthly_cost), expire: msToDateInput(s?.expire_at ?? 0) };
   showForm.value = true;
 }
 
 async function submit() {
-  const body: SocksInput = { name: form.value.name, remark: form.value.remark };
+  const body: SocksInput = { name: form.value.name, remark: form.value.remark, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: dateInputToMs(form.value.expire) };
   if (form.value.address.trim()) body.address = form.value.address.trim();
   const used = editing.value?.used_by ?? 0;
   if (body.address && used && !confirm(t('socks.confirmAddress', { n: used }))) return;
@@ -101,6 +102,12 @@ async function remove(s: Socks) {
     <div>
       <h2>SOCKS</h2>
       <p class="muted small">{{ t('socks.intro') }}</p>
+      <p v-if="list.length" class="small summary">
+        <span>{{ t('cost.total', { total: fmtCost(summary.total) }) }}</span>
+        <span v-if="summary.unset" class="muted">{{ t('cost.unset', { n: summary.unset }) }}</span>
+        <span v-if="summary.soon" class="text-warn">{{ t('cost.soon', { n: summary.soon }) }}</span>
+        <span v-if="summary.overdue" class="text-err">{{ t('cost.overdue', { n: summary.overdue }) }}</span>
+      </p>
     </div>
     <div class="row">
       <button :disabled="checkingAll || !list.length" @click="checkAll">{{ checkingAll ? t('socks.testing') : t('socks.testAll') }}</button>
@@ -119,6 +126,8 @@ async function remove(s: Socks) {
             <th>{{ t('socks.colCheck') }}</th>
             <th>{{ t('socks.colExit') }}</th>
             <th>{{ t('socks.colUsed') }}</th>
+            <th>{{ t('cost.col') }}</th>
+            <th>{{ t('cost.colExpire') }}</th>
             <th>{{ t('socks.colRemark') }}</th>
             <th></th>
           </tr>
@@ -139,6 +148,11 @@ async function remove(s: Socks) {
               <span v-else class="muted">—</span>
             </td>
             <td class="small"><template v-if="s.used_by">{{ t('socks.usedBy', { n: s.used_by }, s.used_by) }}</template><span v-else class="muted">—</span></td>
+            <td class="small mono"><template v-if="s.monthly_cost != null">{{ fmtCost(s.monthly_cost) }}</template><span v-else class="muted">—</span></td>
+            <td class="small nowrap">
+              <template v-if="s.expire_at">{{ fmtDate(s.expire_at) }} <span :class="dueClass(s.expire_at, 'muted')">{{ fmtDue(s.expire_at) }}</span></template>
+              <span v-else class="muted">—</span>
+            </td>
             <td class="muted small">{{ s.remark || '' }}</td>
             <td class="num">
               <div class="ops">
@@ -161,8 +175,12 @@ async function remove(s: Socks) {
         {{ t('socks.address') }}{{ editing ? t('socks.keepBlank') : '' }}
         <input v-model="form.address" :required="!editing" :placeholder="t('socks.addressPlaceholder')" autocomplete="off" />
       </label>
+      <div class="two">
+        <label class="field">{{ t('cost.field') }}<input v-model="form.cost" type="number" min="0" step="0.01" /></label>
+        <label class="field">{{ t('cost.expireField') }}<input v-model="form.expire" type="date" /></label>
+      </div>
       <label class="field">{{ t('socks.remark') }}<input v-model="form.remark" :placeholder="t('socks.remarkPlaceholder')" /></label>
-      <p class="muted small hint">{{ t('socks.hint') }}</p>
+      <p class="muted small hint">{{ t('socks.hint') }} {{ t('cost.hint') }}</p>
     </form>
     <template #footer>
       <span class="spacer" />
@@ -207,5 +225,18 @@ h2 {
 }
 .hint {
   margin: 0;
+}
+.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.nowrap {
+  white-space: nowrap;
 }
 </style>

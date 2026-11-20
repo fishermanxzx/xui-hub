@@ -1,15 +1,17 @@
 <script setup lang="ts">
 // 面板页:每块面板一张卡片,展开看入站和客户端;添加 / 编辑面板用弹窗。
 import { t } from '../i18n';
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
 import Modal from '../components/Modal.vue';
 import PanelCard from '../components/PanelCard.vue';
+import { costSummary, dateInputToMs, fmtCost, msToDateInput } from '../format';
 import { toast, toastError } from '../toast';
 import type { Panel, PanelInput } from '../types';
 
 const panels = ref<Panel[]>([]);
 const checking = ref(false);
+const summary = computed(() => costSummary(panels.value));
 
 /** 展开的卡片,记在浏览器里,刷新后保持 */
 const OPEN_KEY = 'xui-hub.openPanels';
@@ -58,16 +60,16 @@ async function checkAll() {
 const editing = ref<Panel | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', base_url: '', token: '' });
+const form = ref({ name: '', base_url: '', token: '', cost: '', expire: '' });
 
 function openForm(panel: Panel | null) {
   editing.value = panel;
-  form.value = { name: panel?.name ?? '', base_url: panel?.base_url ?? '', token: '' };
+  form.value = { name: panel?.name ?? '', base_url: panel?.base_url ?? '', token: '', cost: panel?.monthly_cost == null ? '' : String(panel.monthly_cost), expire: msToDateInput(panel?.expire_at ?? 0) };
   showForm.value = true;
 }
 
 async function submit() {
-  const body: PanelInput = { name: form.value.name, base_url: form.value.base_url };
+  const body: PanelInput = { name: form.value.name, base_url: form.value.base_url, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: dateInputToMs(form.value.expire) };
   if (form.value.token) body.token = form.value.token;
   saving.value = true;
   try {
@@ -111,6 +113,12 @@ onUnmounted(() => clearInterval(timer));
     <div>
       <h2>{{ t('panels.title') }}</h2>
       <p class="muted small">{{ t('panels.intro') }}</p>
+      <p v-if="panels.length" class="small summary">
+        <span>{{ t('cost.total', { total: fmtCost(summary.total) }) }}</span>
+        <span v-if="summary.unset" class="muted">{{ t('cost.unset', { n: summary.unset }) }}</span>
+        <span v-if="summary.soon" class="text-warn">{{ t('cost.soon', { n: summary.soon }) }}</span>
+        <span v-if="summary.overdue" class="text-err">{{ t('cost.overdue', { n: summary.overdue }) }}</span>
+      </p>
     </div>
     <div class="row">
       <button :disabled="checking || !panels.length" @click="checkAll">{{ checking ? t('panels.checking') : t('panels.checkAll') }}</button>
@@ -131,7 +139,11 @@ onUnmounted(() => clearInterval(timer));
         {{ t('panels.token') }}{{ editing ? t('panels.keepBlank') : '' }}
         <input v-model="form.token" type="password" autocomplete="off" :required="!editing" />
       </label>
-      <p class="muted small hint">{{ t('panels.hint') }}</p>
+      <div class="two">
+        <label class="field">{{ t('cost.field') }}<input v-model="form.cost" type="number" min="0" step="0.01" /></label>
+        <label class="field">{{ t('cost.expireField') }}<input v-model="form.expire" type="date" /></label>
+      </div>
+      <p class="muted small hint">{{ t('panels.hint') }} {{ t('cost.hint') }}</p>
     </form>
     <template #footer>
       <span class="spacer" />
@@ -168,5 +180,15 @@ h2 {
 }
 .hint {
   margin: 0;
+}
+.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
 }
 </style>

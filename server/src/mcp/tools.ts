@@ -229,7 +229,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'list_panels',
     title: '面板列表',
-    description: '列出接入的 3x-ui 面板:id、名称、是否连得上、版本、入站和客户端数量。开线路前用它拿 panel_id。',
+    description: '列出接入的 3x-ui 面板:id、名称、是否连得上、版本、入站和客户端数量、月成本和到期时间。开线路前用它拿 panel_id。',
     inputSchema: obj({}),
     annotations: { readOnlyHint: true },
     run: async (_a, ctx) =>
@@ -244,6 +244,8 @@ export const TOOLS: ToolDef[] = [
         xray_state: p.xray_state ?? null,
         inbounds: p.inbound_count ?? null,
         clients: p.client_count ?? null,
+        monthly_cost: p.monthly_cost ?? null,
+        expire_at: iso(p.expire_at ?? 0),
       })),
   },
   {
@@ -257,7 +259,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'list_socks',
     title: 'SOCKS 代理列表',
-    description: '列出登记的 SOCKS5 代理(开线路时可选作出口):id、名称、地址、最近一次连通性测试的出口 IP 和地区。不含密码。',
+    description: '列出登记的 SOCKS5 代理(开线路时可选作出口):id、名称、地址、最近一次连通性测试的出口 IP 和地区、月成本(monthly_cost)和到期时间(expire_at,毫秒,0 = 不限期)。不含密码。',
     inputSchema: obj({}),
     annotations: { readOnlyHint: true },
     run: (_a, ctx) => call(ctx, 'GET', '/socks'),
