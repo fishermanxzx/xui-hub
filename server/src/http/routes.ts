@@ -31,6 +31,7 @@ import { checkCustomTemplate, DEFAULT_TEMPLATE, isCustomTemplate, TEMPLATES, val
 import { listSubFetches, subClientCounts, subIpsSince } from '../subscription/fetchLog';
 import { deleteDevice, deviceCounts, listDevices } from '../subscription/devices';
 import { renameLinks, validNodeName } from '../subscription/nodeName';
+import { fetchUpstream, refreshUpstreams, type UpstreamFetcher } from '../subscription/upstream';
 import { createToken, deleteToken, listTokens, TOKEN_BLOCKED, verifyToken } from './tokens';
 import { listGrants, revokeGrant } from '../mcp/oauth';
 import { enforceCustomers } from '../lines/enforce';
@@ -73,6 +74,8 @@ export interface RouteDeps {
   updater?: Updater;
   /** 拉自定义订阅模板(保存前校验用);测试里换成假的 */
   fetchTemplate?: TemplateFetcher;
+  /** 拉外部订阅;测试里换成假的 */
+  fetchUpstream?: UpstreamFetcher;
 }
 
 type Handler = (req: Request, res: Response) => unknown;
@@ -343,11 +346,25 @@ export function apiRouter(deps: RouteDeps): Router {
     const next = validTemplate(input);
     if (next !== current && isCustomTemplate(next)) await checkCustomTemplate(next, deps.fetchTemplate);
   };
+  /** 新填的外部订阅保存后马上取一次,结果(节点数 / 取不到的原因)跟着客户一起返回;取不到也照样保存 */
+  const upstreamFetcher = deps.fetchUpstream ?? fetchUpstream;
+  const fetchNewUpstreams = (id: number) => refreshUpstreams(db, id, upstreamFetcher, { onlyNew: true });
   r.post(
     '/customers',
     wrap(async (req) => {
       await checkTemplate(req.body?.sub_template);
-      return customerOf(createCustomer(db, req.body ?? {}));
+      const id = createCustomer(db, req.body ?? {});
+      await fetchNewUpstreams(id);
+      return customerOf(id);
+    }),
+  );
+  // 外部订阅现在就重新取一遍(不管多久前取过)
+  r.post(
+    '/customers/:id/upstreams/refresh',
+    wrap(async (req) => {
+      const c = plainCustomer(idParam(req));
+      await refreshUpstreams(db, c.id, upstreamFetcher, { force: true });
+      return customerOf(c.id);
     }),
   );
   // 改了额度 / 到期马上执行一次停用 / 恢复,不等下一轮同步
@@ -357,7 +374,7 @@ export function apiRouter(deps: RouteDeps): Router {
       const before = plainCustomer(idParam(req));
       await checkTemplate(req.body?.sub_template, before.sub_template);
       updateCustomer(db, before.id, req.body ?? {});
-      const ops = await enforceCustomers(db, deps.clientFor, before.id);
+      const [ops] = await Promise.all([enforceCustomers(db, deps.clientFor, before.id), fetchNewUpstreams(before.id)]);
       return { ...customerOf(before.id), ops };
     }),
   );

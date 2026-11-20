@@ -6,15 +6,16 @@ import { getCustomer } from '../customers/repo';
 import type { DB } from '../db';
 import { getPanel } from '../panels/repo';
 import { getSocks } from '../socks/repo';
+import type { UpstreamFetcher } from '../subscription/upstream';
 import { addPanel, fakePanels, memoryDb, relayXray, vlessInbound, type FakePanel } from '../testUtil';
 import { XUIError } from '../xui/client';
 import { apiRouter } from './routes';
 
 /** 起一个只挂 /api 的服务;call 返回状态码、响应体和这次下发的 cookie */
-async function serve(db: DB, data: Record<string, FakePanel> = {}, adminPassword = '', subBaseUrl = '') {
+async function serve(db: DB, data: Record<string, FakePanel> = {}, adminPassword = '', subBaseUrl = '', fetchUpstream?: UpstreamFetcher) {
   const app = express();
   app.use(express.json());
-  app.use('/api', apiRouter({ db, adminPassword, clientFor: fakePanels(data), subBaseUrl, subLogDays: 7 }));
+  app.use('/api', apiRouter({ db, adminPassword, clientFor: fakePanels(data), subBaseUrl, subLogDays: 7, fetchUpstream }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
@@ -457,6 +458,43 @@ test('报错分类:输入不对 400,面板那头的问题 502,其余 500 并打�
     data.a.fail = { clientLinks: '意料之外' };
     assert.deepEqual(await status('GET', `/panels/${a.id}/clients/x/links`), [500, '意料之外']);
     assert.equal(logged.mock.callCount(), 1);
+  } finally {
+    await close();
+  }
+});
+
+test('外部订阅:保存时新填的马上取一次(取不到也照样保存),没变的不重取;「重新取」不管多久前取过都取', async () => {
+  const db = memoryDb();
+  const calls: string[] = [];
+  let up = true;
+  const fetchUpstream: UpstreamFetcher = async (url) => {
+    calls.push(url);
+    if (!up) throw new Error('fetch failed');
+    return { status: 200, body: 'vless://u@203.0.113.1:443?security=reality&pbk=K#a\nvless://u@203.0.113.2:443?security=reality&pbk=K#b', userinfo: null };
+  };
+  const { call, close } = await serve(db, {}, '', '', fetchUpstream);
+  try {
+    const A = 'https://sub.example.com/a';
+    const B = 'https://sub.example.com/b';
+    const made = await call('POST', '/customers', { name: '小王', upstreams: [A], upstream_mode: 'replace' });
+    assert.equal(made.status, 200);
+    assert.deepEqual([made.body.upstream_mode, made.body.upstream_userinfo, made.body.upstreams.map((u: any) => [u.url, u.nodes, u.error])], ['replace', false, [[A, 2, '']]]);
+    assert.deepEqual(calls, [A]);
+
+    up = false;
+    const edited = await call('PATCH', `/customers/${made.body.id}`, { upstreams: `${A}\n${B}`, upstream_userinfo: true });
+    assert.equal(edited.status, 200);
+    assert.deepEqual(edited.body.upstreams.map((u: any) => [u.url, u.nodes, !!u.error]), [[A, 2, false], [B, 0, true]]);
+    assert.equal(edited.body.upstream_userinfo, true);
+    assert.deepEqual(calls, [A, B]);
+
+    up = true;
+    const fresh = await call('POST', `/customers/${made.body.id}/upstreams/refresh`);
+    assert.deepEqual(fresh.body.upstreams.map((u: any) => [u.nodes, u.error]), [[2, ''], [2, '']]);
+    assert.equal(calls.length, 4);
+
+    assert.equal((await call('PATCH', `/customers/${made.body.id}`, { upstreams: ['sub.example.com/x'] })).status, 400);
+    assert.equal((await call('POST', '/customers/999/upstreams/refresh')).status, 400);
   } finally {
     await close();
   }

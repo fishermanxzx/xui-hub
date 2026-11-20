@@ -31,3 +31,32 @@ export function renameLinks(links: string[], name: string): string[] {
   if (!name) return links;
   return links.map((l, i) => renameLink(l, i === 0 ? name : `${name} ${i + 1}`));
 }
+
+/** 链接里的节点名:vmess 是 ps,其余是 # 后面那段;没有返回空串 */
+export function linkName(link: string): string {
+  if (/^vmess:\/\//i.test(link)) {
+    try {
+      const json = JSON.parse(Buffer.from(link.slice(8), 'base64').toString('utf8'));
+      if (json && typeof json === 'object') return String(json.ps ?? '');
+    } catch {
+      // 不是 base64 JSON 的写法:按 # 处理
+    }
+  }
+  const hash = link.indexOf('#');
+  if (hash < 0) return '';
+  try {
+    return decodeURIComponent(link.slice(hash + 1));
+  } catch {
+    return link.slice(hash + 1);
+  }
+}
+
+/**
+ * 外部订阅的节点名:空 = 用对方的;带 {name}(原来的名字)或 {n}(第几个,从 1 起)的按模板换,
+ * 如「美国 {n}」「专线-{name}」;都不带就和线路的自定义节点名一样,依次是 名字、名字 2、名字 3…
+ */
+export function renameByTemplate(links: string[], template: string): string[] {
+  if (!template) return links;
+  if (!/\{name\}|\{n\}/.test(template)) return renameLinks(links, template);
+  return links.map((l, i) => renameLink(l, template.replace(/\{name\}/g, linkName(l)).replace(/\{n\}/g, String(i + 1))));
+}

@@ -144,6 +144,26 @@ export interface Line {
   synced_at: number | null;
 }
 
+/** 客户的一个外部订阅(别处的订阅地址) */
+export interface Upstream {
+  id: number;
+  url: string;
+  /** 节点名:空 = 用对方的;可带 {name}(原名)/ {n}(序号) */
+  node_name: string;
+  /** 订阅里的节点名(改名之后的,最多 100 个) */
+  names: string[];
+  /** 上次成功取到的节点数(取不到时照常用这些) */
+  nodes: number;
+  /** 认不出协议、没出的节点数 */
+  skipped: number;
+  /** 那边给的流量和到期(字节 / 秒) */
+  userinfo: { upload: number; download: number; total: number; expire: number } | null;
+  ok_at: number;
+  tried_at: number;
+  /** 上次没取到的原因,成功了为空 */
+  error: string;
+}
+
 export interface Customer {
   id: number;
   name: string;
@@ -167,6 +187,12 @@ export interface Customer {
   sub_url: string | null;
   /** 自定义订阅链接(路径 + 参数),访问它们和访问订阅链接一样 */
   sub_links: string[];
+  /** 外部订阅 */
+  upstreams: Upstream[];
+  /** merge = 外部订阅的节点和线路的一起给;replace = 只给外部订阅的 */
+  upstream_mode: 'merge' | 'replace';
+  /** 订阅里的流量和到期用外部订阅给的 */
+  upstream_userinfo: boolean;
   sub_fetched_at: number | null;
   sub_fetched_ua: string | null;
   /** 近几天拉订阅用过几个客户端(按 UA 区分)、来自几个 IP */
@@ -213,6 +239,9 @@ export interface CustomerInput {
   sub_template?: string;
   limit_devices?: number;
   sub_links?: string[];
+  upstreams?: { url: string; node_name?: string }[];
+  upstream_mode?: 'merge' | 'replace';
+  upstream_userinfo?: boolean;
 }
 
 export interface SubTemplate {

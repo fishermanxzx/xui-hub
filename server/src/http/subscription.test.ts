@@ -6,6 +6,7 @@ import { addLine, createCustomer, getCustomer, resetSubToken, setLineName, updat
 import type { Converter } from '../subscription/convert';
 import { listSubFetches, pruneSubFetches } from '../subscription/fetchLog';
 import type { LinkFetcher } from '../subscription/service';
+import { HOP_HEADER, type UpstreamFetcher } from '../subscription/upstream';
 import { templateUrl } from '../subscription/templates';
 import { addPanel, memoryDb } from '../testUtil';
 import { subscriptionRouter, type SubscriptionDeps } from './subscription';
@@ -55,8 +56,9 @@ async function serve(
   convert: Converter | null,
   mihomoTemplate: (name: string) => boolean = () => false,
   linkFetcher: LinkFetcher = fetcher,
+  upstreamFetcher?: UpstreamFetcher,
 ) {
-  const deps: SubscriptionDeps = { db, fetcher: linkFetcher, convert, internalBaseUrl: '', internalSecret: 'internal-secret', mihomoTemplate };
+  const deps: SubscriptionDeps = { db, fetcher: linkFetcher, convert, internalBaseUrl: '', internalSecret: 'internal-secret', mihomoTemplate, upstreamFetcher };
   const app = express();
   app.use(subscriptionRouter(deps));
   const server = app.listen(0, '127.0.0.1');
@@ -410,6 +412,171 @@ test('设备数上限:名额内的设备登记放行,满了新设备 403;自助�
     assert.equal(listDevices(db, id).length, 0);
     assert.equal(updateCustomer(db, id, { limit_devices: 0 }), undefined);
     assert.throws(() => updateCustomer(db, id, { limit_devices: 101 }), /设备数上限/);
+  } finally {
+    await close();
+  }
+});
+
+// ---------- 外部订阅 ----------
+
+const UP_URL = 'https://sub.example.com/sub/reseller-token';
+const UP_LINK = 'vless://up@203.0.113.20:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.example.com&fp=chrome&pbk=PK&sid=ab&type=tcp#reseller';
+const UP_INFO = 'upload=10; download=20; total=3000; expire=4102444800';
+
+/** 假的外部订阅:按 v2rayN 回 base64 节点和流量头;记下每次请求 */
+function upstream(calls: string[], reply: () => { status: number; body: string; userinfo: string | null } = () => ({ status: 200, body: Buffer.from(`${UP_LINK}\n`).toString('base64'), userinfo: UP_INFO })): UpstreamFetcher {
+  return async (url) => {
+    calls.push(url);
+    return reply();
+  };
+}
+
+/** 假的 subconverter:把 vless 链接写成 Clash 单行节点(带 reality-opts),用来看 mlkem 的处理 */
+const yamlConverter: Converter = async (_target, source) => {
+  const links = Buffer.from(await (await fetch(source)).text(), 'base64').toString().split('\r\n').filter(Boolean);
+  const rows = links.map((l) => {
+    const u = new URL(l);
+    const q = u.searchParams;
+    return `  - {name: ${decodeURIComponent(u.hash.slice(1))}, server: ${u.hostname}, port: ${u.port}, type: ${u.protocol.slice(0, -1)}${q.get('pbk') ? `, reality-opts: {public-key: ${q.get('pbk')}, short-id: ${q.get('sid')}}` : ''}}`;
+  });
+  return { body: `proxies:\n${rows.join('\n')}\n` };
+};
+
+test('外部订阅(合并):每种格式都带上外部的节点;流量头默认用客户自己的,开了透传用外部的', async () => {
+  const { db, id, token } = setup();
+  updateCustomer(db, id, { upstreams: [UP_URL] });
+  const calls: string[] = [];
+  const conv: Call[] = [];
+  const { link, close } = await serve(db, fakeConverter(conv), () => false, fetcher, upstream(calls));
+  try {
+    const b64 = await get(link(token), V2RAYN_UA);
+    assert.equal(await decode(b64), `${NODES}\n${UP_LINK}`);
+    assert.equal(b64.headers.get('subscription-userinfo'), USERINFO);
+    // 60 秒内不重复取;Clash 经 subconverter 回源也是同一份
+    const clash = await (await get(link(token), CLASH_UA)).text();
+    assert.ok(clash.endsWith(`${NODES}\n${UP_LINK}`));
+    assert.equal(calls.length, 1);
+    const sing = JSON.parse(await (await get(link(token), SING_UA)).text());
+    const out = sing.outbounds.find((o: any) => o.tag === 'reseller');
+    assert.deepEqual([out.type, out.flow, out.tls.reality.public_key, out.tls.reality.short_id, out.tls.utls.fingerprint], ['vless', 'xtls-rprx-vision', 'PK', 'ab', 'chrome']);
+    assert.ok(Buffer.from(await (await get(link(token), 'Quantumult X/1.0')).text(), 'base64').toString().includes('reality-base64-pubkey=PK'));
+    assert.ok((await (await get(link(token), 'Loon/3.2')).text()).includes('reseller=VLESS,203.0.113.20,443'));
+    assert.deepEqual(calls, [UP_URL]);
+
+    updateCustomer(db, id, { upstream_userinfo: true });
+    for (const ua of [V2RAYN_UA, CLASH_UA, SING_UA]) assert.equal((await get(link(token), ua)).headers.get('subscription-userinfo'), UP_INFO, ua);
+  } finally {
+    await close();
+  }
+});
+
+test('外部订阅(只给外部的):不去取自己线路的节点;外部的 REALITY 节点照样按客户端补 / 不补 mlkem', async () => {
+  const { db, id, token } = setup();
+  updateCustomer(db, id, { upstreams: [UP_URL], upstream_mode: 'replace' });
+  const panels: LinkFetcher = async () => {
+    throw new Error('不该去取面板');
+  };
+  const { link, close } = await serve(db, yamlConverter, () => false, panels, upstream([]));
+  try {
+    assert.equal(await decode(await get(link(token), V2RAYN_UA)), UP_LINK);
+    assert.match(await (await get(link(token), CLASH_UA)).text(), /name: reseller, .*reality-opts: \{public-key: PK, short-id: ab, support-x25519mlkem768: true\}/);
+    const rocket = await (await get(link(token), ROCKET_UA)).text();
+    assert.match(rocket, /reality-opts: \{public-key: PK, short-id: ab\}/);
+    assert.doesNotMatch(rocket, /mlkem/);
+  } finally {
+    await close();
+  }
+});
+
+test('外部订阅:取不到时用上次的;从没取到过且只给外部的 → 502;别处 xui-hub 来拉(带标记头)只给自己线路的', async () => {
+  const { db, id, token } = setup();
+  updateCustomer(db, id, { upstreams: [UP_URL], upstream_mode: 'replace' });
+  let ok = false;
+  const calls: string[] = [];
+  const flaky = upstream(calls, () => (ok ? { status: 200, body: UP_LINK, userinfo: null } : { status: 500, body: 'oops', userinfo: null }));
+  const { link, close } = await serve(db, fakeConverter([]), () => false, fetcher, flaky);
+  try {
+    assert.equal((await get(link(token), V2RAYN_UA)).status, 502);
+    ok = true;
+    db.prepare('UPDATE upstream_subs SET tried_at = 0').run();
+    assert.equal(await decode(await get(link(token), V2RAYN_UA)), UP_LINK);
+    ok = false;
+    db.prepare('UPDATE upstream_subs SET tried_at = 0').run();
+    assert.equal(await decode(await get(link(token), V2RAYN_UA)), UP_LINK);
+    assert.equal(calls.length, 3);
+    assert.match(getCustomer(db, id)!.upstreams[0].error, /HTTP 500/);
+
+    // 带标记头:不取也不给外部的,只给自己线路的(只给外部时也一样)
+    db.prepare('UPDATE upstream_subs SET tried_at = 0').run();
+    const hop = await fetch(link(token), { headers: { 'User-Agent': V2RAYN_UA, [HOP_HEADER]: '1' } });
+    assert.equal(await decode(hop), NODES);
+    const hopClash = await fetch(link(token), { headers: { 'User-Agent': CLASH_UA, [HOP_HEADER]: '1' } });
+    assert.ok((await hopClash.text()).endsWith(`|${NODES}`));
+    assert.equal(calls.length, 3);
+  } finally {
+    await close();
+  }
+});
+
+test('外部订阅:客户到期 / 超额时不去取,也不出节点', async () => {
+  const { db, id, token } = setup();
+  updateCustomer(db, id, { upstreams: [UP_URL], upstream_mode: 'replace', expire_at: 1 });
+  const calls: string[] = [];
+  const { link, close } = await serve(db, fakeConverter([]), () => false, fetcher, upstream(calls));
+  try {
+    assert.equal(await (await get(link(token), V2RAYN_UA)).text(), '');
+    assert.equal((await get(link(token), CLASH_UA)).status, 403);
+    assert.equal((await get(link(token), BROWSER_UA)).status, 200);
+    assert.deepEqual(calls, []);
+  } finally {
+    await close();
+  }
+});
+
+test('自助页:列出外部订阅的节点数,不露地址;开了透传时流量和到期显示外部的', async () => {
+  const { db, id, token } = setup();
+  updateCustomer(db, id, { upstreams: [UP_URL] });
+  const { link, close } = await serve(db, fakeConverter([]), () => false, fetcher, upstream([]));
+  const page = async () => (await fetch(link(token), { headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html' } })).text();
+  try {
+    let html = await page();
+    assert.match(html, /2 条线路 \+ 1 个外部节点/);
+    assert.match(html, /外部订阅<\/span><span class="muted">1 个节点/);
+    assert.ok(!html.includes('sub.example.com') && !html.includes('reseller-token'));
+    assert.match(html, /已用 0 KB \/ 1 KB/);
+
+    updateCustomer(db, id, { upstream_userinfo: true, upstream_mode: 'replace' });
+    html = await page();
+    assert.match(html, /已用 0 KB \/ 3 KB/);
+    assert.match(html, /到期:2100-01-01/);
+    assert.match(html, /<div class="muted">1 个节点 · /);
+  } finally {
+    await close();
+  }
+});
+
+test('外部订阅:只要节点,分组和规则用本系统的(Clash 模板、sing-box 配置);节点名可以改', async () => {
+  const { db, id, token } = setup();
+  updateCustomer(db, id, { upstreams: [{ url: UP_URL, node_name: '美国家宽' }], upstream_mode: 'replace', sub_template: 'ACL4SSR_Online_Full' });
+  const theirs = `proxy-groups:
+  - {name: 上游的分组, type: select, proxies: [reseller]}
+rules:
+  - DOMAIN-SUFFIX,upstream-rule.example,上游的分组
+proxies:
+  - {name: reseller, type: vless, server: 203.0.113.20, port: 443, uuid: up, tls: true, flow: xtls-rprx-vision, reality-opts: {public-key: PK, short-id: ab}}
+`;
+  const conv: Call[] = [];
+  const { link, close } = await serve(db, fakeConverter(conv), () => false, fetcher, upstream([], () => ({ status: 200, body: theirs, userinfo: null })));
+  try {
+    const clash = await (await get(link(token), CLASH_UA)).text();
+    // subconverter 拿到的是本系统的模板,节点源只有节点链接
+    assert.equal(conv[0].options.config, templateUrl('ACL4SSR_Online_Full'));
+    assert.doesNotMatch(clash, /upstream-rule|上游的分组/);
+    assert.match(clash, /#%E7%BE%8E%E5%9B%BD%E5%AE%B6%E5%AE%BD$/);
+    const sing = JSON.parse(await (await get(link(token), SING_UA)).text());
+    assert.deepEqual(sing.outbounds.find((o: any) => o.type === 'selector').outbounds, ['自动选择', '美国家宽']);
+    assert.doesNotMatch(JSON.stringify(sing), /upstream-rule|上游的分组/);
+    assert.match(await decode(await get(link(token), V2RAYN_UA)), /^vless:\/\/up@203\.0\.113\.20:443\?.*#%E7%BE%8E%E5%9B%BD%E5%AE%B6%E5%AE%BD$/);
   } finally {
     await close();
   }

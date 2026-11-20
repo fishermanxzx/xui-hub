@@ -4,6 +4,7 @@
 import qrcode from 'qrcode-generator';
 import type { CustomerView } from '../customers/repo';
 import type { SubDevice } from '../subscription/devices';
+import type { Userinfo } from '../subscription/upstream';
 
 const GB = 1024 ** 3;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
@@ -55,6 +56,8 @@ export interface SubPageData {
   devices?: SubDevice[];
   /** 刚移除了一台设备 */
   removed?: boolean;
+  /** 配了外部订阅:那边的节点数;replace = 只给那边的节点;userinfo = 流量和到期用那边给的 */
+  upstream?: { nodes: number; replace: boolean; userinfo: Userinfo | null };
 }
 
 /** UA 里的客户端名和版本,如 "clash-verge/v2.4.2 (…)" → "clash-verge v2.4.2" */
@@ -73,22 +76,31 @@ const fmtAgo = (ms: number, now: number) => {
 
 const STATE: Record<string, { label: string; cls: string }> = { active: { label: '正常', cls: 'ok' }, expired: { label: '已到期', cls: 'bad' }, over_quota: { label: '流量已用完', cls: 'bad' } };
 
-export function renderSubPage({ customer: c, url, devices = [], removed = false }: SubPageData, now = Date.now()): string {
+export function renderSubPage({ customer: c, url, devices = [], removed = false, upstream }: SubPageData, now = Date.now()): string {
   const st = STATE[c.state] ?? STATE.active;
-  const pct = c.quota_bytes ? Math.min(100, Math.round((c.used / c.quota_bytes) * 100)) : 0;
-  const left = c.quota_bytes ? Math.max(0, c.quota_bytes - c.used) : 0;
-  const days = c.expire_at ? Math.ceil((c.expire_at - now) / 86_400_000) : 0;
-  const expire = !c.expire_at ? '不限期' : days < 0 ? `${fmtDate(c.expire_at)}(已到期)` : days === 0 ? `${fmtDate(c.expire_at)}(今天到期)` : `${fmtDate(c.expire_at)}(还有 ${days} 天)`;
+  // 流量和到期用外部订阅给的(和订阅里的 subscription-userinfo 一致);状态和停用照旧按客户自己的
+  const theirs = upstream?.userinfo;
+  const quota = theirs ? theirs.total : c.quota_bytes;
+  const used = theirs ? theirs.upload + theirs.download : c.used;
+  const expireAt = theirs ? theirs.expire * 1000 : c.expire_at;
+  const pct = quota ? Math.min(100, Math.round((used / quota) * 100)) : 0;
+  const left = quota ? Math.max(0, quota - used) : 0;
+  const days = expireAt ? Math.ceil((expireAt - now) / 86_400_000) : 0;
+  const expire = !expireAt ? '不限期' : days < 0 ? `${fmtDate(expireAt)}(已到期)` : days === 0 ? `${fmtDate(expireAt)}(今天到期)` : `${fmtDate(expireAt)}(还有 ${days} 天)`;
   const links = importLinks(url, c.name);
-  const lines = c.lines
-    .map(
-      (l) =>
-        `<li><span class="proto">${esc(PROTOCOL[l.protocol] ?? l.protocol)}</span><span class="pname">${esc(l.panel_name)}</span>` +
-        `<span class="muted">${l.kind === 'relay' ? '中转' : '直连'} · 已用 ${fmtBytes(l.up + l.down)}</span>` +
-        (l.enable ? '' : '<span class="tag bad">已停用</span>') +
-        `</li>`,
-    )
-    .join('');
+  // 只给外部订阅的节点时,自己的线路不在订阅里,不列
+  const ownLines = upstream?.replace ? [] : c.lines;
+  const upstreamRow = upstream ? `<li><span class="proto">外部</span><span class="pname">外部订阅</span><span class="muted">${upstream.nodes} 个节点</span></li>` : '';
+  const lines =
+    ownLines
+      .map(
+        (l) =>
+          `<li><span class="proto">${esc(PROTOCOL[l.protocol] ?? l.protocol)}</span><span class="pname">${esc(l.panel_name)}</span>` +
+          `<span class="muted">${l.kind === 'relay' ? '中转' : '直连'} · 已用 ${fmtBytes(l.up + l.down)}</span>` +
+          (l.enable ? '' : '<span class="tag bad">已停用</span>') +
+          `</li>`,
+      )
+      .join('') + upstreamRow;
   const full = c.limit_devices > 0 && devices.length >= c.limit_devices;
   const base = new URL(url).pathname;
   const deviceRows = devices
@@ -139,12 +151,12 @@ h2{font-size:15px;margin:0 0 4px}
 </head>
 <body><div class="wrap">
 <h1>${esc(c.name)}<span class="tag ${st.cls}">${st.label}</span></h1>
-<div class="muted">${c.lines.length} 条线路 · 订阅链接自动更新</div>
+<div class="muted">${upstream ? (upstream.replace ? `${upstream.nodes} 个节点` : `${c.lines.length} 条线路 + ${upstream.nodes} 个外部节点`) : `${c.lines.length} 条线路`} · 订阅链接自动更新</div>
 
 <div class="card">
-  <div class="row"><span class="big">${c.quota_bytes ? `剩余 ${fmtBytes(left)}` : '流量不限'}</span><span class="muted">${c.quota_bytes ? `已用 ${fmtBytes(c.used)} / ${fmtBytes(c.quota_bytes)}` : `已用 ${fmtBytes(c.used)}`}</span></div>
-  ${c.quota_bytes ? `<div class="bar"><i class="${pct >= 100 ? 'bad' : pct >= 90 ? 'warn' : ''}" style="width:${pct}%"></i></div>` : ''}
-  <div class="row"><span class="muted">到期:${esc(expire)}</span>${c.next_reset_at ? `<span class="muted">流量每月重置,下次 ${esc(fmtDate(c.next_reset_at))}</span>` : ''}</div>
+  <div class="row"><span class="big">${quota ? `剩余 ${fmtBytes(left)}` : '流量不限'}</span><span class="muted">${quota ? `已用 ${fmtBytes(used)} / ${fmtBytes(quota)}` : `已用 ${fmtBytes(used)}`}</span></div>
+  ${quota ? `<div class="bar"><i class="${pct >= 100 ? 'bad' : pct >= 90 ? 'warn' : ''}" style="width:${pct}%"></i></div>` : ''}
+  <div class="row"><span class="muted">到期:${esc(expire)}</span>${!theirs && c.next_reset_at ? `<span class="muted">流量每月重置,下次 ${esc(fmtDate(c.next_reset_at))}</span>` : ''}</div>
   ${c.state !== 'active' ? `<div class="notice">${c.state === 'expired' ? '套餐已到期,线路已停用。' : '流量已用完,线路已停用。'}请联系你的服务提供方。</div>` : ''}
 </div>
 
