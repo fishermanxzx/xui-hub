@@ -504,6 +504,31 @@ export function apiRouter(deps: RouteDeps): Router {
       return applyLineRules(db, line, validRules(db, req.body?.rules), deps.clientFor);
     }),
   );
+  // 批量删线路:line_ids 里的线路,面板上的 client 和出口规则一起删(同一块面板只连一次、Xray 最多重启一次),
+  // 删成了的再删记录(本期流量结转到客户身上)。面板上没删成的留着记录、带原因返回;force = true 时不管面板删没删成都删记录
+  r.post(
+    '/lines/batch-delete',
+    wrap(async (req) => {
+      const raw = req.body?.line_ids;
+      if (!Array.isArray(raw) || !raw.length || raw.length > 1000) throw new InputError('line_ids 要是 1 到 1000 个线路 id 的数组');
+      const ids = [...new Set(raw.map(Number))];
+      const lines = ids.map((id) => {
+        const line = Number.isInteger(id) && id > 0 ? getLine(db, id) : undefined;
+        if (!line) throw new InputError(`线路 ${raw.find((x: unknown) => Number(x) === id)} 不存在`);
+        return line;
+      });
+      const force = req.body?.force === true;
+      const failed = await removeLines(db, lines, deps.clientFor);
+      const failedIds = new Set(force ? [] : failed.map((f) => f.line.id));
+      const deleted: number[] = [];
+      for (const line of lines) {
+        if (failedIds.has(line.id)) continue;
+        deleteLine(db, line.id);
+        deleted.push(line.id);
+      }
+      return { deleted, failed: force ? [] : failed.map(({ line, error }) => ({ id: line.id, line: lineLabel(line), error: errorText(error) })) };
+    }),
+  );
   // 面板连不上 / 已经报废时删不掉面板上的 client,带 ?force=1 就只删这条记录
   r.delete(
     '/customers/:id/lines/:lid',

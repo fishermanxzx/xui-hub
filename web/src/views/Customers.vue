@@ -489,6 +489,86 @@ function closeLineForm() {
   batch.value = null;
 }
 
+// ---------- 批量删线路:选一块面板,勾上的客户在这块面板上的线路一次删掉(同一块面板只连一次、Xray 最多重启一次) ----------
+const del = ref<{ panel_id: number; ids: Set<number>; q: string; running: boolean; done: boolean; results: Record<number, BatchResult>; failed: number[] } | null>(null);
+const linesOnPanelOf = (c: Customer, panelId: number) => c.lines.filter((l) => l.panel_id === panelId);
+/** 有客户线路的面板排前面,选项上带有几位客户 */
+const delPanelOptions = computed<SelectOption<number>[]>(() =>
+  panels.value.map((p) => ({ value: p.id, label: t('customers.bdPanelOption', { name: p.name, n: customers.value.filter((c) => linesOnPanelOf(c, p.id).length).length }) })),
+);
+function openDel() {
+  const withLines = panels.value.find((p) => customers.value.some((c) => linesOnPanelOf(c, p.id).length));
+  del.value = { panel_id: withLines?.id ?? panels.value[0]?.id ?? 0, ids: new Set(), q: '', running: false, done: false, results: {}, failed: [] };
+}
+/** 列表:在这块面板上有线路的客户;删完了的留着显示结果 */
+const delList = computed(() => {
+  const d = del.value;
+  if (!d) return [];
+  const q = d.q.trim().toLowerCase();
+  return customers.value.filter((c) => (linesOnPanelOf(c, d.panel_id).length || d.results[c.id]) && (!q || c.name.toLowerCase().includes(q) || c.remark.toLowerCase().includes(q)));
+});
+watch(
+  () => del.value?.panel_id,
+  () => {
+    if (!del.value) return;
+    del.value.ids = new Set();
+    del.value.results = {};
+    del.value.failed = [];
+    del.value.done = false;
+  },
+);
+function delToggle(id: number) {
+  const ids = del.value?.ids;
+  if (!ids) return;
+  if (ids.has(id)) ids.delete(id);
+  else ids.add(id);
+}
+function delAll() {
+  for (const c of delList.value) if (linesOnPanelOf(c, del.value!.panel_id).length) del.value!.ids.add(c.id);
+}
+const delText = (r: BatchResult) => (r.state === 'doing' ? t('customers.bdRunning') : r.state === 'ok' ? r.text : t('customers.bdErr', { error: r.text }));
+const delTargets = computed(() => (del.value ? customers.value.filter((c) => del.value!.ids.has(c.id) && linesOnPanelOf(c, del.value!.panel_id).length) : []));
+const delLineCount = computed(() => delTargets.value.reduce((n, c) => n + linesOnPanelOf(c, del.value!.panel_id).length, 0));
+async function runDel(force = false) {
+  const d = del.value;
+  if (!d || d.running) return;
+  const panelName = panels.value.find((p) => p.id === d.panel_id)?.name ?? '';
+  // 这次要删的:正常删 = 勾上的客户在这块面板上的全部线路;只删记录 = 上次面板上没删成的
+  const targets = force ? customers.value.filter((c) => linesOnPanelOf(c, d.panel_id).some((l) => d.failed.includes(l.id))) : delTargets.value;
+  const lineIds = force ? [...d.failed] : targets.flatMap((c) => linesOnPanelOf(c, d.panel_id).map((l) => l.id));
+  if (!lineIds.length) return;
+  const xray = targets.some((c) => linesOnPanelOf(c, d.panel_id).some((l) => lineIds.includes(l.id) && (l.kind === 'relay' || l.rules?.length)));
+  const ask = force
+    ? t('customers.bdForceConfirm', { n: lineIds.length })
+    : t('customers.bdConfirm', { panel: panelName, n: targets.length, m: lineIds.length }) + (xray ? t('customers.bdConfirmXray') : '');
+  if (!confirm(ask)) return;
+  d.running = true;
+  for (const c of targets) d.results[c.id] = { state: 'doing', text: '' };
+  try {
+    const r = await api.deleteLines(lineIds, force);
+    const bad = new Map(r.failed.map((f) => [f.id, f.error]));
+    for (const c of targets) {
+      const mine = linesOnPanelOf(c, d.panel_id).filter((l) => lineIds.includes(l.id));
+      const errors = mine.map((l) => bad.get(l.id)).filter(Boolean);
+      const gone = mine.filter((l) => r.deleted.includes(l.id)).length;
+      d.results[c.id] = errors.length ? { state: 'err', text: errors[0]! } : { state: 'ok', text: force ? t('customers.bdForced') : t('customers.bdOk', { n: gone }) };
+    }
+    d.failed = r.failed.map((f) => f.id);
+    d.ids = new Set(targets.filter((c) => d.results[c.id]?.state === 'err').map((c) => c.id));
+    await load();
+    toast(t('customers.bdDone', { n: r.deleted.length }) + (r.failed.length ? `;${t('customers.bdFailed', { n: new Set(targets.filter((c) => d.results[c.id]?.state === 'err').map((c) => c.id)).size })}` : ''), r.failed.length ? 'err' : 'ok');
+  } catch (e) {
+    for (const c of targets) d.results[c.id] = { state: 'err', text: e instanceof Error ? e.message : String(e) };
+    toastError(e);
+  } finally {
+    d.running = false;
+    d.done = true;
+  }
+}
+function closeDel() {
+  if (!del.value?.running) del.value = null;
+}
+
 // ---------- 线路:链接 / 删除 ----------
 const linksFor = ref<{ line: Line; links: string[] } | null>(null);
 const loadingLinks = ref(0);
@@ -671,6 +751,7 @@ function exitText(l: Line): string {
     <div class="row">
       <button :disabled="syncing || !customers.length" :title="t('customers.syncHint')" @click="syncNow">{{ syncing ? t('customers.syncing') : t('customers.syncNow') }}</button>
       <button :disabled="!panels.length || !customers.length" :title="t('customers.batchHint')" @click="openBatch">{{ t('customers.batchButton') }}</button>
+      <button :disabled="!customers.some((c) => c.lines.length)" :title="t('customers.bdHint')" @click="openDel">{{ t('customers.bdButton') }}</button>
       <button class="primary" @click="openForm(null)">{{ t('customers.create') }}</button>
     </div>
   </div>
@@ -944,6 +1025,48 @@ function exitText(l: Line): string {
         <button @click="opened = null">{{ t('customers.another') }}</button>
         <button class="primary" @click="lineFor = null">{{ t('customers.done') }}</button>
       </template>
+    </template>
+  </Modal>
+
+  <Modal v-if="del" :title="t('customers.bdTitle')" wide @close="closeDel">
+    <fieldset class="form plain" :disabled="del.running">
+      <p class="muted small">{{ t('customers.bdIntro') }}</p>
+      <label class="field">
+        {{ t('customers.panel') }}
+        <Select v-model="del.panel_id" :options="delPanelOptions" />
+      </label>
+      <div class="field-block">
+        <span class="label">{{ t('customers.batchCustomers', { n: del.ids.size }) }}</span>
+        <div class="row batch-tools">
+          <input v-model="del.q" type="search" :placeholder="t('customers.batchSearch')" :aria-label="t('customers.batchSearch')" />
+          <button type="button" class="link" @click="delAll">{{ t('customers.batchAll') }}</button>
+          <button type="button" class="link" @click="del.ids.clear()">{{ t('customers.batchNone') }}</button>
+        </div>
+        <ul class="batch-list">
+          <li class="d-row b-head muted small" aria-hidden="true">
+            <span>{{ t('customers.batchColCustomer') }}</span><span>{{ t('customers.bdColLines') }}</span><span>{{ t('customers.batchColResult') }}</span>
+          </li>
+          <li v-for="c in delList" :key="c.id" class="d-row" :class="{ picked: del.ids.has(c.id) }">
+            <label class="b-check small">
+              <input type="checkbox" :checked="del.ids.has(c.id)" :disabled="!linesOnPanelOf(c, del.panel_id).length" @change="delToggle(c.id)" />
+              <span class="b-name">{{ c.name }}</span>
+              <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
+            </label>
+            <span class="b-nodes small">
+              <span v-for="l in linesOnPanelOf(c, del.panel_id)" :key="l.id" class="b-node" :title="`${nodeTitle(l)} · ${t('customers.used', { used: fmtBytes(l.up + l.down) })}`">{{ l.node_name || l.email }}</span>
+            </span>
+            <span class="small b-res" :class="del.results[c.id]?.state" :title="del.results[c.id]?.text">{{ del.results[c.id] ? delText(del.results[c.id]) : '' }}</span>
+          </li>
+          <li v-if="!delList.length" class="muted small">{{ t('customers.bdEmpty') }}</li>
+        </ul>
+        <p class="muted small hint">{{ t('customers.bdHint2') }}</p>
+      </div>
+    </fieldset>
+    <template #footer>
+      <span class="spacer" />
+      <button v-if="del.failed.length && !del.running" class="danger" @click="runDel(true)">{{ t('customers.bdForce', { n: del.failed.length }) }}</button>
+      <button :disabled="del.running" @click="closeDel">{{ del.done ? t('customers.done') : t('common.cancel') }}</button>
+      <button class="primary danger-fill" :disabled="del.running || !delLineCount" @click="runDel()">{{ del.running ? t('customers.bdRunning') : t('customers.bdStart', { n: delTargets.length, m: delLineCount }) }}</button>
     </template>
   </Modal>
 
@@ -1386,6 +1509,25 @@ h2 {
   z-index: 1;
   background: var(--sheet);
 }
+.d-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) minmax(0, 1fr) minmax(90px, 160px);
+  gap: 6px 12px;
+  align-items: center;
+}
+.d-row .b-nodes {
+  padding-left: 0;
+}
+button.primary.danger-fill {
+  background: var(--fault);
+  border-color: var(--fault);
+  color: #fff;
+}
+button.primary.danger-fill:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--fault) 85%, #000);
+  border-color: color-mix(in srgb, var(--fault) 85%, #000);
+}
+.d-row.picked,
 .b-row.picked {
   background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
 }
@@ -1433,7 +1575,8 @@ h2 {
   min-width: 0;
 }
 @media (max-width: 640px) {
-  .b-row {
+  .b-row,
+  .d-row {
     grid-template-columns: minmax(0, 1fr);
   }
   .b-head {

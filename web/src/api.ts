@@ -80,6 +80,8 @@ export const api = {
   refreshUpstreams: (id: number) => call<Customer>('POST', `/api/customers/${id}/upstreams/refresh`),
   /** force:面板上删不掉(连不上、已经不在了)也把这里的线路记录删掉 */
   deleteLine: (id: number, lineId: number, force = false) => call('DELETE', `/api/customers/${id}/lines/${lineId}${force ? '?force=1' : ''}`),
+  /** 批量删线路:面板上删成了的删记录;force = 面板上删没删成都删记录 */
+  deleteLines: (lineIds: number[], force = false) => call<{ deleted: number[]; failed: { id: number; line: string; error: string }[] }>('POST', '/api/lines/batch-delete', { line_ids: lineIds, force }),
   /** 把面板上已有的客户端归到客户名下(成为直连线路),面板上不改 */
   importClients: (id: number, panelId: number, emails: string[]) => call<ImportResult>('POST', `/api/customers/${id}/lines/import`, { panel_id: panelId, emails }),
 

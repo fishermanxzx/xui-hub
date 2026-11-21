@@ -79,6 +79,7 @@ Authorization: Bearer xh_……
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | POST | `/customers/:id/lines` | 开线路,见下 |
+| POST | `/lines/batch-delete` | 批量删线路。请求体:`line_ids`(线路 id 数组,1-1000 个),`force`(可选,`true` 时面板上没删成也删记录)。面板上的 client 和出口规则一起删,同一块面板只连一次、Xray 最多重启一次;删成了的删记录(本期流量结转到客户身上)。返回 `deleted`(删掉的线路 id)、`failed`(面板上没删成的:`id`、`line`、`error`,记录还在) |
 | GET | `/customers/:id/lines/:lineId/links` | 这条线路的分享链接 |
 | PUT | `/customers/:id/lines/:lineId/rules` | 设置出口规则(整组替换,空数组 = 去掉),见下。写到面板的 Xray 路由并重启 Xray,这块面板上的客户端会断几秒 |
 | PATCH | `/customers/:id/lines/:lineId` | 改自定义节点名。请求体:`node_name`(最多 64 个字符,空字符串 = 用面板生成的名字)。只改这里,面板上不动 |
