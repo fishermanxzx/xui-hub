@@ -6,6 +6,8 @@ import { InputError } from './panels/repo';
 export interface Settings {
   telegram: { token: string; chat_id: string };
   webhook: { url: string };
+  /** 飞书(Lark)群机器人:Webhook 地址,开了「签名校验」再填密钥 */
+  feishu: { url: string; secret: string };
   notify: {
     /** 面板连不上 / 恢复 */
     panel_down: boolean;
@@ -44,6 +46,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   telegram: { token: '', chat_id: '' },
   webhook: { url: '' },
+  feishu: { url: '', secret: '' },
   notify: { panel_down: true, customer_disabled: true, expiring: true, expiring_days: 3, quota_warn: true, quota_warn_pct: 90, monthly_reset: true, sub_share: true, sub_share_ips: 5 },
   backup: { daily: false, remote: { endpoint: '', region: 'auto', bucket: '', access_key: '', secret_key: '', prefix: 'xui-hub', keep_days: 30 } },
 };
@@ -55,6 +58,7 @@ export function getSettings(db: DB): Settings {
   return {
     telegram: { ...DEFAULT_SETTINGS.telegram, ...s.telegram },
     webhook: { ...DEFAULT_SETTINGS.webhook, ...s.webhook },
+    feishu: { ...DEFAULT_SETTINGS.feishu, ...s.feishu },
     notify: { ...DEFAULT_SETTINGS.notify, ...s.notify },
     backup: { ...DEFAULT_SETTINGS.backup, ...s.backup, remote: { ...DEFAULT_SETTINGS.backup.remote, ...s.backup?.remote } },
   };
@@ -78,6 +82,7 @@ export function updateSettings(db: DB, input: any): Settings {
   const cur = getSettings(db);
   const tg = input?.telegram ?? {};
   const wh = input?.webhook ?? {};
+  const fs = input?.feishu ?? {};
   const n = input?.notify ?? {};
   const b = input?.backup ?? {};
   const rm = b.remote ?? {};
@@ -88,6 +93,10 @@ export function updateSettings(db: DB, input: any): Settings {
       chat_id: tg.chat_id === undefined ? cur.telegram.chat_id : str(tg.chat_id, 64, 'Chat ID'),
     },
     webhook: { url: wh.url === undefined ? cur.webhook.url : str(wh.url, 500, 'Webhook 地址') },
+    feishu: {
+      url: fs.url === undefined ? cur.feishu.url : str(fs.url, 500, '飞书机器人地址'),
+      secret: fs.secret === undefined ? cur.feishu.secret : str(fs.secret, 200, '飞书签名密钥'),
+    },
     notify: {
       panel_down: bool(n.panel_down, cur.notify.panel_down),
       customer_disabled: bool(n.customer_disabled, cur.notify.customer_disabled),
@@ -114,6 +123,7 @@ export function updateSettings(db: DB, input: any): Settings {
   };
   if (next.telegram.token && !/^\d+:[\w-]{20,}$/.test(next.telegram.token)) throw new InputError('Bot token 格式不对,应形如 123456:ABC-DEF…');
   if (next.webhook.url && !/^https?:\/\//.test(next.webhook.url)) throw new InputError('Webhook 地址要以 http:// 或 https:// 开头');
+  if (next.feishu.url && !/^https:\/\/[^/]+\/open-apis\/bot\/v2\/hook\/[\w-]+$/.test(next.feishu.url)) throw new InputError('飞书机器人地址应形如 https://open.feishu.cn/open-apis/bot/v2/hook/xxxx(群设置 → 群机器人 → 自定义机器人里复制)');
   if (next.backup.remote.endpoint && !/^https?:\/\/[^/]+$/.test(next.backup.remote.endpoint)) throw new InputError('Endpoint 要是 https://主机名 的形式,不带桶名和路径');
   setMeta(db, 'settings', JSON.stringify(next));
   return next;

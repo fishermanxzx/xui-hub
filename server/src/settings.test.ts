@@ -32,3 +32,20 @@ test('设置:异地备份配置,没传的字段不动,Endpoint 校验', () => {
   // Telegram 那个开关还在
   assert.equal(updateSettings(db, { backup: { daily: true } }).backup.remote.bucket, 'xui-backup');
 });
+
+test('设置:飞书机器人地址 + 签名密钥,单独一个通道;地址格式有校验,旧数据没有这项时是空的', () => {
+  const db = memoryDb();
+  assert.deepEqual(getSettings(db).feishu, { url: '', secret: '' });
+  const url = 'https://open.feishu.cn/open-apis/bot/v2/hook/0a1b2c3d-4e5f-6789-abcd-ef0123456789';
+  const s = updateSettings(db, { feishu: { url: ` ${url} `, secret: 'sec' } });
+  assert.deepEqual(s.feishu, { url, secret: 'sec' });
+  // 改别的不动它;Lark 国际版的地址也认
+  assert.equal(updateSettings(db, { webhook: { url: 'https://h.example/x' } }).feishu.url, url);
+  assert.equal(updateSettings(db, { feishu: { url: 'https://open.larksuite.com/open-apis/bot/v2/hook/abc' } }).feishu.secret, 'sec');
+  for (const bad of ['http://open.feishu.cn/open-apis/bot/v2/hook/abc', 'https://h.example/x', 'https://open.feishu.cn/open-apis/bot/v2/hook/']) assert.throws(() => updateSettings(db, { feishu: { url: bad } }), /飞书机器人地址/, bad);
+  // 清空
+  assert.deepEqual(updateSettings(db, { feishu: { url: '', secret: '' } }).feishu, { url: '', secret: '' });
+  // 存着的老设置里没有 feishu
+  db.prepare("UPDATE meta SET value = json_remove(value, '$.feishu') WHERE key = 'settings'").run();
+  assert.deepEqual(getSettings(db).feishu, { url: '', secret: '' });
+});
