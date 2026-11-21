@@ -55,6 +55,46 @@ const shown = computed(() => queryCustomers(customers.value, query.value));
 const pickedPanels = computed(() => new Set(query.value.panels));
 const offPanel = (l: Line) => pickedPanels.value.size > 0 && !pickedPanels.value.has(l.panel_id) && !(l.exit_panel_id != null && pickedPanels.value.has(l.exit_panel_id));
 const filtering = computed(() => !!query.value.q.trim() || !!query.value.panels.length || !!query.value.state);
+// ---------- 线路默认收起:只留一行(条数、节点名、停用了几条),点开看详情;展开了哪些记在浏览器里 ----------
+const OPEN_LINES_KEY = 'xui-hub.openCustomerLines';
+const openLines = ref<Set<number>>(new Set());
+try {
+  const saved = JSON.parse(localStorage.getItem(OPEN_LINES_KEY) ?? '[]');
+  if (Array.isArray(saved)) openLines.value = new Set(saved.filter((x) => Number.isInteger(x)));
+} catch {
+  /* 忽略坏数据 */
+}
+function saveOpenLines(next: Set<number>) {
+  openLines.value = next;
+  try {
+    localStorage.setItem(OPEN_LINES_KEY, JSON.stringify([...next]));
+  } catch {
+    /* 存不了就算了 */
+  }
+}
+/** 搜索或按面板过滤时线路都展开(要看的就是线路),这时不显示收起 / 展开 */
+const linesForced = computed(() => !!query.value.q.trim() || query.value.panels.length > 0);
+const linesShown = (c: Customer) => linesForced.value || openLines.value.has(c.id);
+function toggleLines(c: Customer) {
+  const next = new Set(openLines.value);
+  if (next.has(c.id)) next.delete(c.id);
+  else next.add(c.id);
+  saveOpenLines(next);
+}
+const withLines = computed(() => shown.value.filter((c) => c.lines.length));
+const allLinesOpen = computed(() => withLines.value.length > 0 && withLines.value.every((c) => openLines.value.has(c.id)));
+function toggleAllLines() {
+  const next = new Set(openLines.value);
+  for (const c of withLines.value) {
+    if (allLinesOpen.value) next.delete(c.id);
+    else next.add(c.id);
+  }
+  saveOpenLines(next);
+}
+/** 收起时那一行列的名字:有自定义节点名用它,没有用面板名 */
+const lineNames = (c: Customer) => c.lines.map((l) => l.node_name || l.panel_name).join(' · ');
+const linesOff = (c: Customer) => c.lines.filter((l) => !l.enable).length;
+
 function clearFilters() {
   query.value = { ...query.value, q: '', panels: [], state: '' };
 }
@@ -551,6 +591,7 @@ function exitText(l: Line): string {
     </span>
     <span v-if="filtering" class="muted small">{{ t('customers.shown', { n: shown.length, total: customers.length }) }}</span>
     <button v-if="filtering" type="button" class="link" @click="clearFilters">{{ t('customers.clearFilters') }}</button>
+    <button v-if="!linesForced && withLines.length" type="button" class="link" @click="toggleAllLines">{{ allLinesOpen ? t('customers.collapseAll') : t('customers.expandAll') }}</button>
   </div>
 
   <div class="cards">
@@ -560,7 +601,6 @@ function exitText(l: Line): string {
           <span class="name">{{ c.name }}</span>
           <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
           <span v-if="c.remark" class="muted small">{{ c.remark }}</span>
-          <span class="muted small">{{ t('customers.lineCount', { n: c.lines.length }, c.lines.length) }}</span>
           <span class="small" :class="{ 'text-err': c.state === 'over_quota' }">
             {{ t('customers.used', { used: fmtBytes(c.used) }) }}<template v-if="c.quota_bytes"> / {{ fmtBytes(c.quota_bytes) }}</template><span v-else class="muted">{{ t('customers.unlimited') }}</span>
           </span>
@@ -613,7 +653,13 @@ function exitText(l: Line): string {
           <button class="link" :disabled="refreshing === c.id" @click="refreshUpstreams(c)">{{ refreshing === c.id ? t('customers.upstreamRefreshing') : t('customers.upstreamRefresh') }}</button>
         </div>
       </div>
-      <ul v-if="c.lines.length" class="lines">
+      <button v-if="c.lines.length && !linesForced" type="button" class="lines-toggle" :class="{ open: linesShown(c) }" :aria-expanded="linesShown(c)" @click="toggleLines(c)">
+        <svg class="chev" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        <span class="count">{{ t('customers.lineCount', { n: c.lines.length }, c.lines.length) }}</span>
+        <span v-if="!linesShown(c)" class="muted names" :title="lineNames(c)">{{ lineNames(c) }}</span>
+        <span v-if="!linesShown(c) && linesOff(c)" class="badge err">{{ t('customers.linesOff', { n: linesOff(c) }) }}</span>
+      </button>
+      <ul v-if="c.lines.length && linesShown(c)" class="lines">
         <li v-for="l in c.lines" :key="l.id" class="line" :class="{ dim: offPanel(l) }">
           <span class="chip" :class="l.kind">{{ l.kind === 'direct' ? t('customers.direct') : t('customers.relay') }}</span>
           <span class="where">
@@ -637,7 +683,7 @@ function exitText(l: Line): string {
           </span>
         </li>
       </ul>
-      <p v-else class="muted small none">{{ t('customers.noLines') }}</p>
+      <p v-if="!c.lines.length" class="muted small none">{{ t('customers.noLines') }}</p>
     </article>
   </div>
   <div v-if="!customers.length" class="empty sheet">{{ t('customers.empty') }}</div>
@@ -1077,6 +1123,55 @@ h2 {
 }
 .sub-meta .link {
   margin-left: 8px;
+}
+.lines-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 9px 16px;
+  border: none;
+  border-top: 1px solid var(--rule-soft);
+  border-radius: 0 0 12px 12px;
+  background: none;
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  text-align: left;
+}
+.lines-toggle.open {
+  border-radius: 0;
+}
+.lines-toggle:hover {
+  background: var(--hover);
+}
+.lines-toggle .chev {
+  flex: none;
+  color: var(--ink-soft);
+  transition: transform 0.15s;
+}
+.lines-toggle.open .chev {
+  transform: rotate(90deg);
+}
+.lines-toggle .count {
+  flex: none;
+}
+.lines-toggle .names {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+}
+.lines-toggle .badge {
+  flex: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lines-toggle .chev {
+    transition: none;
+  }
 }
 .lines {
   list-style: none;
