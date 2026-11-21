@@ -1,8 +1,10 @@
-// 客户自助页:浏览器打开订阅链接看到的页面。只给这位客户自己的信息:剩余流量、到期日、订阅链接、二维码、一键导入各客户端。
-// 不出现面板地址、API、其他客户。
+// 客户自助页:浏览器打开订阅链接看到的页面。只给这位客户自己的信息:剩余流量、到期日、订阅链接、二维码、一键导入各客户端,
+// 以及订阅里的线路(节点名 + 浏览器直连测的延迟)。不出现面板后台地址、API、其他客户,也不露后台是什么程序。
 
 import qrcode from 'qrcode-generator';
 import type { CustomerView } from '../customers/repo';
+import { linkName } from '../subscription/nodeName';
+import { parseNode } from '../subscription/nodes';
 import type { SubDevice } from '../subscription/devices';
 import type { Userinfo } from '../subscription/upstream';
 
@@ -17,6 +19,49 @@ const fmtDate = (ms: number) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
+
+/** 自助页列的一条线路:订阅里的节点名和节点地址(浏览器拿去直连测延迟)。不带 UUID、密码这些能直接用的东西 */
+export interface PageNode {
+  name: string;
+  host: string;
+  port: number;
+  /** hy2 / tuic 走 UDP:浏览器只能测 TCP,测不到不代表不能用 */
+  udp: boolean;
+}
+
+const UDP_SCHEMES = new Set(['hysteria2', 'hy2', 'hysteria', 'tuic']);
+
+/** 订阅里的节点链接 → 页面上列的线路;名字和订阅里一样(重名的和 Clash 配置一样加「 2」「 3」),认不出地址的跳过 */
+export function pageNodes(links: string[]): PageNode[] {
+  const taken = new Set<string>();
+  const out: PageNode[] = [];
+  for (const link of links) {
+    const scheme = link.slice(0, link.indexOf('://')).toLowerCase();
+    let host = '';
+    let port = 0;
+    let name = '';
+    const node = parseNode(link);
+    if (node) {
+      ({ server: host, port, name } = node);
+    } else {
+      try {
+        const u = new URL(link);
+        host = u.hostname.replace(/^\[|\]$/g, '');
+        port = Number(u.port);
+        name = linkName(link);
+      } catch {
+        continue;
+      }
+    }
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) continue;
+    name ||= `${host}:${port}`;
+    let unique = name;
+    for (let i = 2; taken.has(unique); i++) unique = `${name} ${i}`;
+    taken.add(unique);
+    out.push({ name: unique, host, port, udp: UDP_SCHEMES.has(scheme) });
+  }
+  return out;
+}
 
 export function qrSvg(text: string): string {
   const qr = qrcode(0, 'M');
@@ -86,7 +131,7 @@ export function renderSubPage({ customer: c, url, devices = [], removed = false,
   const left = quota ? Math.max(0, quota - used) : 0;
   const days = expireAt ? Math.ceil((expireAt - now) / 86_400_000) : 0;
   const expire = !expireAt ? '不限期' : days < 0 ? `${fmtDate(expireAt)}(已到期)` : days === 0 ? `${fmtDate(expireAt)}(今天到期)` : `${fmtDate(expireAt)}(还有 ${days} 天)`;
-  // 不列线路、节点数,也不露后台是什么程序:客户只需要知道用量、到期和怎么导入
+  // 线路由页面再去取(/sub/<token>/nodes):从面板现取链接可能要等几秒,不拖慢页面打开
   const links = importLinks(url, c.name);
   const full = c.limit_devices > 0 && devices.length >= c.limit_devices;
   const base = new URL(url).pathname;
@@ -134,6 +179,9 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .qr{display:flex;justify-content:center;margin-top:12px}.qr svg{width:200px;height:200px;border-radius:8px}
 ul.lines{list-style:none;margin:8px 0 0;padding:0}ul.lines li{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--rule);flex-wrap:wrap}ul.lines li:first-child{border-top:none}
 .pname{font-weight:500}
+.nodes li{justify-content:space-between;flex-wrap:nowrap}.nodes .pname{min-width:0;overflow-wrap:anywhere}
+.ms{flex:none;font-size:13px;font-variant-numeric:tabular-nums;font-weight:600;color:var(--soft)}.ms.good{color:var(--ok)}.ms.mid{color:var(--warn)}.ms.slow{color:var(--bad)}
+.h2row{display:flex;justify-content:space-between;align-items:center;gap:12px}.small{font-size:13px;padding:5px 10px}
 .notice{background:var(--bad-bg);color:var(--bad);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:14px}
 h2{font-size:15px;margin:0 0 4px}
 .devices form{margin-left:auto}.del{font-size:13px;padding:5px 10px;color:var(--bad)}.okmsg{background:var(--ok-bg);color:var(--ok);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:14px}
@@ -168,11 +216,34 @@ h2{font-size:15px;margin:0 0 4px}
   <div class="muted" style="text-align:center">手机扫码添加订阅</div>
 </div>
 
+<div class="card">
+  <div class="h2row"><h2>线路</h2><button class="small" id="reping" disabled onclick="pingAll()">重新测速</button></div>
+  <div class="muted">延迟是你这台设备的浏览器直接连各节点测的。测之前先关掉代理客户端(包括 TUN / 增强模式),不然测的是经过代理的,数字不准。含建立连接的时间,比客户端里显示的高一些,只作参考。</div>
+  <ul class="lines nodes" id="nodes"><li class="muted">正在读取线路…</li></ul>
+</div>
+
 ${deviceCard}
 </div>
 <script>
 function copy(){var i=document.getElementById('u');i.select();var done=function(){var b=document.querySelector('.sub button');b.textContent='已复制';setTimeout(function(){b.textContent='复制'},1500)};
 if(navigator.clipboard){navigator.clipboard.writeText(i.value).then(done,function(){document.execCommand('copy');done()})}else{document.execCommand('copy');done()}}
+var NODES=[],busy=false,box=document.getElementById('nodes'),again=document.getElementById('reping');
+function msg(t){box.innerHTML='';var li=document.createElement('li');li.className='muted';li.textContent=t;box.appendChild(li)}
+function show(){box.innerHTML='';NODES.forEach(function(n){var li=document.createElement('li'),a=document.createElement('span'),b=document.createElement('span');a.className='pname';a.textContent=n.name;b.className='ms';b.textContent='等待测速';n.el=b;li.appendChild(a);li.appendChild(b);box.appendChild(li)})}
+/* 浏览器直接连节点地址(https,不带 cookie),从发出到连接结束(握手完成被拒或报错)的时间;超过 4 秒算超时 */
+function probe(n){var h=n.host.indexOf(':')>=0?'['+n.host+']':n.host,c=new AbortController(),t0=performance.now(),tm=setTimeout(function(){c.abort()},4000);
+return fetch('https://'+h+':'+n.port+'/?t='+Math.random(),{mode:'no-cors',cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',signal:c.signal}).then(function(){},function(){}).then(function(){clearTimeout(tm);return c.signal.aborted?-1:performance.now()-t0})}
+function one(n){n.el.className='ms';n.el.textContent='测速中…';n.el.title='';var best=1e9,k=0;
+return (function next(){return probe(n).then(function(ms){if(ms<0){if(best===1e9)return -1;return best}best=Math.min(best,ms);return ++k<3?next():best})})().then(function(ms){
+if(ms<0){n.el.textContent=n.udp?'测不了':'超时';n.el.className='ms slow';if(n.udp){n.el.className='ms';n.el.title='这条是 UDP 线路,浏览器只能测 TCP,测不到不代表不能用'}return}
+/* 立刻失败(浏览器禁止连这个端口等)不是网络延迟 */
+if(ms<3){n.el.textContent='测不了';n.el.title='浏览器不允许连这个端口,用客户端测';return}
+n.el.textContent=Math.round(ms)+' ms';n.el.className='ms '+(ms<200?'good':ms<400?'mid':'slow')})}
+function pingAll(){if(busy||!NODES.length)return;busy=true;again.disabled=true;var q=NODES.slice();
+function worker(){var n=q.shift();return n?one(n).then(worker):Promise.resolve()}
+Promise.all([worker(),worker(),worker()]).then(function(){busy=false;again.disabled=false})}
+fetch(${JSON.stringify(`${new URL(url).pathname}/nodes`).replace(/</g, '\\u003c')},{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){NODES=d.nodes||[];
+if(!NODES.length){msg(d.error||(${JSON.stringify(c.state !== 'active')}?'线路已停用。':'还没有线路。'));return}show();pingAll()},function(){msg('线路读取失败,稍后刷新再看。')});
 </script>
 </body></html>`;
 }

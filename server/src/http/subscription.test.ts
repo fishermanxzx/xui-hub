@@ -579,3 +579,30 @@ proxies:
     await close();
   }
 });
+
+test('自助页的线路列表:节点名和地址,不带 UUID / 密码;不算拉取订阅、不占设备名额;停用的客户没有线路;token 不对 404', async () => {
+  const { db, id, token } = setup();
+  updateCustomer(db, id, { limit_devices: 1 });
+  const { link, close } = await serve(db, fakeConverter([]));
+  try {
+    const res = await get(`${link(token)}/nodes`, BROWSER_UA);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    const body = await res.text();
+    assert.deepEqual(JSON.parse(body), {
+      nodes: [
+        { name: 'A', host: '1.1.1.1', port: 1, udp: false },
+        { name: 'B', host: '2.2.2.2', port: 2, udp: true },
+      ],
+      error: '',
+    });
+    assert.ok(!body.includes('x@') && !body.includes('y@'));
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM sub_fetches').get() as any).n, 0);
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM sub_devices').get() as any).n, 0);
+
+    assert.equal((await get(`${link('bad-token')}/nodes`)).status, 404);
+    updateCustomer(db, id, { expire_at: 1 });
+    assert.deepEqual(await (await get(`${link(token)}/nodes`)).json(), { nodes: [], error: '' });
+  } finally {
+    await close();
+  }
+});

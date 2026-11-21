@@ -17,7 +17,7 @@ import { customerIdByLink } from '../subscription/customLinks';
 import { clientIp, recordSubFetch } from '../subscription/fetchLog';
 import { collectLinks, encodeSubscription, mergeLinks, userinfoHeader, type LinkFetcher } from '../subscription/service';
 import { cachedUpstream, fetchUpstream, HOP_HEADER, refreshUpstreams, userinfoText, type UpstreamFetcher } from '../subscription/upstream';
-import { renderSubPage } from './subPage';
+import { pageNodes, renderSubPage } from './subPage';
 import { templateUrl } from '../subscription/templates';
 import { admitDevice, deleteDevice, deviceKey, listDevices } from '../subscription/devices';
 
@@ -240,6 +240,28 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
         return;
       }
       await subscribe(customer, req, res);
+    }),
+  );
+
+  // 自助页的线路列表:订阅里的节点名和地址(浏览器拿去直连测延迟),不带 UUID、密码;不算拉取订阅,也不占设备名额
+  r.get(
+    '/sub/:token/nodes',
+    handle(async (req, res) => {
+      const id = customerIdBySubToken(db, String(req.params.token));
+      const customer = id != null ? getCustomer(db, id) : undefined;
+      res.set('Cache-Control', 'no-store');
+      if (!customer) {
+        res.status(404).json({ error: 'not found' });
+        return;
+      }
+      let links: string[] = [];
+      let error = '';
+      try {
+        links = await nodes(customer);
+      } catch {
+        error = '暂时取不到线路,稍后刷新再看。';
+      }
+      res.json({ nodes: pageNodes(links), error });
     }),
   );
 
