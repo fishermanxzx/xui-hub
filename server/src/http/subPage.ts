@@ -96,7 +96,8 @@ export function renderSubPage({ customer: c, url, devices = [], removed = false,
       .map(
         (l) =>
           `<li><span class="proto">${esc(PROTOCOL[l.protocol] ?? l.protocol)}</span><span class="pname">${esc(l.panel_name)}</span>` +
-          `<span class="muted">${l.kind === 'relay' ? '中转' : '直连'} · 已用 ${fmtBytes(l.up + l.down)}</span>` +
+          // 给客户看的是计费用量(按倍率),和上面的已用一个口径
+          `<span class="muted">${l.kind === 'relay' ? '中转' : '直连'} · 已用 ${fmtBytes(Math.round((l.up + l.down) * (c.traffic_ratio ?? 1)))}</span>` +
           (l.enable ? '' : '<span class="tag bad">已停用</span>') +
           `</li>`,
       )

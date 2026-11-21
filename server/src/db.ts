@@ -269,6 +269,15 @@ export const MIGRATIONS: string[] = [
   -- 客户的月费(每月收多少,NULL = 没填),只用来记账
   ALTER TABLE customers ADD COLUMN monthly_fee REAL;
   `,
+  `
+  -- 流量倍率:计费用量 = 实际流量 × 倍率(订阅里显示的已用、额度判断都按它),默认 1。实际流量和流量统计不变
+  ALTER TABLE customers ADD COLUMN traffic_ratio REAL NOT NULL DEFAULT 1;
+  -- 结转的流量:删掉的线路本期用掉的、面板上计数被清零前的、手动调整的,都记在客户身上,清零时一起清
+  ALTER TABLE customers ADD COLUMN carried_up INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE customers ADD COLUMN carried_down INTEGER NOT NULL DEFAULT 0;
+  -- 线路上次在 xui-hub 里清零的时间:清零前读到的面板计数不再写回(不然会被当成面板上清零了而结转)
+  ALTER TABLE lines ADD COLUMN zeroed_at INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export function openDb(file: string): DB {

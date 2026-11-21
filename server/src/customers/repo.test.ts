@@ -3,8 +3,11 @@ import { test } from 'node:test';
 import type { DB } from '../db';
 import { createSocks } from '../socks/repo';
 import { addPanel, memoryDb } from '../testUtil';
+import { deletePanel } from '../panels/repo';
+import { userinfoHeader } from '../subscription/service';
 import {
   addLine,
+  adjustUsage,
   createCustomer,
   customerIdBySubToken,
   deleteCustomer,
@@ -170,4 +173,77 @@ test('删除:删线路只删这一条;删客户连它的线路一起删,别的�
   assert.throws(() => deleteCustomer(db, zhang), /客户不存在/);
   // 删掉的 email 可以再用
   assert.equal(line(db, li, a.id, 'z2').email, 'z2');
+});
+
+test('流量倍率:默认 1;计费用量 = 实际 × 倍率,订阅头和超额都按它;实际流量另给;校验 0.01 到 100,保留两位', () => {
+  const db = memoryDb();
+  const p = addPanel(db, 'p');
+  const c = createCustomer(db, { name: 'a', quota_bytes: 1000 });
+  const l = line(db, c, p.id, 'a');
+  updateLineStats(db, l.id, { up: 100, down: 300, enable: true, last_online: 0 });
+  let v = getCustomer(db, c)!;
+  assert.deepEqual([v.traffic_ratio, v.used_up, v.used_down, v.used, v.actual_used, v.state], [1, 100, 300, 400, 400, 'active']);
+
+  updateCustomer(db, c, { traffic_ratio: 2.5 });
+  v = getCustomer(db, c)!;
+  assert.deepEqual([v.traffic_ratio, v.used_up, v.used_down, v.used, v.actual_up, v.actual_down, v.actual_used, v.state], [2.5, 250, 750, 1000, 100, 300, 400, 'over_quota']);
+  assert.equal(userinfoHeader(v), `upload=250; download=750; total=1000; expire=0`);
+  // 线路上记的还是实际的
+  assert.deepEqual([v.lines[0].up, v.lines[0].down], [100, 300]);
+  // 改别的不动倍率;留空 = 1
+  updateCustomer(db, c, { remark: 'x' });
+  assert.equal(getCustomer(db, c)!.traffic_ratio, 2.5);
+  updateCustomer(db, c, { traffic_ratio: '' });
+  assert.equal(getCustomer(db, c)!.traffic_ratio, 1);
+  assert.equal(getCustomer(db, createCustomer(db, { name: 'b', traffic_ratio: '1.234' }))!.traffic_ratio, 1.23);
+  assert.equal(getCustomer(db, createCustomer(db, { name: 'd', traffic_ratio: 0.5 }))!.traffic_ratio, 0.5);
+  for (const bad of [0, -1, 101, 'abc', 0.001]) assert.throws(() => updateCustomer(db, c, { traffic_ratio: bad }), /流量倍率要是 0.01 到 100/, String(bad));
+});
+
+test('删线路 / 强制删面板:线路本期用掉的流量结转到客户身上,已用不变;线路计数在面板上清零也照样结转', () => {
+  const db = memoryDb();
+  const p1 = addPanel(db, 'p1');
+  const p2 = addPanel(db, 'p2');
+  const c = createCustomer(db, { name: 'a', quota_bytes: 10_000, traffic_ratio: 2 });
+  const other = createCustomer(db, { name: 'b' });
+  const l1 = line(db, c, p1.id, 'a1');
+  const l2 = line(db, c, p2.id, 'a2');
+  const l3 = line(db, c, p2.id, 'a3');
+  const lo = line(db, other, p2.id, 'b');
+  updateLineStats(db, l1.id, { up: 10, down: 100, enable: true, last_online: 0 });
+  updateLineStats(db, l2.id, { up: 20, down: 200, enable: true, last_online: 0 });
+  updateLineStats(db, l3.id, { up: 1, down: 2, enable: true, last_online: 0 });
+  updateLineStats(db, lo.id, { up: 5, down: 5, enable: true, last_online: 0 });
+  const usage = (id: number) => {
+    const v = getCustomer(db, id)!;
+    return [v.actual_up, v.actual_down, v.used, v.carried_up, v.carried_down, v.lines.length];
+  };
+  assert.deepEqual(usage(c), [31, 302, 666, 0, 0, 3]);
+
+  deleteLine(db, l1.id);
+  assert.deepEqual(usage(c), [31, 302, 666, 10, 100, 2]);
+  assert.throws(() => deleteLine(db, l1.id), /线路不存在/);
+
+  // 强制删面板:上面的线路都结转,别的客户也一样
+  deletePanel(db, p2.id, true);
+  assert.deepEqual(usage(c), [31, 302, 666, 31, 302, 0]);
+  assert.deepEqual(usage(other), [5, 5, 10, 5, 5, 0]);
+});
+
+test('调整本期已用:记进结转(实际流量,倍率另乘);可以减,调完不能小于 0;都是 0 报错', () => {
+  const db = memoryDb();
+  const p = addPanel(db, 'p');
+  const c = createCustomer(db, { name: 'a', traffic_ratio: 1.5 });
+  const l = line(db, c, p.id, 'a');
+  updateLineStats(db, l.id, { up: 10, down: 100, enable: true, last_online: 0 });
+  adjustUsage(db, c, { down: 1000 });
+  let v = getCustomer(db, c)!;
+  assert.deepEqual([v.carried_up, v.carried_down, v.actual_down, v.used_down], [0, 1000, 1100, 1650]);
+  adjustUsage(db, c, { up: '5', down: -1050 });
+  v = getCustomer(db, c)!;
+  assert.deepEqual([v.carried_up, v.carried_down, v.actual_up, v.actual_down], [5, -50, 15, 50]);
+  assert.throws(() => adjustUsage(db, c, { down: -51 }), /调整后的已用不能小于 0/);
+  assert.throws(() => adjustUsage(db, c, { up: 0, down: '' }), /至少填一个/);
+  assert.throws(() => adjustUsage(db, c, { down: 1.5 }), /要是整数/);
+  assert.throws(() => adjustUsage(db, 999, { down: 1 }), /客户不存在/);
 });

@@ -23,6 +23,9 @@ export function gbToBytes(gb: number): number {
   return Math.round(gb * GB);
 }
 
+/** 可能是负数的流量(手动减过的结转) */
+export const fmtSignedBytes = (n: number): string => (n < 0 ? '-' : '') + fmtBytes(Math.abs(n));
+
 function pad(n: number): string {
   return String(n).padStart(2, '0');
 }

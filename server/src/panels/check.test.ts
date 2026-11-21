@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addLine, createCustomer, getLine, updateLineStats } from '../customers/repo';
+import { addLine, createCustomer, getCustomer, getLine, updateLineStats, zeroLineTraffic } from '../customers/repo';
 import { createSocks } from '../socks/repo';
 import { addPanel, memoryDb, vlessInbound } from '../testUtil';
 import { XUIError } from '../xui/client';
@@ -131,4 +131,33 @@ test('同步时读面板的 Xray 路由,记下每条线路实际的出口;读不
   const ok = await checkPanel(db, a, probe({ xraySettings: timeout }), 300);
   assert.equal(ok.check_error, null);
   assert.equal(getLine(db, line.id)!.routes_at, 200);
+});
+
+test('同步线路:面板上的计数变小了(在面板上清零、删了重建同名客户端)就把旧计数结转到客户身上;在 xui-hub 里清零之前读到的计数不写回', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  const cid = createCustomer(db, { name: 'zhu' });
+  const l = addLine(db, { customer_id: cid, kind: 'direct', panel_id: a.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'zhu' });
+  const usage = () => {
+    const c = getCustomer(db, cid)!;
+    return [c.actual_up, c.actual_down, c.carried_up, c.carried_down];
+  };
+  const sync = (up: number, down: number, at: number) => checkPanel(db, a, fakeProbe([client('zhu', { traffic: { up, down } })]), at);
+
+  await sync(100, 1000, 10);
+  assert.deepEqual(usage(), [100, 1000, 0, 0]);
+  // 面板上清零 / 重建:计数从 0 开始,旧的 100 / 1000 结转
+  await sync(3, 7, 20);
+  assert.deepEqual(usage(), [103, 1007, 100, 1000]);
+  await sync(5, 9, 30);
+  assert.deepEqual(usage(), [105, 1009, 100, 1000]);
+
+  // 在 xui-hub 里清零(t=45);t=40 开始的那次同步读到的是清零前的计数:不写回、不结转
+  zeroLineTraffic(db, l.id, 45);
+  await sync(5, 9, 40);
+  assert.deepEqual([getLine(db, l.id)!.up, getLine(db, l.id)!.down], [0, 0]);
+  // 清零之后开始的同步照常
+  await sync(1, 2, 50);
+  assert.deepEqual([getLine(db, l.id)!.up, getLine(db, l.id)!.down], [1, 2]);
+  assert.deepEqual(usage().slice(2), [100, 1000]);
 });

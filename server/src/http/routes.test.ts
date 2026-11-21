@@ -555,3 +555,39 @@ test('出口规则:写到面板并重启、存下规则和实际出口;不合法
     await close();
   }
 });
+
+test('客户已用:倍率算进额度;删线路后它的流量留在已用里;调整已用超了额度马上停用', async () => {
+  const db = memoryDb();
+  const hk = addPanel(db, 'hk', 'https://1.1.1.1:2053/p');
+  const data = { hk: panel() };
+  const { call, close } = await serve(db, data);
+  try {
+    const c = (await call('POST', '/customers', { name: '王五', quota_bytes: 3000, traffic_ratio: 2 })).body;
+    assert.equal(c.traffic_ratio, 2);
+    const first = (await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: hk.id, inbound: { id: 7 } })).body.line.id;
+    data.hk.clients[0].traffic = { up: 100, down: 900 };
+    await call('POST', '/sync');
+    let v = (await call('GET', '/customers')).body[0];
+    assert.deepEqual([v.actual_used, v.used, v.state], [1000, 2000, 'active']);
+
+    // 删线路:流量留在已用里
+    assert.deepEqual((await call('DELETE', `/customers/${c.id}/lines/${first}`)).body, { ok: true });
+    v = (await call('GET', '/customers')).body[0];
+    assert.deepEqual([v.lines.length, v.actual_used, v.used, v.carried_down], [0, 1000, 2000, 900]);
+
+    // 再开一条,调整已用:加 300 实际 = 计费 600,超了 3000 额度 → 新线路马上停用
+    await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: hk.id, inbound: { id: 7 } });
+    const adj = (await call('POST', `/customers/${c.id}/adjust-usage`, { down: 300 })).body;
+    assert.deepEqual([adj.actual_used, adj.used, adj.state, adj.ops.map((o: any) => o.action)], [1300, 2600, 'active', []]);
+    const over = (await call('POST', `/customers/${c.id}/adjust-usage`, { down: 200 })).body;
+    assert.deepEqual([over.used, over.state, over.ops.map((o: any) => [o.action, o.ok])], [3000, 'over_quota', [['disable', true]]]);
+    assert.equal((await call('POST', `/customers/${c.id}/adjust-usage`, { down: -99999 })).status, 400);
+
+    // 倍率调回 1:计费用量跟着变,马上恢复
+    const back = (await call('PATCH', `/customers/${c.id}`, { traffic_ratio: 1 })).body;
+    assert.deepEqual([back.used, back.state, back.ops.map((o: any) => o.action)], [1500, 'active', ['enable']]);
+    assert.match((await call('PATCH', `/customers/${c.id}`, { traffic_ratio: 0 })).body.error, /流量倍率/);
+  } finally {
+    await close();
+  }
+});

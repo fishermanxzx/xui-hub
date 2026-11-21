@@ -205,6 +205,11 @@ export interface Customer {
   limit_devices: number;
   /** 月费,null = 没填;只用来记账 */
   monthly_fee: number | null;
+  /** 流量倍率:计费用量 = 实际流量 × 倍率,默认 1 */
+  traffic_ratio: number;
+  /** 结转的实际流量(删掉的线路、面板上清零前的计数、手动调整),清零时一起清;可以是负数 */
+  carried_up: number;
+  carried_down: number;
   /** 订阅链接 /sub/<token> 里的 token */
   sub_token: string;
   /** 订阅链接;未配置 SUB_BASE_URL 时为 null,前端用当前地址拼 */
@@ -229,6 +234,11 @@ export interface Customer {
   created_at: number;
   updated_at: number;
   lines: Line[];
+  /** 本期实际流量 = 各线路 + 结转 */
+  actual_up: number;
+  actual_down: number;
+  actual_used: number;
+  /** 本期计费用量 = 实际 × 倍率(订阅里显示的、额度判断用的) */
   used_up: number;
   used_down: number;
   used: number;
@@ -263,6 +273,7 @@ export interface CustomerInput {
   sub_template?: string;
   limit_devices?: number;
   monthly_fee?: number | null;
+  traffic_ratio?: number;
   sub_links?: string[];
   upstreams?: { url: string; node_name?: string }[];
   upstream_mode?: 'merge' | 'replace';
