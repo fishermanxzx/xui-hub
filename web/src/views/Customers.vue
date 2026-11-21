@@ -354,6 +354,90 @@ async function open() {
   }
 }
 
+// ---------- 批量开线路:同一块面板、同样的入站和出口,给勾上的客户各开一条(一条一条开,开完一条显示一条) ----------
+interface BatchResult {
+  state: 'wait' | 'doing' | 'ok' | 'err' | 'skip';
+  text: string;
+}
+const batch = ref<{ ids: Set<number>; q: string; running: boolean; stop: boolean; done: boolean; results: Record<number, BatchResult> } | null>(null);
+function openBatch() {
+  lineFor.value = null;
+  opened.value = null;
+  const usable = panels.value.filter((p) => !p.check_error);
+  lf.value = { panel_id: usable[0]?.id ?? 0, inbound: 'new', protocol: 'vless', exit: 'direct', socks_id: socksList.value[0]?.id ?? 0, node_name: '' };
+  void fetchInbounds(lf.value.panel_id);
+  batch.value = { ids: new Set(), q: '', running: false, stop: false, done: false, results: {} };
+}
+/** 这位客户在这块面板上已经有几条线路 */
+const onPanelCount = (c: Customer, panelId: number) => c.lines.filter((l) => l.panel_id === panelId).length;
+const batchList = computed(() => {
+  const q = batch.value?.q.trim().toLowerCase() ?? '';
+  return customers.value.filter((c) => !q || c.name.toLowerCase().includes(q) || c.remark.toLowerCase().includes(q));
+});
+function batchToggle(id: number) {
+  const ids = batch.value?.ids;
+  if (!ids) return;
+  if (ids.has(id)) ids.delete(id);
+  else ids.add(id);
+}
+/** 全选(列表里的):已经在这块面板上有线路的跳过,要给他们再开一条就单独勾 */
+function batchAll() {
+  for (const c of batchList.value) if (!onPanelCount(c, lf.value.panel_id)) batch.value?.ids.add(c.id);
+}
+const batchText = (r: BatchResult) =>
+  r.state === 'wait' ? t('customers.batchWait') : r.state === 'doing' ? t('customers.batchDoing') : r.state === 'ok' ? t('customers.batchOk', { email: r.text }) : r.state === 'skip' ? t('customers.batchSkipped') : t('customers.batchErr', { error: r.text });
+async function runBatch() {
+  const b = batch.value;
+  if (!b || b.running) return;
+  const f = lf.value;
+  const viaSocks = f.exit === 'socks';
+  const targets = customers.value.filter((c) => b.ids.has(c.id));
+  if (!targets.length || !canOpen.value) return;
+  const panelName = panels.value.find((p) => p.id === f.panel_id)?.name ?? '';
+  if (!confirm(t(viaSocks ? 'customers.batchConfirmRelay' : 'customers.batchConfirm', { panel: panelName, n: targets.length }))) return;
+  b.running = true;
+  b.stop = false;
+  b.done = false;
+  b.results = Object.fromEntries(targets.map((c) => [c.id, { state: 'wait', text: '' } as BatchResult]));
+  // 选「自动新建」时第一条会新建(或复用)入站,后面的都挂到同一个入站上
+  let inbound: OpenLineInput['inbound'] = f.inbound === 'new' ? { protocol: f.protocol } : { id: f.inbound };
+  let ok = 0;
+  let created = '';
+  for (const c of targets) {
+    if (b.stop) break;
+    b.results[c.id] = { state: 'doing', text: '' };
+    const body: OpenLineInput = { kind: viaSocks ? 'relay' : 'direct', panel_id: f.panel_id, inbound };
+    if (viaSocks) body.exit = { kind: 'socks', socks_id: f.socks_id };
+    if (f.node_name.trim()) body.node_name = f.node_name.trim();
+    try {
+      const r = await api.openLine(c.id, body);
+      inbound = { id: r.line.inbound_id };
+      if (r.created.inbound) created = r.created.inbound;
+      b.results[c.id] = { state: 'ok', text: r.line.email };
+      ok++;
+    } catch (e) {
+      b.results[c.id] = { state: 'err', text: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  // 点了停止:还没轮到的标成「没开」
+  for (const r of Object.values(b.results)) if (r.state === 'wait') r.state = 'skip';
+  const failed = Object.values(b.results).filter((r) => r.state === 'err').length;
+  const skipped = Object.values(b.results).filter((r) => r.state === 'skip').length;
+  b.running = false;
+  b.done = true;
+  b.ids = new Set(targets.filter((c) => b.results[c.id]?.state !== 'ok').map((c) => c.id));
+  inboundsOf.value = {};
+  void fetchInbounds(f.panel_id);
+  await load();
+  const note = [created ? t('customers.openedInbound', { name: created }) : '', failed ? t('customers.batchFailed', { n: failed }) : '', skipped ? t('customers.batchStopped', { n: skipped }) : ''].filter(Boolean).join('; ');
+  toast(t('customers.batchDone', { n: ok }) + (note ? `;${note}` : ''), failed ? 'err' : 'ok');
+}
+function closeLineForm() {
+  if (batch.value?.running) return;
+  lineFor.value = null;
+  batch.value = null;
+}
+
 // ---------- 线路:链接 / 删除 ----------
 const linksFor = ref<{ line: Line; links: string[] } | null>(null);
 const loadingLinks = ref(0);
@@ -535,6 +619,7 @@ function exitText(l: Line): string {
     </div>
     <div class="row">
       <button :disabled="syncing || !customers.length" :title="t('customers.syncHint')" @click="syncNow">{{ syncing ? t('customers.syncing') : t('customers.syncNow') }}</button>
+      <button :disabled="!panels.length || !customers.length" :title="t('customers.batchHint')" @click="openBatch">{{ t('customers.batchButton') }}</button>
       <button class="primary" @click="openForm(null)">{{ t('customers.create') }}</button>
     </div>
   </div>
@@ -712,9 +797,10 @@ function exitText(l: Line): string {
     </template>
   </Modal>
 
-  <Modal v-if="lineFor" :title="opened ? t('customers.lineOpenedTitle', { name: lineFor.name }) : t('customers.openLineTitle', { name: lineFor.name })" @close="lineFor = null">
+  <Modal v-if="lineFor || batch" :title="batch ? t('customers.batchTitle') : opened ? t('customers.lineOpenedTitle', { name: lineFor!.name }) : t('customers.openLineTitle', { name: lineFor!.name })" :wide="!!batch" @close="closeLineForm">
     <template v-if="!opened">
-      <div class="form">
+      <fieldset class="form plain" :disabled="!!batch?.running">
+        <p v-if="batch" class="muted small">{{ t('customers.batchIntro') }}</p>
         <label class="field">
           {{ t('customers.panel') }}
           <Select v-model="lf.panel_id" :options="panelOptions(panels)" />
@@ -747,8 +833,31 @@ function exitText(l: Line): string {
         <label class="field">
           {{ t('customers.nodeNameOptional') }}
           <input v-model="lf.node_name" maxlength="64" :placeholder="t('customers.nodeNamePlaceholder')" />
+          <span v-if="batch" class="muted small">{{ t('customers.batchNodeName') }}</span>
         </label>
-      </div>
+
+        <div v-if="batch" class="field-block">
+          <span class="label">{{ t('customers.batchCustomers', { n: batch.ids.size }) }}</span>
+          <div class="row batch-tools">
+            <input v-model="batch.q" type="search" :placeholder="t('customers.batchSearch')" :aria-label="t('customers.batchSearch')" />
+            <button type="button" class="link" @click="batchAll">{{ t('customers.batchAll') }}</button>
+            <button type="button" class="link" @click="batch.ids.clear()">{{ t('customers.batchNone') }}</button>
+          </div>
+          <ul class="batch-list">
+            <li v-for="c in batchList" :key="c.id">
+              <label class="row small">
+                <input type="checkbox" :checked="batch.ids.has(c.id)" @change="batchToggle(c.id)" />
+                <span class="b-name">{{ c.name }}</span>
+                <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
+                <span v-if="onPanelCount(c, lf.panel_id)" class="muted">{{ t('customers.batchHas', { n: onPanelCount(c, lf.panel_id) }) }}</span>
+              </label>
+              <span v-if="batch.results[c.id]" class="small b-res" :class="batch.results[c.id].state" :title="batch.results[c.id].text">{{ batchText(batch.results[c.id]) }}</span>
+            </li>
+            <li v-if="!batchList.length" class="muted small">{{ t('customers.batchEmpty') }}</li>
+          </ul>
+          <p class="muted small hint">{{ t('customers.batchAllHint') }}</p>
+        </div>
+      </fieldset>
     </template>
     <template v-else>
       <p class="muted small">
@@ -758,7 +867,12 @@ function exitText(l: Line): string {
     </template>
     <template #footer>
       <span class="spacer" />
-      <template v-if="!opened">
+      <template v-if="batch">
+        <button v-if="batch.running" :disabled="batch.stop" @click="batch.stop = true">{{ batch.stop ? t('customers.batchStopping') : t('customers.batchStop') }}</button>
+        <button v-else @click="closeLineForm">{{ batch.done ? t('customers.done') : t('common.cancel') }}</button>
+        <button class="primary" :disabled="batch.running || !batch.ids.size || !canOpen" @click="runBatch">{{ batch.running ? t('customers.batchRunning') : t('customers.batchStart', { n: batch.ids.size }) }}</button>
+      </template>
+      <template v-else-if="!opened">
         <button @click="lineFor = null">{{ t('common.cancel') }}</button>
         <button class="primary" :disabled="opening || !canOpen" @click="open">{{ opening ? t('customers.opening') : t('customers.open') }}</button>
       </template>
@@ -1164,6 +1278,65 @@ h2 {
   gap: 8px;
   cursor: pointer;
   min-height: 36px;
+}
+.form.plain {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.batch-tools {
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.batch-tools input {
+  flex: 1 1 200px;
+}
+.batch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+.batch-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-top: 1px solid var(--rule-soft);
+}
+.batch-list li:first-child {
+  border-top: none;
+}
+.batch-list label {
+  gap: 8px;
+  cursor: pointer;
+  min-width: 0;
+}
+.b-name {
+  font-weight: 500;
+}
+.b-res {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-soft);
+}
+.b-res.ok {
+  color: var(--ok);
+}
+.b-res.err {
+  color: var(--fault);
+}
+.b-res.doing {
+  color: var(--accent-strong);
 }
 .reset-day {
   gap: 6px;
