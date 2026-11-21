@@ -1,4 +1,4 @@
-import type { RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule } from './types';
+import type { RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind } from './types';
 import { locale } from './i18n';
 
 let onUnauthorized: (() => void) | null = null;
@@ -77,6 +77,12 @@ export const api = {
   lineLinks: (id: number, lineId: number) => call<{ links: string[] }>('GET', `/api/customers/${id}/lines/${lineId}/links`),
   renameLine: (id: number, lineId: number, node_name: string) => call<Line>('PATCH', `/api/customers/${id}/lines/${lineId}`, { node_name }),
   setLineRules: (id: number, lineId: number, rules: LineRule[]) => call<Line>('PUT', `/api/customers/${id}/lines/${lineId}/rules`, { rules }),
+  // 面板的 geo 库(3x-ui 3.7.0 起有接口;supported = false 是面板太老)
+  geoFiles: (panelId: number) => call<{ supported: boolean; files?: GeoFile[] }>('GET', `/api/panels/${panelId}/geodata/files`),
+  geoCategories: (panelId: number, file: string) => call<{ supported: boolean; items?: GeoCategory[] }>('GET', `/api/panels/${panelId}/geodata/categories?${new URLSearchParams({ file })}`),
+  geoEntries: (panelId: number, file: string, code: string, q: string, offset: number, limit: number) =>
+    call<{ supported: boolean; total?: number; items?: GeoEntry[] }>('GET', `/api/panels/${panelId}/geodata/entries?${new URLSearchParams({ file, code, q, offset: String(offset), limit: String(limit) })}`),
+  geoValidate: (panelId: number, kind: GeoKind, tokens: string[]) => call<{ supported: boolean; issues: GeoIssue[] }>('POST', `/api/panels/${panelId}/geodata/validate`, { kind, tokens }),
   refreshUpstreams: (id: number) => call<Customer>('POST', `/api/customers/${id}/upstreams/refresh`),
   /** force:面板上删不掉(连不上、已经不在了)也把这里的线路记录删掉 */
   deleteLine: (id: number, lineId: number, force = false) => call('DELETE', `/api/customers/${id}/lines/${lineId}${force ? '?force=1' : ''}`),

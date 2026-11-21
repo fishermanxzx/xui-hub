@@ -185,3 +185,28 @@ test('重启 Xray:重启接口自己断了不算失败,等到状态回到 runnin
     await p.close();
   }
 });
+
+test('geo 库:分类 / 条目用查询参数,核对按表单发;老面板(404)抛出的错带状态码', async () => {
+  const p = await fakePanel((r) => {
+    if (r.path.startsWith('/xray/geodata/categories')) return ok({ total: 1, items: [{ code: 'cn', entries: 3, attributes: [] }] });
+    if (r.path.startsWith('/xray/geodata/entries')) return ok({ total: 3, items: [{ kind: 'domain', value: 'a.cn' }] });
+    if (r.path === '/xray/geodata/validate') return ok([{ token: 'geosite:x', reason: 'categoryMissing' }]);
+    return { status: 404, text: 'not found' };
+  });
+  try {
+    assert.deepEqual(await p.client.geodataCategories('geosite_IR.dat'), [{ code: 'cn', entries: 3, attributes: [] }]);
+    assert.deepEqual(await p.client.geodataEntries('geosite.dat', 'cn', 'a b', 100, 50), { total: 3, items: [{ kind: 'domain', value: 'a.cn' }] });
+    assert.deepEqual(await p.client.geodataValidate('ip', ['geoip:cn', 'geosite:x']), [{ token: 'geosite:x', reason: 'categoryMissing' }]);
+    await assert.rejects(p.client.geodataFiles(), (e) => e instanceof XUIError && e.status === 404);
+    assert.deepEqual(
+      p.seen.slice(0, 3).map((r) => [r.method, r.path, r.type.split(';')[0], r.body]),
+      [
+        ['GET', '/xray/geodata/categories?file=geosite_IR.dat', '', ''],
+        ['GET', '/xray/geodata/entries?file=geosite.dat&code=cn&q=a+b&offset=100&limit=50', '', ''],
+        ['POST', '/xray/geodata/validate', 'application/x-www-form-urlencoded', 'kind=ip&tokens=geoip%3Acn%2Cgeosite%3Ax'],
+      ],
+    );
+  } finally {
+    await p.close();
+  }
+});

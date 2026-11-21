@@ -43,10 +43,15 @@ import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, 
 import { trafficReport } from '../traffic/daily';
 import type { Updater } from '../update';
 import { errorText, mapLimit, panelKey, serial, using } from '../util';
-import { XUIError } from '../xui/client';
+import { XUIError, type GeoCategory, type GeoEntry, type GeoFile, type GeoIssue, type GeoKind, type GeoPage } from '../xui/client';
+import { isGeoUnsupported, validateTokens } from '../lines/geodata';
 import { LoginLimiter, passwordMatches, readCookie, SESSION_COOKIE, SESSION_MAX_AGE_MS, sessionCookie, sessionKeys, signSession, verifySession } from './auth';
 
 export interface PanelClient extends ClientAdmin, PanelReader, PanelProbe, LineAdmin {
+  geodataFiles(): Promise<GeoFile[]>;
+  geodataCategories(file: string): Promise<GeoCategory[]>;
+  geodataEntries(file: string, code: string, q: string, offset: number, limit: number): Promise<GeoPage<GeoEntry>>;
+  geodataValidate(kind: GeoKind, tokens: string[]): Promise<GeoIssue[]>;
   setClientsEnabled(emails: string[], enable: boolean): Promise<void>;
   resetClientTraffic(email: string): Promise<void>;
   serverStatus(): Promise<{ panelVersion: string; xrayVersion: string; xrayState: string; xrayError: string }>;
@@ -198,6 +203,67 @@ export function apiRouter(deps: RouteDeps): Router {
         return { ...c, customer: id == null ? null : { id, name: names.get(id) ?? '?' } };
       };
       return { ...detail, inbounds: detail.inbounds.map((ib) => ({ ...ib, clients: ib.clients.map(tag) })), unattached: detail.unattached.map(tag) };
+    }),
+  );
+
+  // ---------- geo 库:看面板 Xray 目录里的 geosite / geoip,给出口规则挑分类、核对写法(3x-ui 3.7.0 起有接口) ----------
+  const geoFile = (v: unknown): string => {
+    const f = String(v ?? '');
+    if (!/^[\w.-]{1,100}\.dat$/i.test(f)) throw new InputError('库文件名不对(要 .dat 文件名)');
+    return f;
+  };
+  const geoInt = (v: unknown, def: number, max: number): number => {
+    if (v == null || v === '') return def;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 0 || n > max) throw new InputError('分页参数不对');
+    return n;
+  };
+  /** 面板太老(没有 geo 接口)时返回 supported: false,界面上提示升级 */
+  const geoCall = <T>(req: Request, fn: (client: PanelClient) => Promise<T>) =>
+    withClient(panelOf(req), async (client) => {
+      try {
+        return { supported: true, ...(await fn(client)) };
+      } catch (e) {
+        if (isGeoUnsupported(e)) return { supported: false };
+        throw e;
+      }
+    });
+  r.get(
+    '/panels/:id/geodata/files',
+    wrap((req) => geoCall(req, async (c) => ({ files: await c.geodataFiles() }))),
+  );
+  r.get(
+    '/panels/:id/geodata/categories',
+    wrap((req) => {
+      const file = geoFile(req.query.file);
+      return geoCall(req, async (c) => ({ items: await c.geodataCategories(file) }));
+    }),
+  );
+  r.get(
+    '/panels/:id/geodata/entries',
+    wrap((req) => {
+      const file = geoFile(req.query.file);
+      const code = String(req.query.code ?? '').trim();
+      if (!code || code.length > 200 || /[\s,]/.test(code)) throw new InputError('分类名不对');
+      const q = String(req.query.q ?? '').trim().slice(0, 100);
+      const offset = geoInt(req.query.offset, 0, 10_000_000);
+      const limit = Math.max(1, geoInt(req.query.limit, 100, 500));
+      return geoCall(req, (c) => c.geodataEntries(file, code, q, offset, limit));
+    }),
+  );
+  // 按面板的库核对写法:kind = site(域名)/ ip;返回对不上的(普通域名、网段不查)
+  r.post(
+    '/panels/:id/geodata/validate',
+    wrap((req) => {
+      const kind = req.body?.kind === 'ip' ? 'ip' : req.body?.kind === 'site' ? 'site' : null;
+      if (!kind) throw new InputError('kind 只能是 site 或 ip');
+      const raw = req.body?.tokens;
+      if (!Array.isArray(raw) || raw.length > 5000) throw new InputError('tokens 要是最多 5000 项的数组');
+      const tokens = raw.map((x: unknown) => String(x ?? '').trim()).filter((x: string) => x && x.length <= 300);
+      return withClient(panelOf(req), async (client) => {
+        const issues = await validateTokens(client, kind, tokens);
+        return { supported: issues !== null, issues: issues ?? [] };
+      });
     }),
   );
 

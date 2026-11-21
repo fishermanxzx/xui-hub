@@ -3,6 +3,7 @@
 import { openDb, type DB } from './db';
 import type { PanelClient } from './http/routes';
 import { createPanel, type Panel } from './panels/repo';
+import { XUIError, type GeoCategory, type GeoEntry, type GeoIssue, type GeoKind } from './xui/client';
 
 export function memoryDb(): DB {
   return openDb(':memory:');
@@ -31,12 +32,59 @@ export type FakePanel = {
   fail?: Partial<Record<keyof PanelClient, string | Error>>;
   slow?: number;
   update?: { channel: string; current: string; latest: string; available: boolean } | null;
+  /** 面板的 geo 库:库名 → 分类(条目可选);不给 = 面板太老、没有 geo 接口(404) */
+  geo?: Record<string, { kind: GeoKind; categories: (GeoCategory & { items?: GeoEntry[] })[] }>;
+  /** 收到的核对请求 */
+  geoChecks?: { kind: GeoKind; tokens: string[] }[];
 };
+
+/** 照 3x-ui 的规则核对写法(简化版):geosite:分类[@属性]、geoip:分类、ext:库:分类 */
+export function fakeGeoValidate(geo: NonNullable<FakePanel['geo']>, kind: GeoKind, tokens: string[]): GeoIssue[] {
+  const out: GeoIssue[] = [];
+  for (const token of tokens) {
+    let t = token.trim();
+    if (kind === 'ip') t = t.replace(/^!+/, '');
+    if (t.startsWith(kind === 'ip' ? 'geosite:' : 'geoip:')) {
+      out.push({ token, reason: 'wrongKind' });
+      continue;
+    }
+    const short = kind === 'ip' ? 'geoip:' : 'geosite:';
+    const long = t.startsWith(short) ? `ext:${kind === 'ip' ? 'geoip.dat' : 'geosite.dat'}:${t.slice(short.length)}` : t;
+    const m = /^ext(?:-domain|-site|-ip)?:([^:]*):(.*)$/.exec(long);
+    if (!m) {
+      if (/^ext/.test(long)) out.push({ token, reason: 'syntax' });
+      continue;
+    }
+    const [file, rest] = [m[1], m[2]];
+    const [code, ...attrs] = kind === 'site' ? rest.split('@') : [rest.replace(/^!+/, '')];
+    if (!file || !code || attrs.some((a) => !a)) {
+      out.push({ token, reason: 'syntax' });
+      continue;
+    }
+    const db = geo[file];
+    if (!db) {
+      out.push({ token, reason: 'fileMissing', file, code: code.toLowerCase() });
+      continue;
+    }
+    const cat = db.categories.find((c) => c.code === code.toLowerCase());
+    if (!cat) {
+      out.push({ token, reason: 'categoryMissing', file, code: code.toLowerCase() });
+      continue;
+    }
+    const missing = attrs.find((a) => !cat.attributes.includes(a.toLowerCase()));
+    if (missing) out.push({ token, reason: 'attributeMissing', file, code: missing });
+  }
+  return out;
+}
 
 /** 按面板名取状态的假面板;fail 在每次取客户端时读,测试中途可以改 */
 export function fakePanels(data: Record<string, FakePanel>) {
   return (p: Panel): PanelClient => {
     const d = data[p.name];
+    const geo = () => {
+      if (!d.geo) throw new XUIError('404:webBasePath 不对或端点不存在', 404);
+      return d.geo;
+    };
     const client: PanelClient = {
       listInbounds: async () => structuredClone(d.inbounds),
       listClients: async () => structuredClone(d.clients),
@@ -64,6 +112,17 @@ export function fakePanels(data: Record<string, FakePanel>) {
       },
       updatePanel: async () => 'run-1',
       updateStatus: async () => ({ runId: 'run-1', state: 'success', exitCode: 0 }),
+      geodataFiles: async () =>
+        Object.entries(geo()).map(([name, f]) => ({ name, kind: f.kind, size: 1000, modifiedAt: 0, categories: f.categories.length })),
+      geodataCategories: async (file) => (geo()[file]?.categories ?? []).map(({ items, ...c }) => c),
+      geodataEntries: async (file, code, q, offset, limit) => {
+        const all = (geo()[file]?.categories.find((c) => c.code === code)?.items ?? []).filter((x) => !q || x.value.includes(q));
+        return { total: all.length, items: all.slice(offset, offset + limit) };
+      },
+      geodataValidate: async (kind, tokens) => {
+        (d.geoChecks ??= []).push({ kind, tokens: [...tokens] });
+        return fakeGeoValidate(geo(), kind, tokens);
+      },
     };
     for (const [method, error] of Object.entries(d.fail ?? {})) (client as any)[method] = async () => Promise.reject(typeof error === 'string' ? new Error(error) : error);
     return client;

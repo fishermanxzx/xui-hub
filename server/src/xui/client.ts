@@ -3,7 +3,47 @@
 
 import { Agent, fetch, type Dispatcher } from 'undici';
 
-export class XUIError extends Error {}
+export class XUIError extends Error {
+  /** 面板回的 HTTP 状态(连不上时没有) */
+  constructor(message: string, readonly status?: number) {
+    super(message);
+  }
+}
+
+/** 面板 geo 库(Xray 目录里的 .dat):geosite 是域名库,geoip 是 IP 库 */
+export type GeoKind = 'site' | 'ip';
+export interface GeoFile {
+  name: string;
+  kind: GeoKind | '';
+  size: number;
+  /** 毫秒时间戳 */
+  modifiedAt: number;
+  categories: number;
+  /** 解析不了(下载不完整、太大)时的原因 */
+  error?: string;
+}
+export interface GeoCategory {
+  code: string;
+  entries: number;
+  /** geosite 分类里带的属性,如 ads、cn、!cn;规则里写 geosite:分类@属性 */
+  attributes: string[];
+}
+export interface GeoEntry {
+  /** domain / full / keyword / regexp;IP 库是 cidr */
+  kind: string;
+  value: string;
+}
+export interface GeoPage<T> {
+  total: number;
+  items: T[];
+}
+/** 规则里一个写法在面板 geo 库里对不上的原因 */
+export interface GeoIssue {
+  token: string;
+  reason: 'syntax' | 'fileMissing' | 'categoryMissing' | 'attributeMissing' | 'wrongKind' | string;
+  file?: string;
+  code?: string;
+}
 
 export interface XUIConnection {
   name: string;
@@ -45,13 +85,13 @@ export class XUIClient {
     } catch (e: any) {
       throw new XUIError(`连接失败:${e?.cause?.message ?? e?.message ?? e}`);
     }
-    if (res.status === 401 || res.status === 403) throw new XUIError(`鉴权失败(${res.status}):检查 token / webBasePath`);
-    if (res.status === 404) throw new XUIError('404:webBasePath 不对或端点不存在');
+    if (res.status === 401 || res.status === 403) throw new XUIError(`鉴权失败(${res.status}):检查 token / webBasePath`, res.status);
+    if (res.status === 404) throw new XUIError('404:webBasePath 不对或端点不存在', 404);
     let data: any;
     try {
       data = await res.json();
     } catch {
-      throw new XUIError(`非 JSON 响应(${res.status}),可能命中了登录页`);
+      throw new XUIError(`非 JSON 响应(${res.status}),可能命中了登录页`, res.status);
     }
     if (data && typeof data === 'object' && 'success' in data) {
       if (!data.success) throw new XUIError(data.msg || 'API 返回 success=false');
@@ -179,6 +219,29 @@ export class XUIClient {
       await new Promise((r) => setTimeout(r, 1500));
     }
     throw new XUIError('面板重启后没有恢复应答,去服务器上看一下(x-ui status)');
+  }
+
+  // ---- geo 库(3x-ui 3.7.0 起有;更老的面板这几个接口是 404) ----
+
+  /** 面板 Xray 目录里的 geo 库:geosite.dat、geoip.dat 和别的 .dat */
+  async geodataFiles(): Promise<GeoFile[]> {
+    return (await this.req<GeoFile[]>('GET', '/xray/geodata/files')) ?? [];
+  }
+
+  /** 一个库的全部分类 */
+  async geodataCategories(file: string): Promise<GeoCategory[]> {
+    return (await this.req<GeoPage<GeoCategory>>('GET', `/xray/geodata/categories?${new URLSearchParams({ file })}`))?.items ?? [];
+  }
+
+  /** 一个分类里的条目(域名 / 网段),分页;q 按值过滤 */
+  async geodataEntries(file: string, code: string, q: string, offset: number, limit: number): Promise<GeoPage<GeoEntry>> {
+    const qs = new URLSearchParams({ file, code, q, offset: String(offset), limit: String(limit) });
+    return (await this.req<GeoPage<GeoEntry>>('GET', `/xray/geodata/entries?${qs}`)) ?? { total: 0, items: [] };
+  }
+
+  /** 让面板按它的 geo 库核对规则里的写法,返回对不上的;普通域名 / 网段不查 */
+  async geodataValidate(kind: GeoKind, tokens: string[]): Promise<GeoIssue[]> {
+    return (await this.req<GeoIssue[]>('POST', '/xray/geodata/validate', new URLSearchParams({ kind, tokens: tokens.join(',') }))) ?? [];
   }
 
   /** 面板设置里面板自己用的证书路径(新建 hy2 入站用这份证书) */
