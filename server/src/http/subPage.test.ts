@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addLine, createCustomer, getCustomer, updateLineStats } from '../customers/repo';
+import { addLine, createCustomer, deleteLine, getCustomer, updateLineStats } from '../customers/repo';
 import { addPanel, memoryDb } from '../testUtil';
 import { importLinks, qrSvg, renderSubPage } from './subPage';
 
@@ -28,4 +28,19 @@ test('导入链接覆盖主流客户端;二维码是 SVG', () => {
   assert.deepEqual(links.map((l) => l.app), ['Clash Verge / Mihomo', 'Stash', 'Shadowrocket', 'sing-box', 'Hiddify', 'Surge', 'Quantumult X', 'Loon']);
   assert.ok(links[2].href.startsWith('shadowrocket://add/sub://aHR0cHM6Ly9zLmV4YW1wbGUvc3ViL3Q?remark='));
   assert.match(qrSvg('https://s.example/sub/t'), /^<svg .*<path d="M/);
+});
+
+test('自助页只给客户看按倍率算的用量:总已用、剩余、每条线路都是计费用量,看不到实际流量和倍率', () => {
+  const db = memoryDb();
+  const p = addPanel(db, 'hk');
+  const GB = 1024 ** 3;
+  const cid = createCustomer(db, { name: 'a', quota_bytes: 100 * GB, traffic_ratio: 2 });
+  const l = addLine(db, { customer_id: cid, kind: 'direct', panel_id: p.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'a' });
+  const gone = addLine(db, { customer_id: cid, kind: 'direct', panel_id: p.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'a2' });
+  updateLineStats(db, l.id, { up: 0, down: 10 * GB, enable: true, last_online: 0 });
+  updateLineStats(db, gone.id, { up: 0, down: 5 * GB, enable: true, last_online: 0 });
+  deleteLine(db, gone.id);
+  const html = renderSubPage({ customer: getCustomer(db, cid)!, url: 'https://sub.example/sub/tok' });
+  for (const s of ['已用 30.0 GB / 100.0 GB', '剩余 70.0 GB', '直连 · 已用 20.0 GB']) assert.ok(html.includes(s), s);
+  for (const s of ['15.0 GB', '10.0 GB', '倍率', '实际', '结转']) assert.ok(!html.includes(s), s);
 });
