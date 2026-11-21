@@ -7,6 +7,8 @@ import ClientLinks from '../components/ClientLinks.vue';
 import TopologyGraph from '../components/TopologyGraph.vue';
 import Modal from '../components/Modal.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
+import MultiSelect from '../components/MultiSelect.vue';
+import { CUSTOMER_SORTS, CUSTOMER_STATES, matchState, queryCustomers, usesPanel, type CustomerQuery, type CustomerSort } from '../customerQuery';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, feeSummary, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
@@ -19,6 +21,58 @@ const socksList = ref<Socks[]>([]);
 
 /** 月费合计和结余(面板 + SOCKS 的月成本) */
 const fees = computed(() => feeSummary(customers.value, [...panels.value, ...socksList.value]));
+
+// ---------- 搜索 / 过滤 / 排序 ----------
+/** 排序记在浏览器里;搜索和过滤每次打开都从「全部」开始,免得以为客户少了 */
+const SORT_KEY = 'xui-hub.customerSort';
+function savedSort(): Pick<CustomerQuery, 'sort' | 'reverse'> {
+  try {
+    const v = JSON.parse(localStorage.getItem(SORT_KEY) ?? 'null');
+    if (CUSTOMER_SORTS.includes(v?.sort)) return { sort: v.sort, reverse: !!v.reverse };
+  } catch {
+    /* 忽略坏数据 */
+  }
+  return { sort: 'name', reverse: false };
+}
+const query = ref<CustomerQuery>({ q: '', panels: [], state: '', ...savedSort() });
+watch(
+  () => [query.value.sort, query.value.reverse],
+  () => {
+    try {
+      localStorage.setItem(SORT_KEY, JSON.stringify({ sort: query.value.sort, reverse: query.value.reverse }));
+    } catch {
+      /* 存不了就算了 */
+    }
+  },
+);
+// 面板删掉了就从过滤里去掉
+watch(panels, (list) => {
+  const ids = new Set(list.map((p) => p.id));
+  if (query.value.panels.some((id) => !ids.has(id))) query.value.panels = query.value.panels.filter((id) => ids.has(id));
+});
+const shown = computed(() => queryCustomers(customers.value, query.value));
+/** 按面板过滤时,客户卡片里不在这些面板上的线路淡一点 */
+const pickedPanels = computed(() => new Set(query.value.panels));
+const offPanel = (l: Line) => pickedPanels.value.size > 0 && !pickedPanels.value.has(l.panel_id) && !(l.exit_panel_id != null && pickedPanels.value.has(l.exit_panel_id));
+const filtering = computed(() => !!query.value.q.trim() || !!query.value.panels.length || !!query.value.state);
+function clearFilters() {
+  query.value = { ...query.value, q: '', panels: [], state: '' };
+}
+const panelFilterOptions = computed<SelectOption<number>[]>(() =>
+  panels.value.map((p) => ({ value: p.id, label: t('customers.panelOption', { name: p.name, n: customers.value.filter((c) => usesPanel(c, new Set([p.id]))).length }) })),
+);
+const panelFilterLabel = computed(() => {
+  const picked = query.value.panels;
+  if (!picked.length) return t('customers.allPanels');
+  if (picked.length === 1) return panels.value.find((p) => p.id === picked[0])?.name ?? t('customers.allPanels');
+  return t('customers.panelsPicked', { n: picked.length });
+});
+const stateOptions = computed<SelectOption<CustomerQuery['state']>[]>(() => [
+  { value: '', label: t('customers.allStates') },
+  ...CUSTOMER_STATES.map((s) => ({ value: s, label: t('customers.stateOption', { label: s === 'soon' ? t('customers.stateSoon') : stateLabel(s), n: customers.value.filter((c) => matchState(c, s)).length }) })),
+]);
+const sortOptions = computed<SelectOption<CustomerSort>[]>(() => CUSTOMER_SORTS.map((s) => ({ value: s, label: t(`customers.sort.${s}`) })));
+const sortDir = computed(() => t(`customers.sortDir.${query.value.sort}${query.value.reverse ? '_r' : ''}` as 'customers.sortDir.name'));
 
 const templateDefault = ref('');
 async function load() {
@@ -472,8 +526,22 @@ function exitText(l: Line): string {
     </div>
   </div>
 
+  <div v-if="customers.length" class="filters">
+    <input v-model="query.q" type="search" class="search" :placeholder="t('customers.searchPlaceholder')" :aria-label="t('customers.search')" />
+    <MultiSelect v-model="query.panels" :options="panelFilterOptions" :label="panelFilterLabel" :all-label="t('customers.allPanels')" :aria-label="t('customers.filterPanels')" />
+    <Select v-model="query.state" :options="stateOptions" :aria-label="t('customers.filterState')" />
+    <span class="sort">
+      <Select v-model="query.sort" :options="sortOptions" :aria-label="t('customers.sortBy')" />
+      <button type="button" class="dir" :title="t('customers.sortDirHint')" :aria-pressed="query.reverse" @click="query.reverse = !query.reverse">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 3v10M2.5 10.5 5 13l2.5-2.5M11 13V3M8.5 5.5 11 3l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>{{ sortDir }}
+      </button>
+    </span>
+    <span v-if="filtering" class="muted small">{{ t('customers.shown', { n: shown.length, total: customers.length }) }}</span>
+    <button v-if="filtering" type="button" class="link" @click="clearFilters">{{ t('customers.clearFilters') }}</button>
+  </div>
+
   <div class="cards">
-    <article v-for="c in customers" :key="c.id" class="card sheet">
+    <article v-for="c in shown" :key="c.id" class="card sheet">
       <header class="head">
         <div class="title">
           <span class="name">{{ c.name }}</span>
@@ -531,7 +599,7 @@ function exitText(l: Line): string {
         </div>
       </div>
       <ul v-if="c.lines.length" class="lines">
-        <li v-for="l in c.lines" :key="l.id" class="line">
+        <li v-for="l in c.lines" :key="l.id" class="line" :class="{ dim: offPanel(l) }">
           <span class="chip" :class="l.kind">{{ l.kind === 'direct' ? t('customers.direct') : t('customers.relay') }}</span>
           <span class="where">
             <strong>{{ l.panel_name }}</strong>
@@ -558,6 +626,9 @@ function exitText(l: Line): string {
     </article>
   </div>
   <div v-if="!customers.length" class="empty sheet">{{ t('customers.empty') }}</div>
+  <div v-else-if="!shown.length" class="empty sheet">
+    {{ t('customers.noMatch') }} <button type="button" class="link" @click="clearFilters">{{ t('customers.clearFilters') }}</button>
+  </div>
 
   <Modal v-if="showForm" :title="editing ? t('customers.editTitle', { name: editing.name }) : t('customers.create')" @close="showForm = false">
     <form id="customer-form" class="form" @submit.prevent="submit">
@@ -808,6 +879,33 @@ h2 {
   flex-wrap: wrap;
   gap: 4px 14px;
 }
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-bottom: 12px;
+}
+.filters .search {
+  flex: 1 1 220px;
+  max-width: 340px;
+}
+.filters :deep(button.select) {
+  max-width: 220px;
+}
+.sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.dir {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  font-weight: 400;
+  white-space: nowrap;
+}
 .topo-hint {
   margin: 0 0 8px;
 }
@@ -976,6 +1074,13 @@ h2 {
 }
 .line:last-child {
   border-bottom: none;
+}
+.line.dim {
+  opacity: 0.5;
+}
+.line.dim:hover,
+.line.dim:focus-within {
+  opacity: 1;
 }
 .chip.relay {
   background: var(--accent-soft);
