@@ -302,18 +302,30 @@ async function remove(c: Customer) {
   }
 }
 
-// ---------- 开线路 ----------
+// ---------- 开线路:可以一次勾几块面板,每块面板开一条(入站、节点名每块面板一行单独设,出口都一样),一块一块开 ----------
 const lineFor = ref<Customer | null>(null);
 const opening = ref(false);
-const opened = ref<OpenedLine | null>(null);
-// 一条线路只动一块面板:选面板和入站,出口默认从这块面板直出,也可以选 SOCKS 页登记的代理
+/** 这次开成了的线路(按面板顺序);null = 还在填表 */
+const opened = ref<OpenedLine[] | null>(null);
+/** 这次没开成的面板和原因 */
+const openFailed = ref<{ panel: string; error: string }[]>([]);
+/** 每块面板一行:入站 = 'auto:vless' / 'auto:hy2'(有同协议的入站就挂上去,没有就新建)或 'ib:<入站 id>' */
+interface PanelPick {
+  inbound: string;
+  node_name: string;
+}
+const sf = ref<{ picked: Set<number>; rows: Record<number, PanelPick>; results: Record<number, BatchResult>; exit: 'direct' | 'socks'; socks_id: number }>({
+  picked: new Set(),
+  rows: {},
+  results: {},
+  exit: 'direct',
+  socks_id: 0,
+});
+// 批量开线路:一块面板、一个入站
 const lf = ref({
   panel_id: 0,
   inbound: 'new' as 'new' | number,
   protocol: 'vless' as ClientProtocol,
-  exit: 'direct' as 'direct' | 'socks',
-  socks_id: 0,
-  node_name: '',
 });
 /** 各面板现取的入站(按面板 id 缓存) */
 const inboundsOf = ref<Record<number, PanelInbound[] | 'loading' | 'error'>>({});
@@ -334,7 +346,8 @@ const list = (id: number) => {
   const v = inboundsOf.value[id];
   return Array.isArray(v) ? v : [];
 };
-const clientInbounds = computed(() => list(lf.value.panel_id).filter((i) => i.accepts_clients && i.enable));
+const clientInboundsOf = (id: number) => list(id).filter((i) => i.accepts_clients && i.enable);
+const clientInbounds = computed(() => clientInboundsOf(lf.value.panel_id));
 const PROTOCOL_OPTIONS: SelectOption<ClientProtocol>[] = [
   { value: 'vless', label: 'vless(reality)' },
   { value: 'hy2', label: 'hy2(hysteria2)' },
@@ -349,13 +362,50 @@ const socksOptions = computed<SelectOption<number>[]>(() =>
 );
 const templateOptions = computed<SelectOption<string>[]>(() => [...templates.value.map((x) => ({ value: x.id === templateDefault.value ? '' : x.id, label: `${tplText(x, 'name')} — ${tplText(x, 'desc')}` })), { value: 'custom', label: t('customers.customTemplateOption') }]);
 
+const usablePanels = computed(() => panels.value.filter((p) => !p.check_error));
 function openLineFor(c: Customer) {
   lineFor.value = c;
   opened.value = null;
-  const usable = panels.value.filter((p) => !p.check_error);
-  lf.value = { panel_id: usable[0]?.id ?? 0, inbound: 'new', protocol: 'vless', exit: 'direct', socks_id: socksList.value[0]?.id ?? 0, node_name: '' };
-  void fetchInbounds(lf.value.panel_id);
+  openFailed.value = [];
+  // 只有一块能用的面板就直接勾上
+  const only = usablePanels.value.length === 1 ? [usablePanels.value[0].id] : [];
+  sf.value = { picked: new Set(only), rows: {}, results: {}, exit: 'direct', socks_id: socksList.value[0]?.id ?? 0 };
+  for (const id of only) void fetchInbounds(id);
 }
+const rowOf = (panelId: number): PanelPick => sf.value.rows[panelId] ?? { inbound: 'auto:vless', node_name: '' };
+function pickPanel(panelId: number) {
+  sf.value.picked.add(panelId);
+  void fetchInbounds(panelId);
+}
+function togglePanel(panelId: number) {
+  if (sf.value.picked.has(panelId)) sf.value.picked.delete(panelId);
+  else pickPanel(panelId);
+}
+/** 全选:这位客户已经有线路的面板跳过,要在上面再开一条就单独勾 */
+function pickAllPanels() {
+  for (const p of usablePanels.value) if (!lineFor.value || !onPanelCount(lineFor.value, p.id)) pickPanel(p.id);
+}
+/** 改了入站、填了节点名就是要在这块面板上开:顺手勾上 */
+function setRowInbound(panelId: number, v: string) {
+  sf.value.rows[panelId] = { ...rowOf(panelId), inbound: v };
+  pickPanel(panelId);
+}
+function setRowName(panelId: number, v: string) {
+  sf.value.rows[panelId] = { ...rowOf(panelId), node_name: v };
+  if (v.trim()) pickPanel(panelId);
+}
+function inboundChoices(panelId: number): SelectOption<string>[] {
+  return [
+    ...PROTOCOL_OPTIONS.map((o) => ({ value: `auto:${o.value}`, label: t('customers.inboundAutoShort', { proto: o.label }) })),
+    ...clientInboundsOf(panelId).map((i) => ({ value: `ib:${i.id}`, label: t('customers.inboundOption', { remark: i.remark || t('customers.unnamed'), proto: proto(i.protocol), port: i.port, n: i.clients.length }) })),
+  ];
+}
+const inboundInput = (v: string): OpenLineInput['inbound'] => (v.startsWith('ib:') ? { id: Number(v.slice(3)) } : { protocol: v.slice(5) as ClientProtocol });
+/** 勾上的面板(按面板列表的顺序) */
+const linePanels = computed(() => usablePanels.value.filter((p) => sf.value.picked.has(p.id)));
+
+const canOpen = computed(() => !!linePanels.value.length && (sf.value.exit === 'direct' || !!sf.value.socks_id));
+const canBatch = computed(() => !!lf.value.panel_id);
 watch(
   () => lf.value.panel_id,
   (id) => {
@@ -364,34 +414,58 @@ watch(
   },
 );
 
-const canOpen = computed(() => {
-  const f = lf.value;
-  if (!f.panel_id) return false;
-  return f.exit === 'direct' || !!f.socks_id;
-});
-
 async function open() {
-  if (!lineFor.value) return;
-  const f = lf.value;
+  const c = lineFor.value;
+  const f = sf.value;
+  if (!c || opening.value || !canOpen.value) return;
+  const targets = linePanels.value;
   const viaSocks = f.exit === 'socks';
-  const body: OpenLineInput = { kind: viaSocks ? 'relay' : 'direct', panel_id: f.panel_id, inbound: f.inbound === 'new' ? { protocol: f.protocol } : { id: f.inbound } };
-  if (viaSocks) body.exit = { kind: 'socks', socks_id: f.socks_id };
-  if (f.node_name.trim()) body.node_name = f.node_name.trim();
-  if (viaSocks && !confirm(t('customers.confirmRelay', { panel: panels.value.find((p) => p.id === f.panel_id)?.name ?? '' }))) return;
+  const names = targets.map((p) => p.name).join(t('customers.nameSep'));
+  if (viaSocks && !confirm(targets.length > 1 ? t('customers.confirmRelayMulti', { panels: names, n: targets.length }) : t('customers.confirmRelay', { panel: names }))) return;
   opening.value = true;
-  try {
-    opened.value = await api.openLine(lineFor.value.id, body);
-    const created = opened.value.created.inbound;
-    toast(created ? t('customers.lineOpenedNote', { note: t('customers.openedInbound', { name: created }) }) : t('customers.lineOpened'));
-    // 入站变了:缓存清掉,表单正用着的面板马上重取(「再开一条」接着用这张表单)
-    inboundsOf.value = {};
-    void fetchInbounds(f.panel_id);
-    await load();
-  } catch (e) {
-    toastError(e);
-  } finally {
-    opening.value = false;
+  openFailed.value = [];
+  f.results = Object.fromEntries(targets.map((p) => [p.id, { state: 'wait', text: '' } as BatchResult]));
+  const done: OpenedLine[] = [];
+  const created: string[] = [];
+  for (const p of targets) {
+    f.results[p.id] = { state: 'doing', text: '' };
+    const row = rowOf(p.id);
+    const body: OpenLineInput = { kind: viaSocks ? 'relay' : 'direct', panel_id: p.id, inbound: inboundInput(row.inbound) };
+    if (viaSocks) body.exit = { kind: 'socks', socks_id: f.socks_id };
+    if (row.node_name.trim()) body.node_name = row.node_name.trim();
+    try {
+      const r = await api.openLine(c.id, body);
+      done.push(r);
+      if (r.created.inbound) created.push(targets.length > 1 ? `${p.name}「${r.created.inbound}」` : r.created.inbound);
+      f.results[p.id] = { state: 'ok', text: r.line.email };
+    } catch (e) {
+      f.results[p.id] = { state: 'err', text: e instanceof Error ? e.message : String(e) };
+    }
   }
+  // 开成了的不再勾、节点名清掉(再开一条时不会重开、不会重名);没开成的留着,回去改一改再开
+  for (const p of targets) {
+    if (f.results[p.id]?.state !== 'ok') continue;
+    f.picked.delete(p.id);
+    delete f.rows[p.id];
+  }
+  openFailed.value = targets.filter((p) => f.results[p.id]?.state === 'err').map((p) => ({ panel: p.name, error: f.results[p.id].text }));
+  opening.value = false;
+  // 入站变了:缓存清掉,还勾着的面板马上重取
+  inboundsOf.value = {};
+  for (const id of f.picked) void fetchInbounds(id);
+  await load();
+  lineFor.value = customers.value.find((x) => x.id === c.id) ?? c;
+  if (done.length) opened.value = done;
+  const failed = openFailed.value.length;
+  const notes = [created.length ? t('customers.openedInbound', { name: created.join(t('customers.nameSep')) }) : '', failed ? t('customers.linesFailed', { n: failed }) : ''].filter(Boolean);
+  if (!done.length) toast(t('customers.linesNoneOpened'), 'err');
+  else if (targets.length === 1) toast(notes.length ? t('customers.lineOpenedNote', { note: notes.join('; ') }) : t('customers.lineOpened'));
+  else toast(t('customers.batchDone', { n: done.length }) + (notes.length ? `;${notes.join('; ')}` : ''), failed ? 'err' : 'ok');
+}
+/** 结果页回到表单:没开成的还勾着 */
+function openAnother() {
+  opened.value = null;
+  openFailed.value = [];
 }
 
 // ---------- 批量开线路:同一块面板、同样的入站和出口,给勾上的客户各开一条(一条一条开,开完一条显示一条) ----------
@@ -408,7 +482,7 @@ function openBatch() {
   lineFor.value = null;
   opened.value = null;
   const usable = panels.value.filter((p) => !p.check_error);
-  lf.value = { panel_id: usable[0]?.id ?? 0, inbound: 'new', protocol: 'vless', exit: 'direct', socks_id: socksList.value[0]?.id ?? 0, node_name: '' };
+  lf.value = { panel_id: usable[0]?.id ?? 0, inbound: 'new', protocol: 'vless' };
   void fetchInbounds(lf.value.panel_id);
   batch.value = { ids: new Set(), q: '', running: false, stop: false, done: false, results: {}, exits: {}, names: {} };
 }
@@ -475,7 +549,7 @@ async function runBatch() {
   if (!b || b.running) return;
   const f = lf.value;
   const targets = customers.value.filter((c) => b.ids.has(c.id));
-  if (!targets.length || !canOpen.value) return;
+  if (!targets.length || !canBatch.value) return;
   const plans = new Map(targets.map((c) => [c.id, planFor(c)]));
   // 走 SOCKS 或带规则的,每条都要改一次路由、重启一次 Xray
   const xray = [...plans.values()].filter((p) => p.socks || p.rules.length).length;
@@ -524,7 +598,7 @@ async function runBatch() {
   toast(t('customers.batchDone', { n: ok }) + (note ? `;${note}` : ''), failed ? 'err' : 'ok');
 }
 function closeLineForm() {
-  if (batch.value?.running) return;
+  if (batch.value?.running || opening.value) return;
   lineFor.value = null;
   batch.value = null;
 }
@@ -975,102 +1049,150 @@ function exitText(l: Line): string {
     </template>
   </Modal>
 
-  <Modal v-if="lineFor || batch" :title="batch ? t('customers.batchTitle') : opened ? t('customers.lineOpenedTitle', { name: lineFor!.name }) : t('customers.openLineTitle', { name: lineFor!.name })" :wide="!!batch" @close="closeLineForm">
+  <Modal v-if="lineFor" :title="opened ? t('customers.lineOpenedTitle', { name: lineFor.name }) : t('customers.openLineTitle', { name: lineFor.name })" wide @close="closeLineForm">
     <template v-if="!opened">
-      <fieldset class="form plain" :disabled="!!batch?.running">
-        <p v-if="batch" class="muted small">{{ t('customers.batchIntro') }}</p>
-        <label class="field">
-          {{ t('customers.panel') }}
-          <Select v-model="lf.panel_id" :options="panelOptions(panels)" />
-        </label>
+      <fieldset class="form plain" :disabled="opening">
         <div class="field-block">
-          <span class="label">{{ t('customers.inbound') }}</span>
-          <div class="choices">
-            <label class="row small"><input v-model="lf.inbound" type="radio" value="new" />{{ t('customers.inboundAuto') }}</label>
-            <span v-if="lf.inbound === 'new'" class="inline"><Select v-model="lf.protocol" :options="PROTOCOL_OPTIONS" :aria-label="t('customers.inboundAuto')" /></span>
-            <template v-if="inboundsOf[lf.panel_id] === 'loading'"><span class="muted small">{{ t('customers.readingInbounds') }}</span></template>
-            <template v-else-if="inboundsOf[lf.panel_id] === 'error'"><span class="text-err small">{{ t('customers.inboundsError') }} <button type="button" class="link" @click="fetchInbounds(lf.panel_id)">{{ t('customers.retry') }}</button></span></template>
-            <template v-else-if="clientInbounds.length">
-              <label v-for="i in clientInbounds" :key="i.id" class="row small">
-                <input v-model="lf.inbound" type="radio" :value="i.id" />{{ t('customers.inboundOption', { remark: i.remark || t('customers.unnamed'), proto: proto(i.protocol), port: i.port, n: i.clients.length }) }}
-              </label>
-            </template>
-            <span v-else class="muted small">{{ t('customers.noInbounds') }}</span>
-          </div>
-        </div>
-
-        <div v-if="!batch" class="field-block">
-          <span class="label">{{ t('customers.exit') }}</span>
-          <div class="choices">
-            <label class="row small"><input v-model="lf.exit" type="radio" value="direct" />{{ t('customers.exitDirect') }}</label>
-            <label class="row small"><input v-model="lf.exit" type="radio" value="socks" :disabled="!socksList.length" />{{ t('customers.exitSocks') }}{{ socksList.length ? '' : t('customers.noSocks') }}</label>
-            <span v-if="lf.exit === 'socks'" class="inline"><Select v-model="lf.socks_id" :options="socksOptions" :aria-label="t('customers.exitSocks')" /></span>
-          </div>
-          <p class="muted small hint">{{ t('customers.relayHint') }}</p>
-        </div>
-        <label v-if="!batch" class="field">
-          {{ t('customers.nodeNameOptional') }}
-          <input v-model="lf.node_name" maxlength="64" :placeholder="t('customers.nodeNamePlaceholder')" />
-        </label>
-
-        <div v-if="batch" class="field-block">
-          <span class="label">{{ t('customers.batchCustomers', { n: batch.ids.size }) }}</span>
-          <div class="row batch-tools">
-            <input v-model="batch.q" type="search" :placeholder="t('customers.batchSearch')" :aria-label="t('customers.batchSearch')" />
-            <button type="button" class="link" @click="batchAll">{{ t('customers.batchAll') }}</button>
-            <button type="button" class="link" @click="batch.ids.clear()">{{ t('customers.batchNone') }}</button>
+          <span class="label">{{ t('customers.linePanels', { n: linePanels.length }) }}</span>
+          <div v-if="usablePanels.length > 1" class="row batch-tools">
+            <button type="button" class="link" @click="pickAllPanels">{{ t('customers.batchAll') }}</button>
+            <button type="button" class="link" @click="sf.picked.clear()">{{ t('customers.batchNone') }}</button>
           </div>
           <ul class="batch-list">
             <li class="b-row b-head muted small" aria-hidden="true">
-              <span>{{ t('customers.batchColCustomer') }}</span><span>{{ t('customers.batchColExit') }}</span><span>{{ t('customers.batchColNodeName') }}</span><span>{{ t('customers.batchColResult') }}</span>
+              <span>{{ t('customers.panel') }}</span><span>{{ t('customers.inbound') }}</span><span>{{ t('customers.batchColNodeName') }}</span><span>{{ t('customers.batchColResult') }}</span>
             </li>
-            <li v-for="c in batchList" :key="c.id" class="b-row" :class="{ picked: batch.ids.has(c.id) }">
-              <div class="b-who">
-                <label class="b-check small">
-                  <input type="checkbox" :checked="batch.ids.has(c.id)" @change="batchToggle(c.id)" />
-                  <span class="b-name">{{ c.name }}</span>
-                  <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
-                  <span v-if="onPanelCount(c, lf.panel_id)" class="muted">{{ t('customers.batchHas', { n: onPanelCount(c, lf.panel_id) }) }}</span>
-                </label>
-                <div class="b-nodes small">
-                  <template v-if="c.lines.length">
-                    <span v-for="l in c.lines" :key="l.id" class="b-node" :class="{ here: l.panel_id === lf.panel_id }" :title="nodeTitle(l)">{{ l.node_name || l.panel_name }}</span>
-                  </template>
-                  <span v-else class="muted">{{ t('customers.batchNoLines') }}</span>
-                </div>
-              </div>
-              <span class="b-exit"><Select :model-value="exitOf(c)" :options="batchExitOptions(c)" :aria-label="t('customers.batchExitFor', { name: c.name })" @update:model-value="(v: string) => setExit(c, v)" /></span>
-              <input class="b-nodename" :value="batch.names[c.id] ?? ''" maxlength="64" :placeholder="t('customers.batchNodeNamePh')" :aria-label="t('customers.batchNodeNameFor', { name: c.name })" @input="setName(c, ($event.target as HTMLInputElement).value)" />
-              <span class="small b-res" :class="batch.results[c.id]?.state" :title="batch.results[c.id]?.text">{{ batch.results[c.id] ? batchText(batch.results[c.id]) : '' }}</span>
+            <li v-for="p in panels" :key="p.id" class="b-row" :class="{ picked: sf.picked.has(p.id), off: !!p.check_error }">
+              <label class="b-check small">
+                <input type="checkbox" :checked="sf.picked.has(p.id) && !p.check_error" :disabled="!!p.check_error" @change="togglePanel(p.id)" />
+                <span class="b-name">{{ p.name }}</span>
+                <span v-if="p.check_error" class="text-err">{{ t('customers.unreachable') }}</span>
+                <span v-else-if="onPanelCount(lineFor, p.id)" class="muted">{{ t('customers.panelHasLines', { n: onPanelCount(lineFor, p.id) }) }}</span>
+              </label>
+              <template v-if="!p.check_error">
+                <span class="b-exit p-inbound">
+                  <Select :model-value="rowOf(p.id).inbound" :options="inboundChoices(p.id)" :aria-label="t('customers.inboundFor', { name: p.name })" @update:model-value="(v: string) => setRowInbound(p.id, v)" />
+                  <span v-if="inboundsOf[p.id] === 'loading'" class="muted small">{{ t('customers.readingInbounds') }}</span>
+                  <span v-else-if="inboundsOf[p.id] === 'error'" class="text-err small">{{ t('customers.inboundsError') }} <button type="button" class="link" @click="fetchInbounds(p.id)">{{ t('customers.retry') }}</button></span>
+                </span>
+                <input class="b-nodename" :value="rowOf(p.id).node_name" maxlength="64" :placeholder="t('customers.batchNodeNamePh')" :aria-label="t('customers.nodeNameFor', { name: p.name })" @input="setRowName(p.id, ($event.target as HTMLInputElement).value)" />
+                <span class="small b-res" :class="sf.results[p.id]?.state" :title="sf.results[p.id]?.text">{{ sf.results[p.id] ? batchText(sf.results[p.id]) : '' }}</span>
+              </template>
             </li>
-            <li v-if="!batchList.length" class="muted small">{{ t('customers.batchEmpty') }}</li>
           </ul>
-          <p class="muted small hint">{{ t('customers.batchExitHint') }}</p>
-          <p class="muted small hint">{{ t('customers.batchAllHint') }}</p>
+          <p class="muted small hint">{{ t('customers.linePanelsHint') }}</p>
+        </div>
+
+        <div class="field-block">
+          <span class="label">{{ t('customers.exit') }}</span>
+          <div class="choices">
+            <label class="row small"><input v-model="sf.exit" type="radio" value="direct" />{{ t('customers.exitDirect') }}</label>
+            <label class="row small"><input v-model="sf.exit" type="radio" value="socks" :disabled="!socksList.length" />{{ t('customers.exitSocks') }}{{ socksList.length ? '' : t('customers.noSocks') }}</label>
+            <span v-if="sf.exit === 'socks'" class="inline"><Select v-model="sf.socks_id" :options="socksOptions" :aria-label="t('customers.exitSocks')" /></span>
+          </div>
+          <p class="muted small hint">{{ t('customers.relayHint') }}</p>
         </div>
       </fieldset>
     </template>
     <template v-else>
-      <p class="muted small">
-        {{ t('customers.openedSummary', { exit: exitText(opened.line), panel: opened.line.panel_name, inbound: opened.line.inbound_remark || opened.line.inbound_id, proto: proto(opened.line.protocol), email: opened.line.email }) }}
-      </p>
-      <ClientLinks :links="opened.links" :name="opened.line.email" />
+      <div v-if="openFailed.length" class="open-failed small">
+        <p class="text-err">{{ t('customers.linesFailedHead', { n: openFailed.length }) }}</p>
+        <ul>
+          <li v-for="f in openFailed" :key="f.panel"><b>{{ f.panel }}</b>:{{ f.error }}</li>
+        </ul>
+      </div>
+      <template v-if="opened.length === 1">
+        <p class="muted small">
+          {{ t('customers.openedSummary', { exit: exitText(opened[0].line), panel: opened[0].line.panel_name, inbound: opened[0].line.inbound_remark || opened[0].line.inbound_id, proto: proto(opened[0].line.protocol), email: opened[0].line.email }) }}
+        </p>
+        <ClientLinks :links="opened[0].links" :name="opened[0].line.email" />
+      </template>
+      <template v-else>
+        <p class="muted small">{{ t('customers.openedMultiHint', { n: opened.length }) }}</p>
+        <section v-for="o in opened" :key="o.line.id" class="opened-one">
+          <p class="opened-head">{{ o.line.node_name ? `${o.line.panel_name}「${o.line.node_name}」` : o.line.panel_name }}</p>
+          <p class="muted small">{{ t('customers.openedSummaryShort', { exit: exitText(o.line), inbound: o.line.inbound_remark || o.line.inbound_id, proto: proto(o.line.protocol), email: o.line.email }) }}</p>
+          <ClientLinks :links="o.links" :name="o.line.email" collapsed />
+        </section>
+      </template>
     </template>
     <template #footer>
       <span class="spacer" />
-      <template v-if="batch">
-        <button v-if="batch.running" :disabled="batch.stop" @click="batch.stop = true">{{ batch.stop ? t('customers.batchStopping') : t('customers.batchStop') }}</button>
-        <button v-else @click="closeLineForm">{{ batch.done ? t('customers.done') : t('common.cancel') }}</button>
-        <button class="primary" :disabled="batch.running || !batch.ids.size || !canOpen" @click="runBatch">{{ batch.running ? t('customers.batchRunning') : t('customers.batchStart', { n: batch.ids.size }) }}</button>
-      </template>
-      <template v-else-if="!opened">
-        <button @click="lineFor = null">{{ t('common.cancel') }}</button>
-        <button class="primary" :disabled="opening || !canOpen" @click="open">{{ opening ? t('customers.opening') : t('customers.open') }}</button>
+      <template v-if="!opened">
+        <button :disabled="opening" @click="closeLineForm">{{ t('common.cancel') }}</button>
+        <button class="primary" :disabled="opening || !canOpen" @click="open">{{ opening ? t('customers.opening') : linePanels.length > 1 ? t('customers.openN', { n: linePanels.length }) : t('customers.open') }}</button>
       </template>
       <template v-else>
-        <button @click="opened = null">{{ t('customers.another') }}</button>
-        <button class="primary" @click="lineFor = null">{{ t('customers.done') }}</button>
+        <button @click="openAnother">{{ openFailed.length ? t('customers.retryFailed', { n: openFailed.length }) : t('customers.another') }}</button>
+        <button class="primary" @click="closeLineForm">{{ t('customers.done') }}</button>
       </template>
+    </template>
+  </Modal>
+
+  <Modal v-if="batch" :title="t('customers.batchTitle')" wide @close="closeLineForm">
+    <fieldset class="form plain" :disabled="batch.running">
+      <p class="muted small">{{ t('customers.batchIntro') }}</p>
+      <label class="field">
+        {{ t('customers.panel') }}
+        <Select v-model="lf.panel_id" :options="panelOptions(panels)" />
+      </label>
+      <div class="field-block">
+        <span class="label">{{ t('customers.inbound') }}</span>
+        <div class="choices">
+          <label class="row small"><input v-model="lf.inbound" type="radio" value="new" />{{ t('customers.inboundAuto') }}</label>
+          <span v-if="lf.inbound === 'new'" class="inline"><Select v-model="lf.protocol" :options="PROTOCOL_OPTIONS" :aria-label="t('customers.inboundAuto')" /></span>
+          <template v-if="inboundsOf[lf.panel_id] === 'loading'"><span class="muted small">{{ t('customers.readingInbounds') }}</span></template>
+          <template v-else-if="inboundsOf[lf.panel_id] === 'error'"><span class="text-err small">{{ t('customers.inboundsError') }} <button type="button" class="link" @click="fetchInbounds(lf.panel_id)">{{ t('customers.retry') }}</button></span></template>
+          <template v-else-if="clientInbounds.length">
+            <label v-for="i in clientInbounds" :key="i.id" class="row small">
+              <input v-model="lf.inbound" type="radio" :value="i.id" />{{ t('customers.inboundOption', { remark: i.remark || t('customers.unnamed'), proto: proto(i.protocol), port: i.port, n: i.clients.length }) }}
+            </label>
+          </template>
+          <span v-else class="muted small">{{ t('customers.noInbounds') }}</span>
+        </div>
+      </div>
+
+      <div class="field-block">
+        <span class="label">{{ t('customers.batchCustomers', { n: batch.ids.size }) }}</span>
+        <div class="row batch-tools">
+          <input v-model="batch.q" type="search" :placeholder="t('customers.batchSearch')" :aria-label="t('customers.batchSearch')" />
+          <button type="button" class="link" @click="batchAll">{{ t('customers.batchAll') }}</button>
+          <button type="button" class="link" @click="batch.ids.clear()">{{ t('customers.batchNone') }}</button>
+        </div>
+        <ul class="batch-list">
+          <li class="b-row b-head muted small" aria-hidden="true">
+            <span>{{ t('customers.batchColCustomer') }}</span><span>{{ t('customers.batchColExit') }}</span><span>{{ t('customers.batchColNodeName') }}</span><span>{{ t('customers.batchColResult') }}</span>
+          </li>
+          <li v-for="c in batchList" :key="c.id" class="b-row" :class="{ picked: batch.ids.has(c.id) }">
+            <div class="b-who">
+              <label class="b-check small">
+                <input type="checkbox" :checked="batch.ids.has(c.id)" @change="batchToggle(c.id)" />
+                <span class="b-name">{{ c.name }}</span>
+                <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
+                <span v-if="onPanelCount(c, lf.panel_id)" class="muted">{{ t('customers.batchHas', { n: onPanelCount(c, lf.panel_id) }) }}</span>
+              </label>
+              <div class="b-nodes small">
+                <template v-if="c.lines.length">
+                  <span v-for="l in c.lines" :key="l.id" class="b-node" :class="{ here: l.panel_id === lf.panel_id }" :title="nodeTitle(l)">{{ l.node_name || l.panel_name }}</span>
+                </template>
+                <span v-else class="muted">{{ t('customers.batchNoLines') }}</span>
+              </div>
+            </div>
+            <span class="b-exit"><Select :model-value="exitOf(c)" :options="batchExitOptions(c)" :aria-label="t('customers.batchExitFor', { name: c.name })" @update:model-value="(v: string) => setExit(c, v)" /></span>
+            <input class="b-nodename" :value="batch.names[c.id] ?? ''" maxlength="64" :placeholder="t('customers.batchNodeNamePh')" :aria-label="t('customers.batchNodeNameFor', { name: c.name })" @input="setName(c, ($event.target as HTMLInputElement).value)" />
+            <span class="small b-res" :class="batch.results[c.id]?.state" :title="batch.results[c.id]?.text">{{ batch.results[c.id] ? batchText(batch.results[c.id]) : '' }}</span>
+          </li>
+          <li v-if="!batchList.length" class="muted small">{{ t('customers.batchEmpty') }}</li>
+        </ul>
+        <p class="muted small hint">{{ t('customers.batchExitHint') }}</p>
+        <p class="muted small hint">{{ t('customers.batchAllHint') }}</p>
+      </div>
+    </fieldset>
+    <template #footer>
+      <span class="spacer" />
+      <button v-if="batch.running" :disabled="batch.stop" @click="batch.stop = true">{{ batch.stop ? t('customers.batchStopping') : t('customers.batchStop') }}</button>
+      <button v-else @click="closeLineForm">{{ batch.done ? t('customers.done') : t('common.cancel') }}</button>
+      <button class="primary" :disabled="batch.running || !batch.ids.size || !canBatch" @click="runBatch">{{ batch.running ? t('customers.batchRunning') : t('customers.batchStart', { n: batch.ids.size }) }}</button>
     </template>
   </Modal>
 
@@ -1685,6 +1807,34 @@ button.primary.danger-fill:hover:not(:disabled) {
 }
 .b-name {
   font-weight: 500;
+}
+/* 开线路:每块面板一行,连不上的灰掉;入站下拉下面是读取状态 */
+.b-row.off {
+  opacity: 0.6;
+}
+.p-inbound {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.opened-one {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule-soft);
+}
+.opened-head {
+  margin: 0 0 2px;
+  font-weight: 500;
+}
+.open-failed {
+  margin-bottom: 10px;
+}
+.open-failed p {
+  margin: 0 0 4px;
+}
+.open-failed ul {
+  margin: 0;
+  padding-left: 18px;
 }
 .b-res {
   max-width: 100%;

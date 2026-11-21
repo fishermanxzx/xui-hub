@@ -5,8 +5,9 @@ import { ref } from 'vue';
 import { copyText } from '../clipboard';
 import QrCode from './QrCode.vue';
 
-const props = defineProps<{ links: string[]; name: string }>();
-const qr = ref<number | null>(props.links.length === 1 ? 0 : null);
+// collapsed:只有一条链接时也不自动展开二维码(一次列出好几条线路时用)
+const props = defineProps<{ links: string[]; name: string; collapsed?: boolean }>();
+const qr = ref<number | null>(props.links.length === 1 && !props.collapsed ? 0 : null);
 
 const protocolOf = (link: string) => link.slice(0, link.indexOf('://'));
 </script>
