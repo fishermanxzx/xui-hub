@@ -394,6 +394,221 @@ async function open() {
   }
 }
 
+// ---------- 批量开线路:同一块面板、同样的入站和出口,给勾上的客户各开一条(一条一条开,开完一条显示一条) ----------
+interface BatchResult {
+  state: 'wait' | 'doing' | 'ok' | 'err' | 'skip';
+  text: string;
+}
+/**
+ * exits:单独改过出口的客户 → 'direct' / 'socks:<id>' / 'copy:<线路 id>'(照抄他这条现有线路的出口和出口规则);
+ * names:每位客户新线路的节点名,空 = 用面板生成的
+ */
+const batch = ref<{ ids: Set<number>; q: string; running: boolean; stop: boolean; done: boolean; results: Record<number, BatchResult>; exits: Record<number, string>; names: Record<number, string> } | null>(null);
+function openBatch() {
+  lineFor.value = null;
+  opened.value = null;
+  const usable = panels.value.filter((p) => !p.check_error);
+  lf.value = { panel_id: usable[0]?.id ?? 0, inbound: 'new', protocol: 'vless', exit: 'direct', socks_id: socksList.value[0]?.id ?? 0, node_name: '' };
+  void fetchInbounds(lf.value.panel_id);
+  batch.value = { ids: new Set(), q: '', running: false, stop: false, done: false, results: {}, exits: {}, names: {} };
+}
+/** 这位客户在这块面板上已经有几条线路 */
+const onPanelCount = (c: Customer, panelId: number) => c.lines.filter((l) => l.panel_id === panelId).length;
+const batchList = computed(() => {
+  const q = batch.value?.q.trim().toLowerCase() ?? '';
+  return customers.value.filter((c) => !q || c.name.toLowerCase().includes(q) || c.remark.toLowerCase().includes(q));
+});
+function batchToggle(id: number) {
+  const ids = batch.value?.ids;
+  if (!ids) return;
+  if (ids.has(id)) ids.delete(id);
+  else ids.add(id);
+}
+/** 全选(列表里的):已经在这块面板上有线路的跳过,要给他们再开一条就单独勾 */
+function batchAll() {
+  for (const c of batchList.value) if (!onPanelCount(c, lf.value.panel_id)) batch.value?.ids.add(c.id);
+}
+/** 能照抄的现有线路:直出,或走还在的 SOCKS;规则里用到的 SOCKS 也都还在(老的「中转到面板」那种不行) */
+const socksAlive = (id: number | null | undefined) => id != null && socksList.value.some((s) => s.id === id);
+const copyable = (l: Line) => (l.kind === 'direct' || (l.exit_kind === 'socks' && socksAlive(l.exit_socks_id))) && (l.rules ?? []).every((r) => r.to.kind !== 'socks' || socksAlive(r.to.socks_id));
+/** 每位客户的出口各选各的:默认照抄他最新的一条现有线路,没有能照抄的就直出 */
+function defaultExit(c: Customer): string {
+  const latest = [...c.lines].reverse().find(copyable);
+  return latest ? `copy:${latest.id}` : 'direct';
+}
+const exitOf = (c: Customer) => batch.value?.exits[c.id] ?? defaultExit(c);
+/** 改了出口就是要给他开:顺手勾上 */
+function setExit(c: Customer, v: string) {
+  if (!batch.value) return;
+  batch.value.exits[c.id] = v;
+  batch.value.ids.add(c.id);
+}
+/** 填了节点名也是要给他开:顺手勾上 */
+function setName(c: Customer, v: string) {
+  if (!batch.value) return;
+  batch.value.names[c.id] = v;
+  if (v.trim()) batch.value.ids.add(c.id);
+}
+/** 已有节点的悬停说明:面板 · 协议 · 出口 */
+const nodeTitle = (l: Line) => `${l.panel_name} · ${proto(l.protocol)} · ${exitText(l)}`;
+function batchExitOptions(c: Customer): SelectOption<string>[] {
+  const copies = c.lines.filter(copyable).map((l) => {
+    const exit = l.kind === 'relay' ? t('customers.routeSocks', { name: l.exit_socks_name ?? '' }) : t('customers.direct');
+    const rules = l.rules?.length ? t('customers.batchCopyRules', { n: l.rules.length }) : '';
+    return { value: `copy:${l.id}`, label: t('customers.batchCopy', { line: l.node_name ? `${l.panel_name}「${l.node_name}」` : l.panel_name, exit: exit + rules }) };
+  });
+  return [...copies, { value: 'direct', label: t('customers.direct') }, ...socksList.value.map((s) => ({ value: `socks:${s.id}`, label: t('customers.routeSocks', { name: s.name }) }))];
+}
+/** 这位客户这次要开的出口和规则 */
+function planFor(c: Customer): { socks: number | null; rules: LineRule[] } {
+  const v = exitOf(c);
+  if (v.startsWith('copy:')) {
+    const l = c.lines.find((x) => x.id === Number(v.slice(5)));
+    return { socks: l?.kind === 'relay' ? (l.exit_socks_id ?? null) : null, rules: l?.rules ?? [] };
+  }
+  return { socks: v.startsWith('socks:') ? Number(v.slice(6)) : null, rules: [] };
+}
+const batchText = (r: BatchResult) =>
+  r.state === 'wait' ? t('customers.batchWait') : r.state === 'doing' ? t('customers.batchDoing') : r.state === 'ok' ? t('customers.batchOk', { email: r.text }) : r.state === 'skip' ? t('customers.batchSkipped') : t('customers.batchErr', { error: r.text });
+async function runBatch() {
+  const b = batch.value;
+  if (!b || b.running) return;
+  const f = lf.value;
+  const targets = customers.value.filter((c) => b.ids.has(c.id));
+  if (!targets.length || !canOpen.value) return;
+  const plans = new Map(targets.map((c) => [c.id, planFor(c)]));
+  // 走 SOCKS 或带规则的,每条都要改一次路由、重启一次 Xray
+  const xray = [...plans.values()].filter((p) => p.socks || p.rules.length).length;
+  const panelName = panels.value.find((p) => p.id === f.panel_id)?.name ?? '';
+  if (!confirm(xray ? t('customers.batchConfirmXray', { panel: panelName, n: targets.length, m: xray }) : t('customers.batchConfirm', { panel: panelName, n: targets.length }))) return;
+  b.running = true;
+  b.stop = false;
+  b.done = false;
+  b.results = Object.fromEntries(targets.map((c) => [c.id, { state: 'wait', text: '' } as BatchResult]));
+  // 选「自动新建」时第一条会新建(或复用)入站,后面的都挂到同一个入站上
+  let inbound: OpenLineInput['inbound'] = f.inbound === 'new' ? { protocol: f.protocol } : { id: f.inbound };
+  let ok = 0;
+  let created = '';
+  for (const c of targets) {
+    if (b.stop) break;
+    b.results[c.id] = { state: 'doing', text: '' };
+    const plan = plans.get(c.id)!;
+    const body: OpenLineInput = { kind: plan.socks ? 'relay' : 'direct', panel_id: f.panel_id, inbound };
+    if (plan.socks) body.exit = { kind: 'socks', socks_id: plan.socks };
+    if (plan.rules.length) body.rules = plan.rules;
+    const nodeName = (b.names[c.id] ?? '').trim();
+    if (nodeName) body.node_name = nodeName;
+    try {
+      const r = await api.openLine(c.id, body);
+      inbound = { id: r.line.inbound_id };
+      if (r.created.inbound) created = r.created.inbound;
+      b.results[c.id] = { state: 'ok', text: r.line.email };
+      ok++;
+    } catch (e) {
+      b.results[c.id] = { state: 'err', text: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  // 点了停止:还没轮到的标成「没开」
+  for (const r of Object.values(b.results)) if (r.state === 'wait') r.state = 'skip';
+  const failed = Object.values(b.results).filter((r) => r.state === 'err').length;
+  const skipped = Object.values(b.results).filter((r) => r.state === 'skip').length;
+  b.running = false;
+  b.done = true;
+  b.ids = new Set(targets.filter((c) => b.results[c.id]?.state !== 'ok').map((c) => c.id));
+  // 开成了的,节点名清掉(再给他开一条时不会重名)
+  for (const c of targets) if (b.results[c.id]?.state === 'ok') delete b.names[c.id];
+  inboundsOf.value = {};
+  void fetchInbounds(f.panel_id);
+  await load();
+  const note = [created ? t('customers.openedInbound', { name: created }) : '', failed ? t('customers.batchFailed', { n: failed }) : '', skipped ? t('customers.batchStopped', { n: skipped }) : ''].filter(Boolean).join('; ');
+  toast(t('customers.batchDone', { n: ok }) + (note ? `;${note}` : ''), failed ? 'err' : 'ok');
+}
+function closeLineForm() {
+  if (batch.value?.running) return;
+  lineFor.value = null;
+  batch.value = null;
+}
+
+// ---------- 批量删线路:选一块面板,勾上的客户在这块面板上的线路一次删掉(同一块面板只连一次、Xray 最多重启一次) ----------
+const del = ref<{ panel_id: number; ids: Set<number>; q: string; running: boolean; done: boolean; results: Record<number, BatchResult>; failed: number[] } | null>(null);
+const linesOnPanelOf = (c: Customer, panelId: number) => c.lines.filter((l) => l.panel_id === panelId);
+/** 有客户线路的面板排前面,选项上带有几位客户 */
+const delPanelOptions = computed<SelectOption<number>[]>(() =>
+  panels.value.map((p) => ({ value: p.id, label: t('customers.bdPanelOption', { name: p.name, n: customers.value.filter((c) => linesOnPanelOf(c, p.id).length).length }) })),
+);
+function openDel() {
+  const withLines = panels.value.find((p) => customers.value.some((c) => linesOnPanelOf(c, p.id).length));
+  del.value = { panel_id: withLines?.id ?? panels.value[0]?.id ?? 0, ids: new Set(), q: '', running: false, done: false, results: {}, failed: [] };
+}
+/** 列表:在这块面板上有线路的客户;删完了的留着显示结果 */
+const delList = computed(() => {
+  const d = del.value;
+  if (!d) return [];
+  const q = d.q.trim().toLowerCase();
+  return customers.value.filter((c) => (linesOnPanelOf(c, d.panel_id).length || d.results[c.id]) && (!q || c.name.toLowerCase().includes(q) || c.remark.toLowerCase().includes(q)));
+});
+watch(
+  () => del.value?.panel_id,
+  () => {
+    if (!del.value) return;
+    del.value.ids = new Set();
+    del.value.results = {};
+    del.value.failed = [];
+    del.value.done = false;
+  },
+);
+function delToggle(id: number) {
+  const ids = del.value?.ids;
+  if (!ids) return;
+  if (ids.has(id)) ids.delete(id);
+  else ids.add(id);
+}
+function delAll() {
+  for (const c of delList.value) if (linesOnPanelOf(c, del.value!.panel_id).length) del.value!.ids.add(c.id);
+}
+const delText = (r: BatchResult) => (r.state === 'doing' ? t('customers.bdRunning') : r.state === 'ok' ? r.text : t('customers.bdErr', { error: r.text }));
+const delTargets = computed(() => (del.value ? customers.value.filter((c) => del.value!.ids.has(c.id) && linesOnPanelOf(c, del.value!.panel_id).length) : []));
+const delLineCount = computed(() => delTargets.value.reduce((n, c) => n + linesOnPanelOf(c, del.value!.panel_id).length, 0));
+async function runDel(force = false) {
+  const d = del.value;
+  if (!d || d.running) return;
+  const panelName = panels.value.find((p) => p.id === d.panel_id)?.name ?? '';
+  // 这次要删的:正常删 = 勾上的客户在这块面板上的全部线路;只删记录 = 上次面板上没删成的
+  const targets = force ? customers.value.filter((c) => linesOnPanelOf(c, d.panel_id).some((l) => d.failed.includes(l.id))) : delTargets.value;
+  const lineIds = force ? [...d.failed] : targets.flatMap((c) => linesOnPanelOf(c, d.panel_id).map((l) => l.id));
+  if (!lineIds.length) return;
+  const xray = targets.some((c) => linesOnPanelOf(c, d.panel_id).some((l) => lineIds.includes(l.id) && (l.kind === 'relay' || l.rules?.length)));
+  const ask = force
+    ? t('customers.bdForceConfirm', { n: lineIds.length })
+    : t('customers.bdConfirm', { panel: panelName, n: targets.length, m: lineIds.length }) + (xray ? t('customers.bdConfirmXray') : '');
+  if (!confirm(ask)) return;
+  d.running = true;
+  for (const c of targets) d.results[c.id] = { state: 'doing', text: '' };
+  try {
+    const r = await api.deleteLines(lineIds, force);
+    const bad = new Map(r.failed.map((f) => [f.id, f.error]));
+    for (const c of targets) {
+      const mine = linesOnPanelOf(c, d.panel_id).filter((l) => lineIds.includes(l.id));
+      const errors = mine.map((l) => bad.get(l.id)).filter(Boolean);
+      const gone = mine.filter((l) => r.deleted.includes(l.id)).length;
+      d.results[c.id] = errors.length ? { state: 'err', text: errors[0]! } : { state: 'ok', text: force ? t('customers.bdForced') : t('customers.bdOk', { n: gone }) };
+    }
+    d.failed = r.failed.map((f) => f.id);
+    d.ids = new Set(targets.filter((c) => d.results[c.id]?.state === 'err').map((c) => c.id));
+    await load();
+    toast(t('customers.bdDone', { n: r.deleted.length }) + (r.failed.length ? `;${t('customers.bdFailed', { n: new Set(targets.filter((c) => d.results[c.id]?.state === 'err').map((c) => c.id)).size })}` : ''), r.failed.length ? 'err' : 'ok');
+  } catch (e) {
+    for (const c of targets) d.results[c.id] = { state: 'err', text: e instanceof Error ? e.message : String(e) };
+    toastError(e);
+  } finally {
+    d.running = false;
+    d.done = true;
+  }
+}
+function closeDel() {
+  if (!del.value?.running) del.value = null;
+}
+
 // ---------- 线路:链接 / 删除 ----------
 const linksFor = ref<{ line: Line; links: string[] } | null>(null);
 const loadingLinks = ref(0);
@@ -575,6 +790,8 @@ function exitText(l: Line): string {
     </div>
     <div class="row">
       <button :disabled="syncing || !customers.length" :title="t('customers.syncHint')" @click="syncNow">{{ syncing ? t('customers.syncing') : t('customers.syncNow') }}</button>
+      <button :disabled="!panels.length || !customers.length" :title="t('customers.batchHint')" @click="openBatch">{{ t('customers.batchButton') }}</button>
+      <button :disabled="!customers.some((c) => c.lines.length)" :title="t('customers.bdHint')" @click="openDel">{{ t('customers.bdButton') }}</button>
       <button class="primary" @click="openForm(null)">{{ t('customers.create') }}</button>
     </div>
   </div>
@@ -758,9 +975,10 @@ function exitText(l: Line): string {
     </template>
   </Modal>
 
-  <Modal v-if="lineFor" :title="opened ? t('customers.lineOpenedTitle', { name: lineFor.name }) : t('customers.openLineTitle', { name: lineFor.name })" @close="lineFor = null">
+  <Modal v-if="lineFor || batch" :title="batch ? t('customers.batchTitle') : opened ? t('customers.lineOpenedTitle', { name: lineFor!.name }) : t('customers.openLineTitle', { name: lineFor!.name })" :wide="!!batch" @close="closeLineForm">
     <template v-if="!opened">
-      <div class="form">
+      <fieldset class="form plain" :disabled="!!batch?.running">
+        <p v-if="batch" class="muted small">{{ t('customers.batchIntro') }}</p>
         <label class="field">
           {{ t('customers.panel') }}
           <Select v-model="lf.panel_id" :options="panelOptions(panels)" />
@@ -781,7 +999,7 @@ function exitText(l: Line): string {
           </div>
         </div>
 
-        <div class="field-block">
+        <div v-if="!batch" class="field-block">
           <span class="label">{{ t('customers.exit') }}</span>
           <div class="choices">
             <label class="row small"><input v-model="lf.exit" type="radio" value="direct" />{{ t('customers.exitDirect') }}</label>
@@ -790,11 +1008,47 @@ function exitText(l: Line): string {
           </div>
           <p class="muted small hint">{{ t('customers.relayHint') }}</p>
         </div>
-        <label class="field">
+        <label v-if="!batch" class="field">
           {{ t('customers.nodeNameOptional') }}
           <input v-model="lf.node_name" maxlength="64" :placeholder="t('customers.nodeNamePlaceholder')" />
         </label>
-      </div>
+
+        <div v-if="batch" class="field-block">
+          <span class="label">{{ t('customers.batchCustomers', { n: batch.ids.size }) }}</span>
+          <div class="row batch-tools">
+            <input v-model="batch.q" type="search" :placeholder="t('customers.batchSearch')" :aria-label="t('customers.batchSearch')" />
+            <button type="button" class="link" @click="batchAll">{{ t('customers.batchAll') }}</button>
+            <button type="button" class="link" @click="batch.ids.clear()">{{ t('customers.batchNone') }}</button>
+          </div>
+          <ul class="batch-list">
+            <li class="b-row b-head muted small" aria-hidden="true">
+              <span>{{ t('customers.batchColCustomer') }}</span><span>{{ t('customers.batchColExit') }}</span><span>{{ t('customers.batchColNodeName') }}</span><span>{{ t('customers.batchColResult') }}</span>
+            </li>
+            <li v-for="c in batchList" :key="c.id" class="b-row" :class="{ picked: batch.ids.has(c.id) }">
+              <div class="b-who">
+                <label class="b-check small">
+                  <input type="checkbox" :checked="batch.ids.has(c.id)" @change="batchToggle(c.id)" />
+                  <span class="b-name">{{ c.name }}</span>
+                  <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
+                  <span v-if="onPanelCount(c, lf.panel_id)" class="muted">{{ t('customers.batchHas', { n: onPanelCount(c, lf.panel_id) }) }}</span>
+                </label>
+                <div class="b-nodes small">
+                  <template v-if="c.lines.length">
+                    <span v-for="l in c.lines" :key="l.id" class="b-node" :class="{ here: l.panel_id === lf.panel_id }" :title="nodeTitle(l)">{{ l.node_name || l.panel_name }}</span>
+                  </template>
+                  <span v-else class="muted">{{ t('customers.batchNoLines') }}</span>
+                </div>
+              </div>
+              <span class="b-exit"><Select :model-value="exitOf(c)" :options="batchExitOptions(c)" :aria-label="t('customers.batchExitFor', { name: c.name })" @update:model-value="(v: string) => setExit(c, v)" /></span>
+              <input class="b-nodename" :value="batch.names[c.id] ?? ''" maxlength="64" :placeholder="t('customers.batchNodeNamePh')" :aria-label="t('customers.batchNodeNameFor', { name: c.name })" @input="setName(c, ($event.target as HTMLInputElement).value)" />
+              <span class="small b-res" :class="batch.results[c.id]?.state" :title="batch.results[c.id]?.text">{{ batch.results[c.id] ? batchText(batch.results[c.id]) : '' }}</span>
+            </li>
+            <li v-if="!batchList.length" class="muted small">{{ t('customers.batchEmpty') }}</li>
+          </ul>
+          <p class="muted small hint">{{ t('customers.batchExitHint') }}</p>
+          <p class="muted small hint">{{ t('customers.batchAllHint') }}</p>
+        </div>
+      </fieldset>
     </template>
     <template v-else>
       <p class="muted small">
@@ -804,7 +1058,12 @@ function exitText(l: Line): string {
     </template>
     <template #footer>
       <span class="spacer" />
-      <template v-if="!opened">
+      <template v-if="batch">
+        <button v-if="batch.running" :disabled="batch.stop" @click="batch.stop = true">{{ batch.stop ? t('customers.batchStopping') : t('customers.batchStop') }}</button>
+        <button v-else @click="closeLineForm">{{ batch.done ? t('customers.done') : t('common.cancel') }}</button>
+        <button class="primary" :disabled="batch.running || !batch.ids.size || !canOpen" @click="runBatch">{{ batch.running ? t('customers.batchRunning') : t('customers.batchStart', { n: batch.ids.size }) }}</button>
+      </template>
+      <template v-else-if="!opened">
         <button @click="lineFor = null">{{ t('common.cancel') }}</button>
         <button class="primary" :disabled="opening || !canOpen" @click="open">{{ opening ? t('customers.opening') : t('customers.open') }}</button>
       </template>
@@ -812,6 +1071,48 @@ function exitText(l: Line): string {
         <button @click="opened = null">{{ t('customers.another') }}</button>
         <button class="primary" @click="lineFor = null">{{ t('customers.done') }}</button>
       </template>
+    </template>
+  </Modal>
+
+  <Modal v-if="del" :title="t('customers.bdTitle')" wide @close="closeDel">
+    <fieldset class="form plain" :disabled="del.running">
+      <p class="muted small">{{ t('customers.bdIntro') }}</p>
+      <label class="field">
+        {{ t('customers.panel') }}
+        <Select v-model="del.panel_id" :options="delPanelOptions" />
+      </label>
+      <div class="field-block">
+        <span class="label">{{ t('customers.batchCustomers', { n: del.ids.size }) }}</span>
+        <div class="row batch-tools">
+          <input v-model="del.q" type="search" :placeholder="t('customers.batchSearch')" :aria-label="t('customers.batchSearch')" />
+          <button type="button" class="link" @click="delAll">{{ t('customers.batchAll') }}</button>
+          <button type="button" class="link" @click="del.ids.clear()">{{ t('customers.batchNone') }}</button>
+        </div>
+        <ul class="batch-list">
+          <li class="d-row b-head muted small" aria-hidden="true">
+            <span>{{ t('customers.batchColCustomer') }}</span><span>{{ t('customers.bdColLines') }}</span><span>{{ t('customers.batchColResult') }}</span>
+          </li>
+          <li v-for="c in delList" :key="c.id" class="d-row" :class="{ picked: del.ids.has(c.id) }">
+            <label class="b-check small">
+              <input type="checkbox" :checked="del.ids.has(c.id)" :disabled="!linesOnPanelOf(c, del.panel_id).length" @change="delToggle(c.id)" />
+              <span class="b-name">{{ c.name }}</span>
+              <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
+            </label>
+            <span class="b-nodes small">
+              <span v-for="l in linesOnPanelOf(c, del.panel_id)" :key="l.id" class="b-node" :title="`${nodeTitle(l)} · ${t('customers.used', { used: fmtBytes(l.up + l.down) })}`">{{ l.node_name || l.email }}</span>
+            </span>
+            <span class="small b-res" :class="del.results[c.id]?.state" :title="del.results[c.id]?.text">{{ del.results[c.id] ? delText(del.results[c.id]) : '' }}</span>
+          </li>
+          <li v-if="!delList.length" class="muted small">{{ t('customers.bdEmpty') }}</li>
+        </ul>
+        <p class="muted small hint">{{ t('customers.bdHint2') }}</p>
+      </div>
+    </fieldset>
+    <template #footer>
+      <span class="spacer" />
+      <button v-if="del.failed.length && !del.running" class="danger" @click="runDel(true)">{{ t('customers.bdForce', { n: del.failed.length }) }}</button>
+      <button :disabled="del.running" @click="closeDel">{{ del.done ? t('customers.done') : t('common.cancel') }}</button>
+      <button class="primary danger-fill" :disabled="del.running || !delLineCount" @click="runDel()">{{ del.running ? t('customers.bdRunning') : t('customers.bdStart', { n: delTargets.length, m: delLineCount }) }}</button>
     </template>
   </Modal>
 
@@ -1259,6 +1560,147 @@ h2 {
   gap: 8px;
   cursor: pointer;
   min-height: 36px;
+}
+.form.plain {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.batch-tools {
+  gap: 8px 12px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.batch-tools input {
+  flex: 1 1 200px;
+}
+.batch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+.batch-list li {
+  padding: 6px 10px;
+  border-top: 1px solid var(--rule-soft);
+}
+.batch-list li:first-child {
+  border-top: none;
+}
+/* 一位客户一行:客户 | 出口 | 结果 */
+.b-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 300px) minmax(120px, 170px) minmax(70px, 120px);
+  gap: 6px 12px;
+  align-items: center;
+}
+.b-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--sheet);
+}
+.d-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) minmax(0, 1fr) minmax(90px, 160px);
+  gap: 6px 12px;
+  align-items: center;
+}
+.d-row .b-nodes {
+  padding-left: 0;
+}
+button.primary.danger-fill {
+  background: var(--fault);
+  border-color: var(--fault);
+  color: #fff;
+}
+button.primary.danger-fill:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--fault) 85%, #000);
+  border-color: color-mix(in srgb, var(--fault) 85%, #000);
+}
+.d-row.picked,
+.b-row.picked {
+  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}
+.b-who {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.b-check {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  cursor: pointer;
+}
+/* 已有节点:一个个小标签,在这块面板上的高亮 */
+.b-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-left: 24px;
+}
+.b-node {
+  padding: 1px 7px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.b-node.here {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--rule));
+  color: var(--accent-strong);
+}
+.b-nodename {
+  min-width: 0;
+  font-size: 13px;
+  padding: 4px 8px;
+}
+.b-exit {
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .b-row,
+  .d-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .b-head {
+    display: none;
+  }
+}
+.b-exit :deep(button.select) {
+  width: 100%;
+  font-size: 13px;
+  padding: 4px 8px;
+}
+.b-name {
+  font-weight: 500;
+}
+.b-res {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-soft);
+}
+.b-res.ok {
+  color: var(--ok);
+}
+.b-res.err {
+  color: var(--fault);
+}
+.b-res.doing {
+  color: var(--accent-strong);
 }
 .reset-day {
   gap: 6px;

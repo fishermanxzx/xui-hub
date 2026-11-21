@@ -614,3 +614,46 @@ test('流量统计接口:exclude=面板 id 逗号分隔,这些面板的流量不
     await close();
   }
 });
+
+test('批量删线路:同一块面板只重启一次 Xray,删成了的删记录、流量留在客户已用里;面板连不上的留着记录带原因,force 只删记录', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  const data = { a: relayPanel() };
+  const { call, close } = await serve(db, data);
+  try {
+    const sid = (await call('POST', '/socks', { name: 'land', address: 'socks5://u:p@2.2.2.2:3000' })).body.id;
+    const ids: number[] = [];
+    const lines: number[] = [];
+    for (const name of ['li', 'wang', 'zhao']) {
+      const c = (await call('POST', '/customers', { name })).body;
+      ids.push(c.id);
+      const exit = name === 'zhao' ? {} : { exit: { kind: 'socks', socks_id: sid } };
+      lines.push((await call('POST', `/customers/${c.id}/lines`, { panel_id: a.id, inbound: { id: 5 }, ...exit })).body.line.id);
+    }
+    data.a.clients.find((c) => c.email === 'li')!.traffic = { up: 10, down: 20 };
+    await call('POST', '/sync');
+    const restarts = data.a.restarts;
+
+    // 删 li、zhao:Xray 只重启一次,li 的规则去掉、wang 的留着
+    const r = (await call('POST', '/lines/batch-delete', { line_ids: [lines[0], lines[2]] })).body;
+    assert.deepEqual(r, { deleted: [lines[0], lines[2]], failed: [] });
+    assert.equal(data.a.restarts, restarts + 1);
+    assert.deepEqual(emails(data.a), ['wang']);
+    assert.deepEqual(data.a.xray.routing.rules.filter((x: any) => x.user).map((x: any) => x.user[0]), ['wang']);
+    const li = getCustomer(db, ids[0])!;
+    assert.deepEqual([li.lines.length, li.actual_up, li.actual_down], [0, 10, 20]);
+
+    // 面板连不上:留着记录,带原因;force 只删记录
+    data.a.fail = { listClients: new XUIError('连接失败:超时') };
+    const bad = (await call('POST', '/lines/batch-delete', { line_ids: [lines[1]] })).body;
+    assert.deepEqual([bad.deleted, bad.failed.map((f: any) => [f.id, f.error])], [[], [[lines[1], '连接失败:超时']]]);
+    assert.equal(getCustomer(db, ids[1])!.lines.length, 1);
+    assert.deepEqual((await call('POST', '/lines/batch-delete', { line_ids: [lines[1]], force: true })).body, { deleted: [lines[1]], failed: [] });
+    assert.equal(getCustomer(db, ids[1])!.lines.length, 0);
+
+    // 参数不对
+    for (const body of [{}, { line_ids: [] }, { line_ids: [lines[1]] }, { line_ids: ['x'] }]) assert.equal((await call('POST', '/lines/batch-delete', body)).status, 400, JSON.stringify(body));
+  } finally {
+    await close();
+  }
+});

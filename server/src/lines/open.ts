@@ -12,9 +12,9 @@ import { errorText, panelKey, serial, using } from '../util';
 import { allSocks, getSocks, type SocksEndpoint } from '../socks/repo';
 import { renameLinks, validNodeName } from '../subscription/nodeName';
 import { XUIError } from '../xui/client';
-import { applyRoutes, editXray, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, setUserRules, socksServer, type ExitServer, type ResolvedRule, type RouteAdmin, type UserRoute } from './relay';
+import { editXray, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, setUserRules, socksServer, type ExitServer, type ResolvedRule, type RouteAdmin, type UserRoute } from './relay';
 import { routesForClient } from './routes';
-import type { LineRule } from './rules';
+import { validRules, type LineRule } from './rules';
 
 export interface LineAdmin extends ClientAdmin, RouteAdmin {
   deleteClient(email: string): Promise<void>;
@@ -29,6 +29,8 @@ export interface OpenLineInput {
   exit?: unknown;
   /** 自定义节点名(订阅里显示的名字),不给 = 用面板生成的 */
   node_name?: unknown;
+  /** 出口规则(「条件 → 出口」),和出口路由在同一次 Xray 改动里写上;不给 = 不加 */
+  rules?: unknown;
 }
 
 export interface OpenedLine {
@@ -49,6 +51,8 @@ export async function openLine(db: DB, customerId: number, input: OpenLineInput,
   if (!panel) throw new InputError('面板不存在');
   const exit = wantsExit ? prepareExit(db, parseExitSocksId(input.exit)) : null;
   const nodeName = validNodeName(input.node_name);
+  const rules = input.rules == null ? [] : validRules(db, input.rules);
+  const resolved = resolveRules(db, rules);
 
   return serial(panelKey(panel.id), () =>
     using(adminFor(panel), async (admin) => {
@@ -58,13 +62,20 @@ export async function openLine(db: DB, customerId: number, input: OpenLineInput,
         const opts: CreateOptions = { otherPanels: listPanels(db), adminFor, probe };
         const { inbound, created, protocol } = await ensureInbound(panel, admin, { inbound_id: input.inbound?.id, protocol: input.inbound?.protocol }, opts);
         if (created) undo.push(() => admin.deleteInbound(Number(inbound.id)));
-        if (exit && !inbound.tag) throw new InputError('这个入站没有 tag,没法按客户端加路由规则');
+        if ((exit || rules.length) && !inbound.tag) throw new InputError('这个入站没有 tag,没法按客户端加路由规则');
         // 本地记着、面板上却被人删掉的线路,email 也要避开
         const email = await freeEmail(admin, customer.name, linesOnPanel(db, panel.id).map((l) => l.email));
-        if (exit) {
-          const route = { inboundTag: String(inbound.tag), email, server: exit.server };
-          undo.push(() => removeRoutes(admin, [route]));
-          await applyRoutes(admin, [route]);
+        // 出口路由和出口规则一次写上,Xray 只重启一次
+        let edited: any = null;
+        if (exit || rules.length) {
+          const inboundTag = String(inbound.tag);
+          undo.push(() => removeRoutes(admin, [{ inboundTag, email }]));
+          await editXray(admin, (xray) => {
+            if (!Array.isArray(xray.outbounds) || !xray.outbounds.length) throw new Error('读到的 Xray 配置不完整(没有出站)');
+            if (exit) routeUserToExit(xray, inboundTag, email, exit.server);
+            if (resolved.length) setUserRules(xray, inboundTag, email, resolved);
+            edited = xray;
+          });
         }
         undo.push(() => admin.deleteClient(email));
         const links = await addClientTo(admin, inbound, email);
@@ -83,7 +94,9 @@ export async function openLine(db: DB, customerId: number, input: OpenLineInput,
           exit_label: exit?.label ?? '',
           node_name: nodeName,
         });
-        return { line, links: renameLinks(links, nodeName), created: { inbound: created ? String(inbound.remark ?? '') : null } };
+        if (rules.length) setLineRules(db, line.id, rules);
+        if (edited) setLineRoutes(db, line.id, routesForClient(edited, String(inbound.tag), email, allSocks(db).map((s) => ({ id: s.id, host: s.host, port: s.port }))));
+        return { line: getLine(db, line.id) ?? line, links: renameLinks(links, nodeName), created: { inbound: created ? String(inbound.remark ?? '') : null } };
       } catch (e) {
         for (const step of undo.reverse()) await step().catch(() => {});
         throw e;

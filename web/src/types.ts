@@ -380,6 +380,8 @@ export interface OpenLineInput {
   inbound: { id?: number; protocol?: ClientProtocol };
   exit?: { kind: 'socks'; socks_id: number };
   node_name?: string;
+  /** 出口规则,和出口一起写到面板 */
+  rules?: LineRule[];
 }
 
 export interface OpenedLine {

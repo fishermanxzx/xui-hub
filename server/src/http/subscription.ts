@@ -38,8 +38,11 @@ export interface SubscriptionDeps {
   upstreamFetcher?: UpstreamFetcher;
 }
 
-/** 客户端自动更新间隔(小时):1 小时,线路 / 外部订阅 / 出口有变化时客户端很快能拿到 */
-const UPDATE_INTERVAL_HOURS = '1';
+/**
+ * 客户端自动更新间隔(小时):24 小时。各客户端统一:Clash Verge Rev 2.5 起把低于 24 小时的间隔一律调回 24 小时
+ * (每次自动更新都要重载内核),而且只在第一次导入时读这个头
+ */
+const UPDATE_INTERVAL_HOURS = '24';
 
 /**
  * 按格式给响应头(参照主流面板的做法):
