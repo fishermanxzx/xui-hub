@@ -114,6 +114,8 @@ Authorization: Bearer xh_……
 - 上面四项至少填一样,填了的要同时满足;
 - `to`:出口,`{ "kind": "socks", "socks_id": 1 }`(SOCKS 页登记的)、`{ "kind": "direct" }`(直出)、`{ "kind": "block" }`(拦截)。
 
+规则里的 `geosite:` / `geoip:` / `ext:库:分类` 会先按线路所在面板的 geo 库核对(面板是 3x-ui 3.7.0 及以上时):分类名写错、库不存在、写法不对、geoip 填进 `domain`(或 geosite 填进 `ip`)会让 Xray 起不来,返回 400 并写明第几条规则的哪一项,面板不动;属性不存在(`geosite:cn@xxx`)不拦。
+
 每条线路最多 20 条。写到面板上的规则带 `ruleTag`(`xui-hub:入站:客户端:序号`),xui-hub 只改带这个标记的,面板上手配的规则不动。返回线路对象,`rules` 是存下的规则,`routes` 是按新配置算出的实际出口。规则里用到的 SOCKS 改地址时规则跟着改;被规则用着的 SOCKS 删不了。
 
 线路对象里的 `routes` 是面板上实际的出口,每分钟同步时读面板的 Xray 路由规则算出来(只读,不改面板),`routes_at` 是读取时间;还没读到时为 `null`。按规则顺序,每项:
@@ -132,6 +134,10 @@ Authorization: Bearer xh_……
 |---|---|---|
 | GET | `/panels` | 面板列表(拿 `panel_id`) |
 | GET | `/panels/:id/inbounds` | 面板上的入站和客户端 |
+| GET | `/panels/:id/geodata/files` | 面板 Xray 目录里的 geo 库:`files` 每项有 `name`、`kind`(`site` 域名库 / `ip` IP 库)、`size`、`modifiedAt`、`categories`、`error`(解析不了时)。面板低于 3x-ui 3.7.0 时返回 `{ "supported": false }`,下面三个也一样 |
+| GET | `/panels/:id/geodata/categories?file=geosite.dat` | 一个库的全部分类:`items` 每项有 `code`、`entries`(条数)、`attributes`(如 `ads`、`cn`) |
+| GET | `/panels/:id/geodata/entries?file=&code=&q=&offset=&limit=` | 一个分类里的条目,分页(`limit` 最多 500,默认 100),`q` 按值过滤:`total`、`items`(`kind` 是 `domain` / `full` / `keyword` / `regexp` / `cidr`,`value`) |
+| POST | `/panels/:id/geodata/validate` | 按面板的库核对写法:`{ "kind": "site" 或 "ip", "tokens": ["geosite:netflix", …] }`,返回 `issues`(对不上的,`reason` 是 `categoryMissing` / `fileMissing` / `attributeMissing` / `syntax` / `wrongKind`);普通域名、网段不查 |
 | POST | `/panels/:id/restart` | 重启面板和 Xray 内核,等两个都恢复才返回(一般十几秒);上面所有客户端会断流几秒 |
 | GET | `/socks` | SOCKS 代理列表 |
 | GET | `/sub-templates` | 内置的订阅模板 |

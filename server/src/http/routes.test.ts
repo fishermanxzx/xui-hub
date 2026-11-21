@@ -557,6 +557,79 @@ test('出口规则:写到面板并重启、存下规则和实际出口;不合法
   }
 });
 
+const GEO: NonNullable<FakePanel['geo']> = {
+  'geosite.dat': {
+    kind: 'site',
+    categories: [
+      { code: 'netflix', entries: 2, attributes: [], items: [{ kind: 'domain', value: 'netflix.com' }, { kind: 'domain', value: 'fast.com' }] },
+      { code: 'cn', entries: 1, attributes: ['ads'], items: [{ kind: 'domain', value: 'baidu.com' }] },
+    ],
+  },
+  'geoip.dat': { kind: 'ip', categories: [{ code: 'cn', entries: 1, attributes: [], items: [{ kind: 'cidr', value: '1.0.1.0/24' }] }] },
+};
+
+test('geo 库:按面板的库浏览分类、条目和核对写法;写错的分类保存前就拦下、不动面板;面板太老(没有 geo 接口)时说不支持、规则照旧能存', async () => {
+  const db = memoryDb();
+  const relay = addPanel(db, 'relay', 'https://1.1.1.1:2053/p');
+  const old = addPanel(db, 'old', 'https://2.2.2.2:2053/p');
+  const data: Record<string, FakePanel> = { relay: { ...relayPanel(), geo: GEO }, old: relayPanel() };
+  const { call, close } = await serve(db, data);
+  try {
+    const files = await call('GET', `/panels/${relay.id}/geodata/files`);
+    assert.deepEqual([files.body.supported, files.body.files.map((f: any) => [f.name, f.kind, f.categories])], [true, [['geosite.dat', 'site', 2], ['geoip.dat', 'ip', 1]]]);
+    const cats = await call('GET', `/panels/${relay.id}/geodata/categories?file=geosite.dat`);
+    assert.deepEqual(cats.body, { supported: true, items: [{ code: 'netflix', entries: 2, attributes: [] }, { code: 'cn', entries: 1, attributes: ['ads'] }] });
+    const entries = await call('GET', `/panels/${relay.id}/geodata/entries?file=geosite.dat&code=netflix&q=fast&limit=1`);
+    assert.deepEqual(entries.body, { supported: true, total: 1, items: [{ kind: 'domain', value: 'fast.com' }] });
+    for (const bad of ['../x.dat', 'geosite.txt', '']) assert.equal((await call('GET', `/panels/${relay.id}/geodata/categories?file=${encodeURIComponent(bad)}`)).status, 400, bad);
+    assert.equal((await call('GET', `/panels/${relay.id}/geodata/entries?file=geosite.dat&code=netflix&limit=501`)).status, 400);
+    assert.equal((await call('GET', `/panels/${relay.id}/geodata/entries?file=geosite.dat&code=a%20b`)).status, 400);
+
+    // 核对:只把要查库的写法发给面板,普通域名不发
+    const checked = await call('POST', `/panels/${relay.id}/geodata/validate`, { kind: 'site', tokens: ['geosite:netfix', 'geosite:netflix', 'netflix.com', 'geoip:cn', 'geosite:cn@nope'] });
+    assert.deepEqual(checked.body, {
+      supported: true,
+      issues: [
+        { token: 'geosite:netfix', reason: 'categoryMissing', file: 'geosite.dat', code: 'netfix' },
+        { token: 'geoip:cn', reason: 'wrongKind' },
+        { token: 'geosite:cn@nope', reason: 'attributeMissing', file: 'geosite.dat', code: 'nope' },
+      ],
+    });
+    assert.deepEqual(data.relay.geoChecks!.at(-1)!.tokens, ['geosite:netfix', 'geosite:netflix', 'geoip:cn', 'geosite:cn@nope']);
+    assert.equal((await call('POST', `/panels/${relay.id}/geodata/validate`, { kind: 'x', tokens: [] })).status, 400);
+
+    // 面板太老:浏览和核对都说不支持
+    assert.deepEqual((await call('GET', `/panels/${old.id}/geodata/files`)).body, { supported: false });
+    assert.deepEqual((await call('POST', `/panels/${old.id}/geodata/validate`, { kind: 'ip', tokens: ['geoip:cn'] })).body, { supported: false, issues: [] });
+
+    const c = (await call('POST', '/customers', { name: 'zhang' })).body;
+    const line = (await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: relay.id, inbound: { id: 5 } })).body.line;
+    const restarts = data.relay.restarts;
+    const put = (rules: unknown[], l = line) => call('PUT', `/customers/${c.id}/lines/${l.id}/rules`, { rules });
+    // 分类写错、geoip 填进域名:Xray 起不来,保存前拦下,面板不动
+    const typo = await put([{ domain: ['geosite:netflix'], to: { kind: 'block' } }, { domain: ['geosite:netfix'], to: { kind: 'block' } }]);
+    assert.equal(typo.status, 400);
+    assert.match(typo.body.error, /第 2 条规则的域名「geosite:netfix」:面板的 geosite\.dat 里没有「netfix」这个分类/);
+    assert.match((await put([{ domain: ['geoip:cn'], to: { kind: 'direct' } }])).body.error, /geoip 是 IP 库,要填在 IP 里/);
+    assert.match((await put([{ ip: ['ext:geoip_IR.dat:ir'], to: { kind: 'direct' } }])).body.error, /IP「ext:geoip_IR\.dat:ir」:面板上没有 geoip_IR\.dat 这个库/);
+    assert.equal(data.relay.restarts, restarts);
+    // 属性不存在:Xray 能起来,照存
+    assert.equal((await put([{ domain: ['geosite:cn@nope'], ip: ['geoip:cn', '10.0.0.0/8'], to: { kind: 'direct' } }])).status, 200);
+    assert.equal(data.relay.restarts, restarts + 1);
+    // 开线路时带写错的规则:什么都不建
+    const before = data.relay.clients.length;
+    const opened = await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: relay.id, inbound: { id: 5 }, rules: [{ domain: ['geosite:netfix'], to: { kind: 'block' } }] });
+    assert.equal(opened.status, 400);
+    assert.equal(data.relay.clients.length, before);
+
+    // 太老的面板:不核对,照旧写
+    const oldLine = (await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: old.id, inbound: { id: 5 } })).body.line;
+    assert.equal((await put([{ domain: ['geosite:whatever'], to: { kind: 'block' } }], oldLine)).status, 200);
+  } finally {
+    await close();
+  }
+});
+
 test('客户已用:倍率算进额度;删线路后它的流量留在已用里;调整已用超了额度马上停用', async () => {
   const db = memoryDb();
   const hk = addPanel(db, 'hk', 'https://1.1.1.1:2053/p');

@@ -435,3 +435,30 @@ export interface UpdateInfo {
   log: string;
   release_url: string;
 }
+
+// ---- 面板的 geo 库(Xray 目录里的 .dat):给出口规则挑分类 ----
+/** site = geosite(域名库),ip = geoip(IP 库) */
+export type GeoKind = 'site' | 'ip';
+export interface GeoFile {
+  name: string;
+  kind: GeoKind | '';
+  size: number;
+  modifiedAt: number;
+  categories: number;
+  error?: string;
+}
+export interface GeoCategory {
+  code: string;
+  entries: number;
+  attributes: string[];
+}
+export interface GeoEntry {
+  kind: string;
+  value: string;
+}
+export interface GeoIssue {
+  token: string;
+  reason: string;
+  file?: string;
+  code?: string;
+}
