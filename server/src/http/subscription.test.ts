@@ -534,23 +534,20 @@ test('外部订阅:客户到期 / 超额时不去取,也不出节点', async () 
   }
 });
 
-test('自助页:列出外部订阅的节点数,不露地址;开了透传时流量和到期显示外部的', async () => {
+test('自助页:不列外部订阅(节点数、地址都不露);开了透传时流量和到期显示外部的', async () => {
   const { db, id, token } = setup();
   updateCustomer(db, id, { upstreams: [UP_URL] });
   const { link, close } = await serve(db, fakeConverter([]), () => false, fetcher, upstream([]));
   const page = async () => (await fetch(link(token), { headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html' } })).text();
   try {
     let html = await page();
-    assert.match(html, /2 条线路 \+ 1 个外部节点/);
-    assert.match(html, /外部订阅<\/span><span class="muted">1 个节点/);
-    assert.ok(!html.includes('sub.example.com') && !html.includes('reseller-token'));
+    for (const s of ['外部', '个节点', '条线路', 'sub.example.com', 'reseller-token']) assert.ok(!html.includes(s), s);
     assert.match(html, /已用 0 KB \/ 1 KB/);
 
     updateCustomer(db, id, { upstream_userinfo: true, upstream_mode: 'replace' });
     html = await page();
     assert.match(html, /已用 0 KB \/ 3 KB/);
     assert.match(html, /到期:2100-01-01/);
-    assert.match(html, /<div class="muted">1 个节点 · /);
   } finally {
     await close();
   }
@@ -578,6 +575,33 @@ proxies:
     assert.deepEqual(sing.outbounds.find((o: any) => o.type === 'selector').outbounds, ['自动选择', '美国家宽']);
     assert.doesNotMatch(JSON.stringify(sing), /upstream-rule|上游的分组/);
     assert.match(await decode(await get(link(token), V2RAYN_UA)), /^vless:\/\/up@203\.0\.113\.20:443\?.*#%E7%BE%8E%E5%9B%BD%E5%AE%B6%E5%AE%BD$/);
+  } finally {
+    await close();
+  }
+});
+
+test('自助页的线路列表:节点名和地址,不带 UUID / 密码;不算拉取订阅、不占设备名额;停用的客户没有线路;token 不对 404', async () => {
+  const { db, id, token } = setup();
+  updateCustomer(db, id, { limit_devices: 1 });
+  const { link, close } = await serve(db, fakeConverter([]));
+  try {
+    const res = await get(`${link(token)}/nodes`, BROWSER_UA);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    const body = await res.text();
+    assert.deepEqual(JSON.parse(body), {
+      nodes: [
+        { name: 'A', host: '1.1.1.1', port: 1, udp: false },
+        { name: 'B', host: '2.2.2.2', port: 2, udp: true },
+      ],
+      error: '',
+    });
+    assert.ok(!body.includes('x@') && !body.includes('y@'));
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM sub_fetches').get() as any).n, 0);
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM sub_devices').get() as any).n, 0);
+
+    assert.equal((await get(`${link('bad-token')}/nodes`)).status, 404);
+    updateCustomer(db, id, { expire_at: 1 });
+    assert.deepEqual(await (await get(`${link(token)}/nodes`)).json(), { nodes: [], error: '' });
   } finally {
     await close();
   }
