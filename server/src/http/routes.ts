@@ -412,14 +412,17 @@ export function apiRouter(deps: RouteDeps): Router {
       return { ...r, customer: customerOf(idParam(req)) };
     }),
   );
-  // 流量统计:by=customer|panel,days=最近几天;带 id 时展开这位客户 / 这块面板名下的各个客户端
+  // 流量统计:by=customer|panel,days=最近几天;带 id 时展开这位客户 / 这块面板名下的各个客户端;exclude=1,2 不算这些面板上的流量
   r.get(
     '/traffic',
     wrap(async (req) => {
       const by = req.query.by === 'panel' ? 'panel' : 'customer';
       const id = req.query.id === undefined || req.query.id === '' ? null : Number(req.query.id);
       if (id != null && !(Number.isInteger(id) && id >= 0)) throw new InputError('id 不对');
-      return trafficReport(db, { by, days: Number(req.query.days) || 30, id });
+      const raw = typeof req.query.exclude === 'string' ? req.query.exclude.split(',').filter((x) => x.trim() !== '') : [];
+      const exclude = raw.map(Number);
+      if (exclude.some((x) => !(Number.isInteger(x) && x > 0))) throw new InputError('exclude 要是逗号分隔的面板 id');
+      return trafficReport(db, { by, days: Number(req.query.days) || 30, id, exclude });
     }),
   );
   // xui-hub 自己的版本:当前版本、GitHub 上最新的发布版本、能不能在后台里直接更新;refresh=1 重新查一次

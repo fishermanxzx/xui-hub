@@ -6,6 +6,7 @@ import { getCustomer } from '../customers/repo';
 import type { DB } from '../db';
 import { getPanel } from '../panels/repo';
 import { getSocks } from '../socks/repo';
+import { recordTraffic } from '../traffic/daily';
 import type { UpstreamFetcher } from '../subscription/upstream';
 import { addPanel, fakePanels, memoryDb, relayXray, vlessInbound, type FakePanel } from '../testUtil';
 import { XUIError } from '../xui/client';
@@ -551,6 +552,28 @@ test('出口规则:写到面板并重启、存下规则和实际出口;不合法
     await call('DELETE', `/customers/${c.id}/lines/${line.id}`);
     assert.equal(data.relay.xray.routing.rules.filter((r: any) => r.ruleTag).length, 0);
     assert.deepEqual((await call('DELETE', `/socks/${s.id}`)).body, { ok: true });
+  } finally {
+    await close();
+  }
+});
+
+test('流量统计接口:exclude=面板 id 逗号分隔,这些面板的流量不算;写错报 400', async () => {
+  const db = memoryDb();
+  const p1 = addPanel(db, 'p1');
+  const p2 = addPanel(db, 'p2');
+  const now = Date.now();
+  for (const p of [p1, p2]) recordTraffic(db, p.id, [{ email: 'a', up: 0, down: 0 }], now - 2);
+  recordTraffic(db, p1.id, [{ email: 'a', up: 1, down: 2 }], now - 1);
+  recordTraffic(db, p2.id, [{ email: 'a', up: 10, down: 20 }], now - 1);
+  const { call, close } = await serve(db);
+  try {
+    const names = async (q: string) => ((await call('GET', `/traffic?by=panel&days=1${q}`)).body.rows as { name: string }[]).map((r) => r.name).sort();
+    assert.deepEqual(await names(''), ['p1', 'p2']);
+    assert.deepEqual(await names('&exclude='), ['p1', 'p2']);
+    assert.deepEqual(await names(`&exclude=${p2.id}`), ['p1']);
+    assert.deepEqual(await names(`&exclude=${p1.id},${p2.id}`), []);
+    assert.deepEqual((await call('GET', `/traffic?by=customer&days=1&exclude=${p2.id}`)).body.total, { up: [1], down: [2] });
+    for (const bad of ['abc', '1,x', '-1', '1.5']) assert.equal((await call('GET', `/traffic?exclude=${bad}`)).status, 400, bad);
   } finally {
     await close();
   }

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { t } from '../i18n';
+import { locale, t } from '../i18n';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
+import MultiSelect from '../components/MultiSelect.vue';
+import type { SelectOption } from '../components/Select.vue';
 import { fmtBytes } from '../format';
 import { toastError } from '../toast';
-import type { TrafficBy, TrafficReport, TrafficRow } from '../types';
+import type { Panel, TrafficBy, TrafficReport, TrafficRow } from '../types';
 
 const RANGES = [1, 7, 30, 90];
 const rangeLabel = (n: number) => (n === 1 ? t('traffic.today') : t('traffic.days', { n }));
@@ -17,11 +19,50 @@ const report = ref<TrafficReport | null>(null);
 const loading = ref(false);
 let seq = 0;
 
+// ---------- 统计时排除的面板:只是算的时候不算它们上面的流量,记录不动;排除哪些记在浏览器里 ----------
+const EXCLUDE_KEY = 'xui-hub.trafficExclude';
+const exclude = ref<number[]>([]);
+try {
+  const saved = JSON.parse(localStorage.getItem(EXCLUDE_KEY) ?? '[]');
+  if (Array.isArray(saved)) exclude.value = saved.filter((x) => Number.isInteger(x) && x > 0);
+} catch {
+  /* 忽略坏数据 */
+}
+const panels = ref<Panel[]>([]);
+onMounted(async () => {
+  try {
+    panels.value = await api.panels();
+  } catch (e) {
+    toastError(e);
+  }
+});
+const panelName = (id: number) => panels.value.find((p) => p.id === id)?.name ?? t('traffic.deletedPanel', { id });
+/** 面板页上的面板;排除过、后来删掉的面板也列出来,好取消 */
+const excludeOptions = computed<SelectOption<number>[]>(() => [
+  ...panels.value.map((p) => ({ value: p.id, label: p.name })),
+  ...exclude.value.filter((id) => !panels.value.some((p) => p.id === id)).map((id) => ({ value: id, label: panelName(id) })),
+]);
+const excludeLabel = computed(() => {
+  const ids = exclude.value;
+  if (!ids.length) return t('traffic.excludeNone');
+  return ids.length === 1 ? t('traffic.excludeOne', { name: panelName(ids[0]) }) : t('traffic.excludeN', { n: ids.length });
+});
+const excludedList = computed(() => exclude.value.map(panelName).join(locale.value === 'zh' ? '、' : ', '));
+watch(exclude, (ids) => {
+  try {
+    localStorage.setItem(EXCLUDE_KEY, JSON.stringify(ids));
+  } catch {
+    /* 存不了就算了 */
+  }
+  // 正展开看的面板被排除了:回到全部面板
+  if (by.value === 'panel' && focus.value && ids.includes(focus.value.id)) focus.value = null;
+});
+
 async function load() {
   const mine = ++seq;
   loading.value = true;
   try {
-    const r = await api.traffic(by.value, days.value, focus.value?.id);
+    const r = await api.traffic(by.value, days.value, focus.value?.id, exclude.value);
     if (mine === seq) report.value = r;
   } catch (e) {
     if (mine === seq) toastError(e);
@@ -33,7 +74,7 @@ function setBy(v: TrafficBy) {
   by.value = v;
   focus.value = null;
 }
-watch([by, days, focus], load);
+watch([by, days, focus, exclude], load);
 onMounted(load);
 
 const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
@@ -100,8 +141,10 @@ function open(r: TrafficRow) {
     <div class="seg" role="group" :aria-label="t('traffic.rangeLabel')">
       <button v-for="n in RANGES" :key="n" :class="{ on: days === n }" :aria-pressed="days === n" @click="days = n">{{ rangeLabel(n) }}</button>
     </div>
+    <MultiSelect v-model="exclude" :options="excludeOptions" :label="excludeLabel" :all-label="t('traffic.excludeNone')" :aria-label="t('traffic.excludeLabel')" :title="t('traffic.excludeLabel')" />
     <span v-if="loading" class="muted small">{{ t('common.loading') }}</span>
   </div>
+  <p v-if="exclude.length" class="small muted excluded">{{ t('traffic.excludedNote', { list: excludedList }) }}</p>
 
   <p v-if="focus" class="crumb small">
     <button class="link" @click="focus = null">{{ by === 'customer' ? t('traffic.allCustomers') : t('traffic.allPanels') }}</button>
@@ -233,6 +276,10 @@ function open(r: TrafficRow) {
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-weight: 600;
+}
+.excluded {
+  margin: -6px 0 14px;
+  max-width: 80ch;
 }
 .crumb {
   display: flex;
