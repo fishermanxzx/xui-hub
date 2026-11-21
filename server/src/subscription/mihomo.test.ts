@@ -28,11 +28,15 @@ test('替换头部为 Mihomo 模板(照代理商的抄),去掉原头部的端口
   assert.deepEqual(doc.sniffer, { enable: true, 'parse-pure-ip': true, 'override-destination': false, 'force-dns-mapping': true, sniff: { TLS: { ports: [443] }, HTTP: { ports: [80, 8080, 8443] } } });
   assert.deepEqual([doc['find-process-mode'], doc.profile, doc['geodata-mode'], doc['geo-auto-update']], ['strict', { 'store-selected': true }, true, false]);
   assert.deepEqual(Object.keys(doc['geox-url']), ['geoip', 'geosite', 'mmdb']);
-  // DNS:fake-ip;国外 DoH 按规则走代理,国内和局域网域名用国内 DoT,节点域名用国内 DoT
+  // DNS:fake-ip;国外 DoH 按规则走代理;节点域名、直连、国内和局域网域名用国内普通 DNS,不用会被拦的 853(DoT)
   assert.deepEqual([doc.dns['enhanced-mode'], doc.dns['respect-rules'], doc.dns.ipv6], ['fake-ip', true, false]);
   assert.deepEqual(doc.dns.nameserver, ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query']);
-  assert.deepEqual(doc.dns['proxy-server-nameserver'], ['tls://223.5.5.5:853', 'tls://120.53.53.53:853']);
-  assert.deepEqual(doc.dns['nameserver-policy'], { 'geosite:cn,private': ['tls://223.5.5.5:853', 'tls://120.53.53.53:853'] });
+  const plain = ['223.5.5.5', '119.29.29.29'];
+  assert.deepEqual(doc.dns['default-nameserver'], plain);
+  assert.deepEqual(doc.dns['proxy-server-nameserver'], plain);
+  assert.deepEqual(doc.dns['direct-nameserver'], plain);
+  assert.deepEqual(doc.dns['nameserver-policy'], { 'geosite:cn,private': plain });
+  assert.ok(!out.includes(':853') && !out.includes('tls://'), '头部里不能有 DoT');
   assert.equal(doc.dns.fallback, undefined);
   assert.equal(doc.rules.length, 2);
   assert.equal(doc.proxies[0].name, '🇺🇸 us-1');
