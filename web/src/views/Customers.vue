@@ -388,16 +388,17 @@ function batchAll() {
 /** 能照抄的现有线路:直出,或走还在的 SOCKS;规则里用到的 SOCKS 也都还在(老的「中转到面板」那种不行) */
 const socksAlive = (id: number | null | undefined) => id != null && socksList.value.some((s) => s.id === id);
 const copyable = (l: Line) => (l.kind === 'direct' || (l.exit_kind === 'socks' && socksAlive(l.exit_socks_id))) && (l.rules ?? []).every((r) => r.to.kind !== 'socks' || socksAlive(r.to.socks_id));
-/** 上面选的出口(没有现成线路的客户用它) */
-const unifiedExit = computed(() => (lf.value.exit === 'socks' && lf.value.socks_id ? `socks:${lf.value.socks_id}` : 'direct'));
-/** 默认照抄他最新的一条现有线路;没有能照抄的用上面选的 */
+/** 每位客户的出口各选各的:默认照抄他最新的一条现有线路,没有能照抄的就直出 */
 function defaultExit(c: Customer): string {
   const latest = [...c.lines].reverse().find(copyable);
-  return latest ? `copy:${latest.id}` : unifiedExit.value;
+  return latest ? `copy:${latest.id}` : 'direct';
 }
 const exitOf = (c: Customer) => batch.value?.exits[c.id] ?? defaultExit(c);
+/** 改了出口就是要给他开:顺手勾上 */
 function setExit(c: Customer, v: string) {
-  if (batch.value) batch.value.exits[c.id] = v;
+  if (!batch.value) return;
+  batch.value.exits[c.id] = v;
+  batch.value.ids.add(c.id);
 }
 function batchExitOptions(c: Customer): SelectOption<string>[] {
   const copies = c.lines.filter(copyable).map((l) => {
@@ -857,14 +858,14 @@ function exitText(l: Line): string {
           </div>
         </div>
 
-        <div class="field-block">
-          <span class="label">{{ batch ? t('customers.batchDefaultExit') : t('customers.exit') }}</span>
+        <div v-if="!batch" class="field-block">
+          <span class="label">{{ t('customers.exit') }}</span>
           <div class="choices">
             <label class="row small"><input v-model="lf.exit" type="radio" value="direct" />{{ t('customers.exitDirect') }}</label>
             <label class="row small"><input v-model="lf.exit" type="radio" value="socks" :disabled="!socksList.length" />{{ t('customers.exitSocks') }}{{ socksList.length ? '' : t('customers.noSocks') }}</label>
             <span v-if="lf.exit === 'socks'" class="inline"><Select v-model="lf.socks_id" :options="socksOptions" :aria-label="t('customers.exitSocks')" /></span>
           </div>
-          <p class="muted small hint">{{ batch ? t('customers.batchExitHint') : t('customers.relayHint') }}</p>
+          <p class="muted small hint">{{ t('customers.relayHint') }}</p>
         </div>
         <label class="field">
           {{ t('customers.nodeNameOptional') }}
@@ -880,18 +881,22 @@ function exitText(l: Line): string {
             <button type="button" class="link" @click="batch.ids.clear()">{{ t('customers.batchNone') }}</button>
           </div>
           <ul class="batch-list">
-            <li v-for="c in batchList" :key="c.id">
-              <label class="row small">
+            <li class="b-row b-head muted small" aria-hidden="true">
+              <span>{{ t('customers.batchColCustomer') }}</span><span>{{ t('customers.batchColExit') }}</span><span>{{ t('customers.batchColResult') }}</span>
+            </li>
+            <li v-for="c in batchList" :key="c.id" class="b-row" :class="{ picked: batch.ids.has(c.id) }">
+              <label class="b-who small">
                 <input type="checkbox" :checked="batch.ids.has(c.id)" @change="batchToggle(c.id)" />
                 <span class="b-name">{{ c.name }}</span>
                 <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
                 <span v-if="onPanelCount(c, lf.panel_id)" class="muted">{{ t('customers.batchHas', { n: onPanelCount(c, lf.panel_id) }) }}</span>
               </label>
-              <span v-if="batch.ids.has(c.id)" class="b-exit"><Select :model-value="exitOf(c)" :options="batchExitOptions(c)" :aria-label="t('customers.batchExitFor', { name: c.name })" @update:model-value="(v: string) => setExit(c, v)" /></span>
-              <span v-if="batch.results[c.id]" class="small b-res" :class="batch.results[c.id].state" :title="batch.results[c.id].text">{{ batchText(batch.results[c.id]) }}</span>
+              <span class="b-exit"><Select :model-value="exitOf(c)" :options="batchExitOptions(c)" :aria-label="t('customers.batchExitFor', { name: c.name })" @update:model-value="(v: string) => setExit(c, v)" /></span>
+              <span class="small b-res" :class="batch.results[c.id]?.state" :title="batch.results[c.id]?.text">{{ batch.results[c.id] ? batchText(batch.results[c.id]) : '' }}</span>
             </li>
             <li v-if="!batchList.length" class="muted small">{{ t('customers.batchEmpty') }}</li>
           </ul>
+          <p class="muted small hint">{{ t('customers.batchExitHint') }}</p>
           <p class="muted small hint">{{ t('customers.batchAllHint') }}</p>
         </div>
       </fieldset>
@@ -1340,26 +1345,46 @@ h2 {
   border-radius: 8px;
 }
 .batch-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px 12px;
-  flex-wrap: wrap;
   padding: 6px 10px;
   border-top: 1px solid var(--rule-soft);
 }
 .batch-list li:first-child {
   border-top: none;
 }
-.batch-list label {
-  gap: 8px;
+/* 一位客户一行:客户 | 出口 | 结果 */
+.b-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 360px) minmax(80px, 130px);
+  gap: 6px 12px;
+  align-items: center;
+}
+.b-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--sheet);
+}
+.b-row.picked {
+  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}
+.b-who {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   cursor: pointer;
   min-width: 0;
 }
 .b-exit {
-  flex: 0 1 300px;
-  min-width: 160px;
-  margin-left: auto;
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .b-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .b-head {
+    display: none;
+  }
 }
 .b-exit :deep(button.select) {
   width: 100%;
