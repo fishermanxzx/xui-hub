@@ -20,6 +20,9 @@ async function shot(name, { width = 1280, height = 800, hash, before } = {}) {
   await page.screenshot({ path: `${OUT}/${name}.png` });
   console.log('saved', name);
 }
+// 客户页的线路默认收起,截图时展开(记在 localStorage 里)
+await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
+await page.evaluate(() => localStorage.setItem('xui-hub.openCustomerLines', '[1,2,3]'));
 await shot('customers', { hash: 'customers', height: 900 });
 await shot('open-line', { hash: 'customers', height: 900, before: async () => {
   await clickText('开线路', 0);
