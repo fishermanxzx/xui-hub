@@ -296,6 +296,8 @@ export interface ImportResult {
 export interface Settings {
   telegram: { token: string; chat_id: string };
   webhook: { url: string };
+  /** 飞书(Lark)群机器人 */
+  feishu: { url: string; secret: string };
   notify: {
     panel_down: boolean;
     customer_disabled: boolean;

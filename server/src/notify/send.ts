@@ -1,5 +1,6 @@
-// 通知渠道:Telegram Bot 和通用 Webhook。发送失败只记日志,不影响主流程。
+// 通知渠道:Telegram Bot、飞书(Lark)群机器人和通用 Webhook。发送失败只记日志,不影响主流程。
 
+import { createHmac } from 'node:crypto';
 import { fetch, FormData } from 'undici';
 
 export interface Message {
@@ -65,9 +66,40 @@ export function webhookChannel(url: string): Channel {
   };
 }
 
-export function channelsFor(s: { telegram: { token: string; chat_id: string }; webhook: { url: string } }): Channel[] {
+/** 飞书自定义机器人的签名:以「时间戳(秒)\n密钥」为 key,对空串做 HmacSHA256,再 base64 */
+export function feishuSign(secret: string, timestamp: number): string {
+  return createHmac('sha256', `${timestamp}\n${secret}`).update('').digest('base64');
+}
+
+/**
+ * 飞书(国际版 Lark 一样)群里的自定义机器人:按富文本(post)发,标题加粗、正文一行一段;
+ * 开了「签名校验」的带上 timestamp 和 sign。飞书出错也回 HTTP 200,要看返回里的 code
+ */
+export function feishuChannel(cfg: { url: string; secret: string }, now: () => number = Date.now): Channel {
+  return {
+    name: '飞书',
+    async send(msg) {
+      const body: Record<string, unknown> = {
+        msg_type: 'post',
+        content: { post: { zh_cn: { title: msg.title, content: msg.text.split('\n').map((line) => [{ tag: 'text', text: line }]) } } },
+      };
+      if (cfg.secret) {
+        const timestamp = Math.floor(now() / 1000);
+        Object.assign(body, { timestamp: String(timestamp), sign: feishuSign(cfg.secret, timestamp) });
+      }
+      const res = await fetch(cfg.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT) });
+      await expectOk(res, '飞书');
+      const data = (await res.json().catch(() => null)) as { code?: number; msg?: string; StatusCode?: number; StatusMessage?: string } | null;
+      const code = data?.code ?? data?.StatusCode ?? 0;
+      if (code !== 0) throw new Error(`飞书返回 ${code}:${data?.msg ?? data?.StatusMessage ?? ''}`);
+    },
+  };
+}
+
+export function channelsFor(s: { telegram: { token: string; chat_id: string }; webhook: { url: string }; feishu?: { url: string; secret: string } }): Channel[] {
   const out: Channel[] = [];
   if (s.telegram.token && s.telegram.chat_id) out.push(telegramChannel(s.telegram));
+  if (s.feishu?.url) out.push(feishuChannel(s.feishu));
   if (s.webhook.url) out.push(webhookChannel(s.webhook.url));
   return out;
 }

@@ -196,11 +196,22 @@ async function restore() {
           <input v-model="s.telegram.chat_id" :placeholder="t('settings.tgChatPlaceholder')" autocomplete="off" />
         </label>
       </div>
+      <p class="muted small">{{ t('settings.tgNote') }}</p>
+      <div class="grid">
+        <label class="field">
+          {{ t('settings.feishu') }}
+          <input v-model="s.feishu.url" :placeholder="t('settings.feishuPlaceholder')" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="field">
+          {{ t('settings.feishuSecret') }}
+          <input v-model="s.feishu.secret" :placeholder="t('settings.feishuSecretPlaceholder')" autocomplete="off" spellcheck="false" />
+        </label>
+      </div>
+      <p class="muted small">{{ t('settings.feishuNote') }}</p>
       <label class="field">
         {{ t('settings.webhook') }}
         <input v-model="s.webhook.url" :placeholder="`${t('settings.webhookPlaceholder')} { event, title, text, at }`" autocomplete="off" />
       </label>
-      <p class="muted small">{{ t('settings.tgNote') }}</p>
     </section>
 
     <section class="sheet block">
