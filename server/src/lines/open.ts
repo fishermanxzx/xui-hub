@@ -14,9 +14,10 @@ import { renameLinks, validNodeName } from '../subscription/nodeName';
 import { XUIError } from '../xui/client';
 import { editXray, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, setUserRules, socksServer, type ExitServer, type ResolvedRule, type RouteAdmin, type UserRoute } from './relay';
 import { routesForClient } from './routes';
+import { checkRulesGeo, type GeoValidator } from './geodata';
 import { validRules, type LineRule } from './rules';
 
-export interface LineAdmin extends ClientAdmin, RouteAdmin {
+export interface LineAdmin extends ClientAdmin, RouteAdmin, GeoValidator {
   deleteClient(email: string): Promise<void>;
 }
 
@@ -59,6 +60,8 @@ export async function openLine(db: DB, customerId: number, input: OpenLineInput,
       // 每做成一步就记下怎么撤;后面失败了倒着撤一遍(撤不掉的不管),再把原来的错误抛出去
       const undo: (() => Promise<unknown>)[] = [];
       try {
+        // 规则里的 geo 写法先按这块面板的库核对,对不上就什么都不建
+        if (rules.length) await checkRulesGeo(admin, rules);
         const opts: CreateOptions = { otherPanels: listPanels(db), adminFor, probe };
         const { inbound, created, protocol } = await ensureInbound(panel, admin, { inbound_id: input.inbound?.id, protocol: input.inbound?.protocol }, opts);
         if (created) undo.push(() => admin.deleteInbound(Number(inbound.id)));
@@ -193,6 +196,7 @@ export async function applyLineRules(db: DB, line: Line, rules: LineRule[], admi
     using(adminFor(panel), async (admin) => {
       const tag = (await admin.listInbounds()).find((ib) => Number(ib.id) === line.inbound_id)?.tag;
       if (!tag) throw new InputError('面板上找不到这条线路的入站');
+      await checkRulesGeo(admin, rules);
       let edited: any = null;
       await editXray(admin, (xray) => {
         if (!Array.isArray(xray.outbounds) || !xray.outbounds.length) throw new Error('读到的 Xray 配置不完整(没有出站)');

@@ -90,6 +90,19 @@ for (const x of panels) Object.assign(x, { line_count: lines.filter((l) => l.pan
 for (const x of socks) x.used_by = lines.filter((l) => l.exit_socks_id === x.id).length;
 for (const d of Object.values(details)) for (const i of d.inbounds) i.accepts_clients = i.protocol !== 'mixed';
 
+// 面板上的 geo 库(出口规则里「浏览 geo 分类」用):几个常见分类,条目只给 netflix 的
+const cat = (code, entries, attributes = []) => ({ code, entries, attributes });
+const geo = {
+  'geosite.dat': [
+    cat('amazon', 196, ['cn']), cat('anthropic', 19), cat('apple', 312, ['cn']), cat('bilibili', 64, ['ads']), cat('category-ads-all', 200546), cat('cn', 110249),
+    cat('disney', 225), cat('facebook', 98), cat('github', 41), cat('google', 1077, ['!cn', 'ads', 'cn']), cat('hbo', 37), cat('instagram', 12),
+    cat('netflix', 16), cat('openai', 25), cat('primevideo', 26), cat('spotify', 33), cat('steam', 58, ['cn']), cat('telegram', 21), cat('tiktok', 74), cat('twitter', 31), cat('youtube', 178),
+  ],
+  'geoip.dat': [cat('cn', 10011), cat('google', 8562), cat('netflix', 122), cat('private', 28), cat('telegram', 12)],
+};
+const netflix = ['full:netflix.com.edgesuite.net', 'fast.com', 'netflix.ca', 'netflix.com', 'netflix.net', 'netflixinvestor.com', 'netflixtechblog.com', 'nflxext.com', 'nflximg.com', 'nflximg.net', 'nflxsearch.net', 'nflxso.net', 'nflxvideo.net', 'netflixdnstest0.com', 'netflixdnstest1.com', 'netflixdnstest2.com']
+  .map((v) => (v.startsWith('full:') ? { kind: 'full', value: v.slice(5) } : { kind: 'domain', value: v }));
+
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.svg': 'image/svg+xml' };
 createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -105,6 +118,11 @@ createServer((req, res) => {
     const pn = panels.find((x) => x.id === Number(m[1]));
     return json({ panel: { current: pn.panel_version, latest: 'v3.11.0', update_available: pn.panel_version !== '3.11.0', channel: 'stable' }, xray: { current: pn.xray_version, state: 'running', error: '', available: ['v26.10.31', 'v26.10.21', 'v26.9.30', 'v26.9.9'] } });
   }
+  if (/^\/api\/panels\/\d+\/geodata\/files$/.test(p))
+    return json({ supported: true, files: Object.entries(geo).map(([name, cats]) => ({ name, kind: name.startsWith('geoip') ? 'ip' : 'site', size: name.startsWith('geoip') ? 16_570_425 : 11_391_470, modifiedAt: now - 3 * DAY, categories: cats.length })) });
+  if (/^\/api\/panels\/\d+\/geodata\/categories$/.test(p)) return json({ supported: true, items: geo[url.searchParams.get('file')] ?? [] });
+  if (/^\/api\/panels\/\d+\/geodata\/entries$/.test(p)) { const items = url.searchParams.get('code') === 'netflix' ? netflix : []; return json({ supported: true, total: items.length, items }); }
+  if (/^\/api\/panels\/\d+\/geodata\/validate$/.test(p)) return json({ supported: true, issues: [] });
   if (p.startsWith('/api/')) return json({});
   const file = join(DIST, p === '/' ? 'index.html' : p);
   if (!existsSync(file)) { res.writeHead(200, { 'Content-Type': MIME['.html'] }); return res.end(readFileSync(join(DIST, 'index.html'))); }

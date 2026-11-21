@@ -33,6 +33,15 @@ await shot('open-line', { hash: 'customers', height: 900, before: async () => {
   await clickText('经 SOCKS');
   await sleep(600);
 } });
+// 出口规则里的 geo 分类浏览器:张三在香港-1 上那条线路的规则,打开域名框的浏览器,看 netflix 分类
+await shot('geo', { hash: 'customers', height: 800, before: async () => {
+  await clickText('出口规则(', 0);
+  await sleep(300);
+  await clickText('浏览 geo 分类', 0);
+  await sleep(800);
+  await page.evaluate(() => [...document.querySelectorAll('.geo .cat')].find((r) => r.querySelector('.code').textContent === 'netflix')?.querySelector('.cat-main').click());
+  await sleep(600);
+} });
 await shot('topology', { hash: 'customers', height: 700, before: async () => {
   await clickText('网络拓扑', 0);
   await sleep(1200);

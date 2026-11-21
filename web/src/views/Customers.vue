@@ -5,6 +5,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
 import ClientLinks from '../components/ClientLinks.vue';
 import TopologyGraph from '../components/TopologyGraph.vue';
+import GeoField from '../components/GeoField.vue';
 import Modal from '../components/Modal.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import MultiSelect from '../components/MultiSelect.vue';
@@ -729,20 +730,13 @@ const networkOptions = computed<SelectOption<string>[]>(() => [
   { value: 'tcp', label: 'TCP' },
   { value: 'udp', label: 'UDP' },
 ]);
-/** 常用的几组:流媒体 / AI / 国内直连 / 去广告 */
-const RULE_PRESETS: { key: string; row: Partial<RuleRow> }[] = [
-  { key: 'streaming', row: { domain: 'geosite:netflix\ngeosite:disney\ngeosite:hbo\ngeosite:primevideo' } },
-  { key: 'ai', row: { domain: 'geosite:openai\ngeosite:anthropic' } },
-  { key: 'cn', row: { domain: 'geosite:cn', ip: 'geoip:cn', to: 'direct' } },
-  { key: 'ads', row: { domain: 'geosite:category-ads-all', to: 'block' } },
-];
 const defaultTarget = () => (socksList.value[0] ? `socks:${socksList.value[0].id}` : 'direct');
 function openRules(line: Line) {
   rulesFor.value = line;
   ruleRows.value = (line.rules ?? []).map(toRow);
 }
-function addRule(preset?: Partial<RuleRow>) {
-  ruleRows.value.push({ domain: '', ip: '', port: '', network: '', to: defaultTarget(), ...preset });
+function addRule() {
+  ruleRows.value.push({ domain: '', ip: '', port: '', network: '', to: defaultTarget() });
 }
 function moveRule(i: number, d: number) {
   const j = i + d;
@@ -1300,9 +1294,9 @@ function exitText(l: Line): string {
           <button type="button" class="link" :disabled="i === ruleRows.length - 1" :title="t('customers.ruleDown')" @click="moveRule(i, 1)">↓</button>
           <button type="button" class="link danger" @click="ruleRows.splice(i, 1)">{{ t('common.delete') }}</button>
         </div>
-        <label class="field">{{ t('customers.ruleDomain') }}<textarea v-model="r.domain" rows="2" spellcheck="false" :placeholder="t('customers.ruleDomainPlaceholder')" /></label>
+        <GeoField v-model="r.domain" kind="site" multiline :panel-id="rulesFor.panel_id" :panel-name="rulesFor.panel_name" :label="t('customers.ruleDomain')" :placeholder="t('customers.ruleDomainPlaceholder')" />
         <div class="two">
-          <label class="field">{{ t('customers.ruleIp') }}<input v-model="r.ip" spellcheck="false" :placeholder="t('customers.ruleIpPlaceholder')" /></label>
+          <GeoField v-model="r.ip" kind="ip" :panel-id="rulesFor.panel_id" :panel-name="rulesFor.panel_name" :label="t('customers.ruleIp')" :placeholder="t('customers.ruleIpPlaceholder')" />
           <label class="field">{{ t('customers.rulePort') }}<input v-model="r.port" spellcheck="false" :placeholder="t('customers.rulePortPlaceholder')" /></label>
         </div>
         <div class="two">
@@ -1312,10 +1306,6 @@ function exitText(l: Line): string {
       </div>
       <div class="row rule-add">
         <button v-if="ruleRows.length < 20" type="button" class="link" @click="addRule()">{{ t('customers.ruleAdd') }}</button>
-        <span v-if="ruleRows.length < 20" class="muted small">{{ t('customers.rulePresets') }}</span>
-        <template v-if="ruleRows.length < 20">
-          <button v-for="p in RULE_PRESETS" :key="p.key" type="button" class="link" @click="addRule(p.row)">{{ t(`customers.rulePreset_${p.key}`) }}</button>
-        </template>
       </div>
       <p class="small">{{ t('customers.rulesRest', { exit: baseExit(rulesFor) }) }}</p>
       <p class="muted small hint">{{ t('customers.rulesHint') }}</p>
