@@ -588,6 +588,10 @@ test('客户已用:倍率算进额度;删线路后它的流量留在已用里;�
     const back = (await call('PATCH', `/customers/${c.id}`, { traffic_ratio: 1 })).body;
     assert.deepEqual([back.used, back.state, back.ops.map((o: any) => o.action)], [1500, 'active', ['enable']]);
     assert.match((await call('PATCH', `/customers/${c.id}`, { traffic_ratio: 0 })).body.error, /流量倍率/);
+  } finally {
+    await close();
+  }
+});
 
 test('流量统计接口:exclude=面板 id 逗号分隔,这些面板的流量不算;写错报 400', async () => {
   const db = memoryDb();
