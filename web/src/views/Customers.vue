@@ -359,15 +359,18 @@ interface BatchResult {
   state: 'wait' | 'doing' | 'ok' | 'err' | 'skip';
   text: string;
 }
-/** exits:单独改过出口的客户 → 'direct' / 'socks:<id>' / 'copy:<线路 id>'(照抄他这条现有线路的出口和出口规则) */
-const batch = ref<{ ids: Set<number>; q: string; running: boolean; stop: boolean; done: boolean; results: Record<number, BatchResult>; exits: Record<number, string> } | null>(null);
+/**
+ * exits:单独改过出口的客户 → 'direct' / 'socks:<id>' / 'copy:<线路 id>'(照抄他这条现有线路的出口和出口规则);
+ * names:每位客户新线路的节点名,空 = 用面板生成的
+ */
+const batch = ref<{ ids: Set<number>; q: string; running: boolean; stop: boolean; done: boolean; results: Record<number, BatchResult>; exits: Record<number, string>; names: Record<number, string> } | null>(null);
 function openBatch() {
   lineFor.value = null;
   opened.value = null;
   const usable = panels.value.filter((p) => !p.check_error);
   lf.value = { panel_id: usable[0]?.id ?? 0, inbound: 'new', protocol: 'vless', exit: 'direct', socks_id: socksList.value[0]?.id ?? 0, node_name: '' };
   void fetchInbounds(lf.value.panel_id);
-  batch.value = { ids: new Set(), q: '', running: false, stop: false, done: false, results: {}, exits: {} };
+  batch.value = { ids: new Set(), q: '', running: false, stop: false, done: false, results: {}, exits: {}, names: {} };
 }
 /** 这位客户在这块面板上已经有几条线路 */
 const onPanelCount = (c: Customer, panelId: number) => c.lines.filter((l) => l.panel_id === panelId).length;
@@ -400,6 +403,14 @@ function setExit(c: Customer, v: string) {
   batch.value.exits[c.id] = v;
   batch.value.ids.add(c.id);
 }
+/** 填了节点名也是要给他开:顺手勾上 */
+function setName(c: Customer, v: string) {
+  if (!batch.value) return;
+  batch.value.names[c.id] = v;
+  if (v.trim()) batch.value.ids.add(c.id);
+}
+/** 已有节点的悬停说明:面板 · 协议 · 出口 */
+const nodeTitle = (l: Line) => `${l.panel_name} · ${proto(l.protocol)} · ${exitText(l)}`;
 function batchExitOptions(c: Customer): SelectOption<string>[] {
   const copies = c.lines.filter(copyable).map((l) => {
     const exit = l.kind === 'relay' ? t('customers.routeSocks', { name: l.exit_socks_name ?? '' }) : t('customers.direct');
@@ -445,7 +456,8 @@ async function runBatch() {
     const body: OpenLineInput = { kind: plan.socks ? 'relay' : 'direct', panel_id: f.panel_id, inbound };
     if (plan.socks) body.exit = { kind: 'socks', socks_id: plan.socks };
     if (plan.rules.length) body.rules = plan.rules;
-    if (f.node_name.trim()) body.node_name = f.node_name.trim();
+    const nodeName = (b.names[c.id] ?? '').trim();
+    if (nodeName) body.node_name = nodeName;
     try {
       const r = await api.openLine(c.id, body);
       inbound = { id: r.line.inbound_id };
@@ -463,6 +475,8 @@ async function runBatch() {
   b.running = false;
   b.done = true;
   b.ids = new Set(targets.filter((c) => b.results[c.id]?.state !== 'ok').map((c) => c.id));
+  // 开成了的,节点名清掉(再给他开一条时不会重名)
+  for (const c of targets) if (b.results[c.id]?.state === 'ok') delete b.names[c.id];
   inboundsOf.value = {};
   void fetchInbounds(f.panel_id);
   await load();
@@ -867,10 +881,9 @@ function exitText(l: Line): string {
           </div>
           <p class="muted small hint">{{ t('customers.relayHint') }}</p>
         </div>
-        <label class="field">
+        <label v-if="!batch" class="field">
           {{ t('customers.nodeNameOptional') }}
           <input v-model="lf.node_name" maxlength="64" :placeholder="t('customers.nodeNamePlaceholder')" />
-          <span v-if="batch" class="muted small">{{ t('customers.batchNodeName') }}</span>
         </label>
 
         <div v-if="batch" class="field-block">
@@ -882,16 +895,25 @@ function exitText(l: Line): string {
           </div>
           <ul class="batch-list">
             <li class="b-row b-head muted small" aria-hidden="true">
-              <span>{{ t('customers.batchColCustomer') }}</span><span>{{ t('customers.batchColExit') }}</span><span>{{ t('customers.batchColResult') }}</span>
+              <span>{{ t('customers.batchColCustomer') }}</span><span>{{ t('customers.batchColExit') }}</span><span>{{ t('customers.batchColNodeName') }}</span><span>{{ t('customers.batchColResult') }}</span>
             </li>
             <li v-for="c in batchList" :key="c.id" class="b-row" :class="{ picked: batch.ids.has(c.id) }">
-              <label class="b-who small">
-                <input type="checkbox" :checked="batch.ids.has(c.id)" @change="batchToggle(c.id)" />
-                <span class="b-name">{{ c.name }}</span>
-                <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
-                <span v-if="onPanelCount(c, lf.panel_id)" class="muted">{{ t('customers.batchHas', { n: onPanelCount(c, lf.panel_id) }) }}</span>
-              </label>
+              <div class="b-who">
+                <label class="b-check small">
+                  <input type="checkbox" :checked="batch.ids.has(c.id)" @change="batchToggle(c.id)" />
+                  <span class="b-name">{{ c.name }}</span>
+                  <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
+                  <span v-if="onPanelCount(c, lf.panel_id)" class="muted">{{ t('customers.batchHas', { n: onPanelCount(c, lf.panel_id) }) }}</span>
+                </label>
+                <div class="b-nodes small">
+                  <template v-if="c.lines.length">
+                    <span v-for="l in c.lines" :key="l.id" class="b-node" :class="{ here: l.panel_id === lf.panel_id }" :title="nodeTitle(l)">{{ l.node_name || l.panel_name }}</span>
+                  </template>
+                  <span v-else class="muted">{{ t('customers.batchNoLines') }}</span>
+                </div>
+              </div>
               <span class="b-exit"><Select :model-value="exitOf(c)" :options="batchExitOptions(c)" :aria-label="t('customers.batchExitFor', { name: c.name })" @update:model-value="(v: string) => setExit(c, v)" /></span>
+              <input class="b-nodename" :value="batch.names[c.id] ?? ''" maxlength="64" :placeholder="t('customers.batchNodeNamePh')" :aria-label="t('customers.batchNodeNameFor', { name: c.name })" @input="setName(c, ($event.target as HTMLInputElement).value)" />
               <span class="small b-res" :class="batch.results[c.id]?.state" :title="batch.results[c.id]?.text">{{ batch.results[c.id] ? batchText(batch.results[c.id]) : '' }}</span>
             </li>
             <li v-if="!batchList.length" class="muted small">{{ t('customers.batchEmpty') }}</li>
@@ -1354,7 +1376,7 @@ h2 {
 /* 一位客户一行:客户 | 出口 | 结果 */
 .b-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 360px) minmax(80px, 130px);
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 300px) minmax(120px, 170px) minmax(70px, 120px);
   gap: 6px 12px;
   align-items: center;
 }
@@ -1369,11 +1391,43 @@ h2 {
 }
 .b-who {
   display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.b-check {
+  display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 4px 8px;
   cursor: pointer;
+}
+/* 已有节点:一个个小标签,在这块面板上的高亮 */
+.b-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-left: 24px;
+}
+.b-node {
+  padding: 1px 7px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.b-node.here {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--rule));
+  color: var(--accent-strong);
+}
+.b-nodename {
   min-width: 0;
+  font-size: 13px;
+  padding: 4px 8px;
 }
 .b-exit {
   min-width: 0;
