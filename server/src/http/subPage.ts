@@ -17,7 +17,6 @@ const fmtDate = (ms: number) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
-const PROTOCOL: Record<string, string> = { hysteria: 'hy2' };
 
 export function qrSvg(text: string): string {
   const qr = qrcode(0, 'M');
@@ -87,21 +86,8 @@ export function renderSubPage({ customer: c, url, devices = [], removed = false,
   const left = quota ? Math.max(0, quota - used) : 0;
   const days = expireAt ? Math.ceil((expireAt - now) / 86_400_000) : 0;
   const expire = !expireAt ? '不限期' : days < 0 ? `${fmtDate(expireAt)}(已到期)` : days === 0 ? `${fmtDate(expireAt)}(今天到期)` : `${fmtDate(expireAt)}(还有 ${days} 天)`;
+  // 不列线路、节点数,也不露后台是什么程序:客户只需要知道用量、到期和怎么导入
   const links = importLinks(url, c.name);
-  // 只给外部订阅的节点时,自己的线路不在订阅里,不列
-  const ownLines = upstream?.replace ? [] : c.lines;
-  const upstreamRow = upstream ? `<li><span class="proto">外部</span><span class="pname">外部订阅</span><span class="muted">${upstream.nodes} 个节点</span></li>` : '';
-  const lines =
-    ownLines
-      .map(
-        (l) =>
-          `<li><span class="proto">${esc(PROTOCOL[l.protocol] ?? l.protocol)}</span><span class="pname">${esc(l.panel_name)}</span>` +
-          // 给客户看的是计费用量(按倍率),和上面的已用一个口径
-          `<span class="muted">${l.kind === 'relay' ? '中转' : '直连'} · 已用 ${fmtBytes(Math.round((l.up + l.down) * (c.traffic_ratio ?? 1)))}</span>` +
-          (l.enable ? '' : '<span class="tag bad">已停用</span>') +
-          `</li>`,
-      )
-      .join('') + upstreamRow;
   const full = c.limit_devices > 0 && devices.length >= c.limit_devices;
   const base = new URL(url).pathname;
   const deviceRows = devices
@@ -140,19 +126,22 @@ export function renderSubPage({ customer: c, url, devices = [], removed = false,
 .sub{display:flex;gap:8px;margin-top:8px}.sub input{flex:1;min-width:0;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;padding:9px 10px;border:1px solid var(--rule);border-radius:8px;background:var(--bg);color:var(--ink)}
 button,.btn{font:inherit;font-size:14px;padding:9px 14px;border-radius:8px;border:1px solid var(--rule);background:var(--sheet);color:var(--ink);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-.apps{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:10px}.apps .btn{background:var(--accent-soft);border-color:transparent;color:var(--accent);font-weight:500}
+.apps{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-top:12px}
+.app{display:flex;flex-direction:column;gap:2px;padding:11px 12px;border:1.5px solid var(--accent);border-radius:10px;background:var(--sheet);color:var(--ink);text-decoration:none;box-shadow:0 1px 2px rgba(16,24,40,.06);transition:background .15s,transform .1s}
+.app:hover{background:var(--accent-soft)}.app:active{transform:scale(.98)}.app:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.app b{font-weight:600;font-size:14px}.app span{margin-top:auto;color:var(--accent);font-size:12px;font-weight:600}
+.steps{margin:6px 0 0;padding-left:20px;color:var(--soft);font-size:13px}.steps li{margin:2px 0}
 .qr{display:flex;justify-content:center;margin-top:12px}.qr svg{width:200px;height:200px;border-radius:8px}
 ul.lines{list-style:none;margin:8px 0 0;padding:0}ul.lines li{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--rule);flex-wrap:wrap}ul.lines li:first-child{border-top:none}
-.proto{font-size:12px;font-weight:600;background:var(--accent-soft);color:var(--accent);padding:2px 7px;border-radius:6px}.pname{font-weight:500}
+.pname{font-weight:500}
 .notice{background:var(--bad-bg);color:var(--bad);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:14px}
-footer{margin-top:24px;text-align:center}footer a{color:var(--soft);text-decoration:none;font-size:12px}
 h2{font-size:15px;margin:0 0 4px}
 .devices form{margin-left:auto}.del{font-size:13px;padding:5px 10px;color:var(--bad)}.okmsg{background:var(--ok-bg);color:var(--ok);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:14px}
 </style>
 </head>
 <body><div class="wrap">
 <h1>${esc(c.name)}<span class="tag ${st.cls}">${st.label}</span></h1>
-<div class="muted">${upstream ? (upstream.replace ? `${upstream.nodes} 个节点` : `${c.lines.length} 条线路 + ${upstream.nodes} 个外部节点`) : `${c.lines.length} 条线路`} · 订阅链接自动更新</div>
+<div class="muted">订阅链接会自动更新,导入一次就行</div>
 
 <div class="card">
   <div class="row"><span class="big">${quota ? `剩余 ${fmtBytes(left)}` : '流量不限'}</span><span class="muted">${quota ? `已用 ${fmtBytes(used)} / ${fmtBytes(quota)}` : `已用 ${fmtBytes(used)}`}</span></div>
@@ -162,21 +151,24 @@ h2{font-size:15px;margin:0 0 4px}
 </div>
 
 <div class="card">
+  <h2>一键导入</h2>
+  <ol class="steps">
+    <li>先在手机或电脑上装好你要用的客户端。</li>
+    <li>点下面对应的按钮,会打开这个客户端并自动添加订阅。</li>
+  </ol>
+  <div class="apps">${links.map((l) => `<a class="app" href="${esc(l.href)}"><b>${esc(l.app)}</b><span>点击导入 →</span></a>`).join('')}</div>
+  <div class="muted" style="margin-top:12px">没反应?说明没装这个客户端,或者它不支持一键导入:复制下面的订阅链接,在客户端里手动添加。</div>
+</div>
+
+<div class="card">
   <h2>订阅链接</h2>
-  <div class="muted">在客户端里添加订阅,或点下面的按钮一键导入。</div>
+  <div class="muted">v2rayN、NekoBox、Karing 等:复制后在客户端里「从剪贴板导入订阅」。</div>
   <div class="sub"><input id="u" readonly value="${esc(url)}" onclick="this.select()"><button class="primary" onclick="copy()">复制</button></div>
-  <div class="apps">${links.map((l) => `<a class="btn" href="${esc(l.href)}">${esc(l.app)}</a>`).join('')}</div>
-  <div class="muted" style="margin-top:10px">v2rayN、NekoBox、Karing 等:复制链接后在客户端里「从剪贴板导入订阅」。</div>
   <div class="qr">${qrSvg(url)}</div>
   <div class="muted" style="text-align:center">手机扫码添加订阅</div>
 </div>
 
 ${deviceCard}
-<div class="card">
-  <h2>线路</h2>
-  ${lines ? `<ul class="lines">${lines}</ul>` : '<div class="muted">还没有线路。</div>'}
-</div>
-<footer><a href="https://github.com/fishermanxzx/xui-hub" rel="noopener">xui-hub</a></footer>
 </div>
 <script>
 function copy(){var i=document.getElementById('u');i.select();var done=function(){var b=document.querySelector('.sub button');b.textContent='已复制';setTimeout(function(){b.textContent='复制'},1500)};

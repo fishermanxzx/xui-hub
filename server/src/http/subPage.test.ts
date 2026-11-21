@@ -14,8 +14,12 @@ test('自助页:剩余流量、到期、线路、一键导入链接;HTML 转义;
   updateLineStats(db, l.id, { up: 10 * GB, down: 30 * GB, enable: true, last_online: 0 });
   const url = 'https://sub.example/sub/tok';
   const html = renderSubPage({ customer: getCustomer(db, cid)!, url }, now);
-  for (const s of ['a&amp;b', '剩余 60.0 GB', '已用 40.0 GB / 100.0 GB', '还有 10 天', '流量每月重置,下次 ', '日本&lt;落地&gt;', 'hy2', '中转 · 已用 40.0 GB', 'clash://install-config?url=https%3A%2F%2Fsub.example%2Fsub%2Ftok', '<svg', 'value="https://sub.example/sub/tok"']) assert.ok(html.includes(s), s);
-  assert.ok(!html.includes('<落地>'));
+  for (const s of ['a&amp;b', '剩余 60.0 GB', '已用 40.0 GB / 100.0 GB', '还有 10 天', '流量每月重置,下次 ', 'clash://install-config?url=https%3A%2F%2Fsub.example%2Fsub%2Ftok', '<svg', 'value="https://sub.example/sub/tok"']) assert.ok(html.includes(s), s);
+  // 一键导入:每个按钮写明「点击导入」
+  assert.equal(html.match(/<a class="app" href=/g)?.length, 8);
+  assert.equal(html.match(/点击导入 →/g)?.length, 8);
+  // 不列线路(面板名、协议、线路数),不露后台程序
+  for (const s of ['日本', '落地', 'hy2', '中转', '条线路', 'xui-hub', 'github']) assert.ok(!html.includes(s), s);
   assert.ok(!html.includes('请联系你的服务提供方'));
 
   updateLineStats(db, l.id, { up: 100 * GB, down: 0, enable: false, last_online: 0 });
@@ -30,7 +34,7 @@ test('导入链接覆盖主流客户端;二维码是 SVG', () => {
   assert.match(qrSvg('https://s.example/sub/t'), /^<svg .*<path d="M/);
 });
 
-test('自助页只给客户看按倍率算的用量:总已用、剩余、每条线路都是计费用量,看不到实际流量和倍率', () => {
+test('自助页只给客户看按倍率算的用量:已用、剩余都是计费用量,看不到实际流量和倍率', () => {
   const db = memoryDb();
   const p = addPanel(db, 'hk');
   const GB = 1024 ** 3;
@@ -41,6 +45,6 @@ test('自助页只给客户看按倍率算的用量:总已用、剩余、每条�
   updateLineStats(db, gone.id, { up: 0, down: 5 * GB, enable: true, last_online: 0 });
   deleteLine(db, gone.id);
   const html = renderSubPage({ customer: getCustomer(db, cid)!, url: 'https://sub.example/sub/tok' });
-  for (const s of ['已用 30.0 GB / 100.0 GB', '剩余 70.0 GB', '直连 · 已用 20.0 GB']) assert.ok(html.includes(s), s);
+  for (const s of ['已用 30.0 GB / 100.0 GB', '剩余 70.0 GB']) assert.ok(html.includes(s), s);
   for (const s of ['15.0 GB', '10.0 GB', '倍率', '实际', '结转']) assert.ok(!html.includes(s), s);
 });

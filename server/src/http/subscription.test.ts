@@ -534,23 +534,20 @@ test('外部订阅:客户到期 / 超额时不去取,也不出节点', async () 
   }
 });
 
-test('自助页:列出外部订阅的节点数,不露地址;开了透传时流量和到期显示外部的', async () => {
+test('自助页:不列外部订阅(节点数、地址都不露);开了透传时流量和到期显示外部的', async () => {
   const { db, id, token } = setup();
   updateCustomer(db, id, { upstreams: [UP_URL] });
   const { link, close } = await serve(db, fakeConverter([]), () => false, fetcher, upstream([]));
   const page = async () => (await fetch(link(token), { headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html' } })).text();
   try {
     let html = await page();
-    assert.match(html, /2 条线路 \+ 1 个外部节点/);
-    assert.match(html, /外部订阅<\/span><span class="muted">1 个节点/);
-    assert.ok(!html.includes('sub.example.com') && !html.includes('reseller-token'));
+    for (const s of ['外部', '个节点', '条线路', 'sub.example.com', 'reseller-token']) assert.ok(!html.includes(s), s);
     assert.match(html, /已用 0 KB \/ 1 KB/);
 
     updateCustomer(db, id, { upstream_userinfo: true, upstream_mode: 'replace' });
     html = await page();
     assert.match(html, /已用 0 KB \/ 3 KB/);
     assert.match(html, /到期:2100-01-01/);
-    assert.match(html, /<div class="muted">1 个节点 · /);
   } finally {
     await close();
   }
