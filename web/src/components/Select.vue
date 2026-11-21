@@ -3,6 +3,7 @@
 // 菜单挂到 body 上按触发按钮定位,所以在弹窗(有滚动、有裁剪)里也不会被截掉。
 // 键盘:上下 / Home / End 移动,回车或空格选中,Esc / Tab 关闭,直接打字跳到对应项。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { menuPlace } from './menuPlace';
 
 export interface SelectOption<V> {
   value: V;
@@ -31,26 +32,7 @@ const listId = `sel-${Math.random().toString(36).slice(2, 9)}`;
 const current = computed(() => props.options.find((o) => o.value === props.modelValue));
 
 function position(): void {
-  const el = trigger.value;
-  if (!el) return;
-  const r = el.getBoundingClientRect();
-  const gap = 4;
-  const edge = 8;
-  const below = window.innerHeight - r.bottom - gap - edge;
-  const above = r.top - gap - edge;
-  const wanted = Math.min(320, menu.value?.scrollHeight ?? 320);
-  const up = below < Math.min(wanted, 160) && above > below;
-  const style: Record<string, string> = {
-    minWidth: `${r.width}px`,
-    maxWidth: `${Math.min(440, window.innerWidth - edge * 2)}px`,
-    maxHeight: `${Math.max(120, Math.min(320, up ? above : below))}px`,
-  };
-  if (up) style.bottom = `${window.innerHeight - r.top + gap}px`;
-  else style.top = `${r.bottom + gap}px`;
-  // 靠右的触发按钮(顶栏)让菜单右对齐,免得伸出屏幕
-  if (r.left + 200 > window.innerWidth) style.right = `${Math.max(edge, window.innerWidth - r.right)}px`;
-  else style.left = `${Math.max(edge, r.left)}px`;
-  place.value = style;
+  if (trigger.value) place.value = menuPlace(trigger.value, menu.value);
 }
 
 function scrollActive(): void {
