@@ -5,7 +5,8 @@
 // - sniffer:从 TLS / HTTP 里嗅出域名,纯 IP 的连接也嗅,只用来匹配规则、不改连接目标
 // - profile.store-selected:重启后记住各分组手动选的节点
 // - 地理数据用 geoip.dat / geosite.dat,不自动更新;首次下载经 gh-proxy.com 加速(国内直连 GitHub 常下不动)
-// - DNS:fake-ip;国外经代理用 DoH 查(respect-rules),国内和局域网域名用国内 DoT;节点域名用国内 DoT 解析
+// - DNS:fake-ip;国外经代理用 DoH 查(respect-rules);节点域名、直连、国内和局域网域名用国内普通 DNS(UDP 53)。
+//   不用 DoT:公司 / 学校网络常拦 853 端口,节点域名解析不出来,经节点的 DoH 跟着挂,开 TUN 时整机断网
 
 import YAML from 'yaml';
 
@@ -49,9 +50,10 @@ dns:
   respect-rules: true
   default-nameserver: ['223.5.5.5', '119.29.29.29']
   nameserver: ['https://1.1.1.1/dns-query', 'https://8.8.8.8/dns-query']
-  proxy-server-nameserver: ['tls://223.5.5.5:853', 'tls://120.53.53.53:853']
+  proxy-server-nameserver: ['223.5.5.5', '119.29.29.29']
+  direct-nameserver: ['223.5.5.5', '119.29.29.29']
   nameserver-policy:
-    'geosite:cn,private': ['tls://223.5.5.5:853', 'tls://120.53.53.53:853']
+    'geosite:cn,private': ['223.5.5.5', '119.29.29.29']
 skip-proxy: ['127.0.0.1', '::1', 'localhost', '192.168.0.0/16', '10.0.0.0/8', '172.16.0.0/12', '100.64.0.0/10']
 `;
 
