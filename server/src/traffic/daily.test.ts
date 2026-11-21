@@ -57,3 +57,30 @@ test('流量统计:面板上删了又建出同名客户端,从头算,不把新�
   recordTraffic(db, p.id, [{ email: 'a', up: 6, down: 5 }], T + 3);
   assert.deepEqual(trafficReport(db, { by: 'panel', days: 1 }, T + 4).total, { up: [1], down: [0] });
 });
+
+test('流量统计:排除面板 = 总量、按面板、按客户都不算它上面的流量(客户在别的面板上的照算);记录不动,不排除就回来', () => {
+  const db = memoryDb();
+  const p1 = addPanel(db, 'p1');
+  const p2 = addPanel(db, 'p2');
+  const p3 = addPanel(db, 'p3');
+  const c = createCustomer(db, { name: '小李' });
+  addLine(db, { customer_id: c, kind: 'direct', panel_id: p1.id, inbound_id: 1, inbound_remark: '', protocol: 'vless', email: 'a1' });
+  addLine(db, { customer_id: c, kind: 'direct', panel_id: p2.id, inbound_id: 1, inbound_remark: '', protocol: 'vless', email: 'a2' });
+  for (const [p, email] of [[p1, 'a1'], [p2, 'a2'], [p3, 'x']] as const) recordTraffic(db, p.id, [{ email, up: 0, down: 0 }], T);
+  recordTraffic(db, p1.id, [{ email: 'a1', up: 10, down: 90 }], T + 1);
+  recordTraffic(db, p2.id, [{ email: 'a2', up: 20, down: 180 }], T + 1);
+  recordTraffic(db, p3.id, [{ email: 'x', up: 5, down: 5 }], T + 1);
+
+  const all = trafficReport(db, { by: 'customer', days: 1 }, T + 2);
+  assert.deepEqual(all.rows.map((r) => [r.name, r.up + r.down]), [['小李', 300], ['没归入客户的客户端', 10]]);
+
+  const ex = { by: 'customer' as const, days: 1, exclude: [p2.id] };
+  assert.deepEqual(trafficReport(db, ex, T + 2).rows.map((r) => [r.name, r.up + r.down]), [['小李', 100], ['没归入客户的客户端', 10]]);
+  assert.deepEqual(trafficReport(db, ex, T + 2).total, { up: [15], down: [95] });
+  assert.deepEqual(trafficReport(db, { ...ex, id: c }, T + 2).rows.map((r) => r.name), ['p1 · a1']);
+  assert.deepEqual(trafficReport(db, { by: 'panel', days: 1, exclude: [p2.id, p3.id] }, T + 2).rows.map((r) => [r.name, r.up + r.down]), [['p1', 100]]);
+  // 排除了整个都没有的:空
+  assert.deepEqual(trafficReport(db, { by: 'panel', days: 1, exclude: [p1.id, p2.id, p3.id] }, T + 2).rows, []);
+  // 记录还在
+  assert.deepEqual(trafficReport(db, { by: 'panel', days: 1, exclude: [] }, T + 2).rows.map((r) => r.name).sort(), ['p1', 'p2', 'p3']);
+});

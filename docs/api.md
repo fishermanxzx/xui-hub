@@ -134,7 +134,7 @@ Authorization: Bearer xh_……
 | GET | `/sub-templates` | 内置的订阅模板 |
 | POST | `/sync` | 立即同步全部面板的流量并执行额度 / 到期 |
 | GET | `/system/version` | xui-hub 自己的版本:`current`、`latest`(GitHub 上最新的发布版本,缓存 6 小时,`?refresh=1` 重查)、`update_available`、`method`(`auto` 能在后台里直接更新 / `docker` / `manual`) |
-| GET | `/traffic` | 流量统计。查询参数:`by`(`customer` 按客户,默认;`panel` 按面板),`days`(最近几天,含今天,默认 30,最多 365),`id`(可选:展开这位客户 / 这块面板名下各个客户端;按客户时 `0` 是没归入客户的客户端)。返回 `days`(日期)、`total`(每天的上行 / 下行)、`rows`(每行的 `up`、`down` 和每天的合计 `daily`,按用量从大到小) |
+| GET | `/traffic` | 流量统计。查询参数:`by`(`customer` 按客户,默认;`panel` 按面板),`days`(最近几天,含今天,默认 30,最多 365),`id`(可选:展开这位客户 / 这块面板名下各个客户端;按客户时 `0` 是没归入客户的客户端),`exclude`(可选:逗号分隔的面板 id,这些面板上的流量不算,按客户时就是客户在这些面板上的线路不算;只是统计时跳过,记录不动)。返回 `days`(日期)、`total`(每天的上行 / 下行)、`rows`(每行的 `up`、`down` 和每天的合计 `daily`,按用量从大到小) |
 
 面板和 SOCKS 都带 `monthly_cost`(月成本,`null` = 没填)和 `expire_at`(到期时间,毫秒,`0` = 没填),只用来记账和提醒续费,在后台的面板页 / SOCKS 页填写。
 

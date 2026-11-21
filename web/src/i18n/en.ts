@@ -103,6 +103,11 @@ const en: Messages = {
     deletedPanel: 'Deleted panel #{id}',
     unassigned: 'Clients not assigned to a customer',
     empty: 'No traffic recorded in this period yet.',
+    excludeLabel: 'Panels excluded from the stats',
+    excludeNone: 'No panels excluded',
+    excludeOne: 'Excluding {name}',
+    excludeN: 'Excluding {n} panels',
+    excludedNote: 'Traffic on {list} is left out: totals, the daily chart, per-customer figures (their lines on these panels) and the per-panel view. It is only skipped when calculating; the records are kept and come back when you stop excluding. The choice is remembered in this browser.',
   },
   version: {
     dev: 'dev build',

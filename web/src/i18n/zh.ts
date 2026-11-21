@@ -101,6 +101,11 @@ export default {
     deletedPanel: '已删除的面板 #{id}',
     unassigned: '没归入客户的客户端',
     empty: '这段时间还没有流量记录。',
+    excludeLabel: '统计时排除的面板',
+    excludeNone: '不排除面板',
+    excludeOne: '排除 {name}',
+    excludeN: '排除 {n} 块面板',
+    excludedNote: '没算 {list} 上的流量:合计、每天的走势、按客户(客户在这些面板上的线路)、按面板都不算。只是统计时跳过,记录照常保留,取消排除就回来。排除哪些记在这个浏览器里。',
   },
   version: {
     dev: '开发版',
