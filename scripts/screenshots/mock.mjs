@@ -35,7 +35,7 @@ const customer = (id, name, remark, quotaGb, expireDays, lines, extra = {}) => {
   const expire_at = expireDays == null ? 0 : now + expireDays * DAY;
   const state = expire_at && expire_at <= now ? 'expired' : quota_bytes && used >= quota_bytes ? 'over_quota' : 'active';
   const token = ['8Fq2mXvT1kLr9aZc0WbnYeHd', 'pV7sQ3uJxN5tRg2Kc8LmZa1E', 'Hy6dTz4BwC9eXo3MfN1qKs7U'][id - 1];
-  return { id, name, remark, quota_bytes, expire_at, sub_token: token, sub_url: `https://hub.example.com/sub/${token}`, sub_fetched_at: now - 2_400_000, sub_fetched_ua: 'clash-verge/v2.2.3', sub_clients: 2, sub_ips: 2, created_at: now - 30 * DAY, updated_at: now - DAY, lines, used_up, used_down, used, state, sub_links: [], upstreams: [], upstream_mode: 'merge', upstream_userinfo: false, monthly_fee: null, ...extra };
+  return { id, name, remark, quota_bytes, expire_at, sub_token: token, sub_url: `https://hub.example.com/sub/${token}`, sub_fetched_at: now - 2_400_000, sub_fetched_ua: 'clash-verge/v2.2.3', sub_clients: 2, sub_ips: 2, created_at: now - 30 * DAY, updated_at: now - DAY, lines, actual_up: used_up, actual_down: used_down, actual_used: used, traffic_ratio: 1, carried_up: 0, carried_down: 0, used_up, used_down, used, state, sub_links: [], upstreams: [], upstream_mode: 'merge', upstream_userinfo: false, monthly_fee: null, ...extra };
 };
 const customers = [
   customer(1, '张三', '月付 30', 200, 18, [

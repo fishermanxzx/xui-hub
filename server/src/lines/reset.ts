@@ -1,6 +1,6 @@
 // 清零客户的流量:各线路的客户端在面板上 resetTraffic,本地记录归零。手动「清零流量」和按月清零都走这里。
 
-import { customersDueReset, getCustomer, markReset, zeroLineTraffic, type CustomerView } from '../customers/repo';
+import { clearCarried, customersDueReset, getCustomer, markReset, zeroLineTraffic, type CustomerView } from '../customers/repo';
 import type { DB } from '../db';
 import { getPanel, type Panel } from '../panels/repo';
 import { errorText, panelKey, serial, using } from '../util';
@@ -16,7 +16,7 @@ export interface ResetFailure {
   error: string;
 }
 
-/** 返回没清成的线路;清成的本地流量归零 */
+/** 返回没清成的线路;清成的本地流量归零。结转的(删掉的线路等)一起清零 */
 export async function resetCustomerUsage(db: DB, c: CustomerView, adminFor: (panel: Panel) => ResetAdmin): Promise<ResetFailure[]> {
   const failed: ResetFailure[] = [];
   const byPanel = new Map<number, typeof c.lines>();
@@ -37,6 +37,7 @@ export async function resetCustomerUsage(db: DB, c: CustomerView, adminFor: (pan
       }),
     );
   }
+  clearCarried(db, c.id);
   // 「流量用到 90%」下个周期要能再提醒
   forgetNotified(db, `quota:${c.id}:`);
   return failed;

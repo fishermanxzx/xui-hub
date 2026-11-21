@@ -9,6 +9,7 @@ import { checkAllPanels, checkPanel, type PanelProbe } from '../panels/check';
 import { readPanelDetail, type PanelReader } from '../panels/inbounds';
 import { createPanel, deletePanel, getPanel, InputError, listPanels, toPanelView, updatePanel, type Panel } from '../panels/repo';
 import {
+  adjustUsage,
   createCustomer,
   deleteCustomer,
   deleteLine,
@@ -402,6 +403,16 @@ export function apiRouter(deps: RouteDeps): Router {
       const failed = await resetCustomerUsage(db, c, deps.clientFor);
       const ops = await enforceCustomers(db, deps.clientFor, c.id);
       return { ...customerOf(c.id), failed, ops };
+    }),
+  );
+  // 调整本期已用(实际流量,倍率另乘):up / down 加减的字节,记进结转;调完马上执行一次停用 / 恢复
+  r.post(
+    '/customers/:id/adjust-usage',
+    wrap(async (req) => {
+      const c = plainCustomer(idParam(req));
+      adjustUsage(db, c.id, { up: req.body?.up, down: req.body?.down });
+      const ops = await enforceCustomers(db, deps.clientFor, c.id);
+      return { ...customerOf(c.id), ops };
     }),
   );
   // 把面板上已有的客户端归到这位客户名下(成为直连线路),面板上不改任何东西

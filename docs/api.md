@@ -31,7 +31,10 @@ Authorization: Bearer xh_……
 | `monthly_fee` | 月费(每月收这位客户多少),`null` = 没填;只用来记账,不影响任何功能。写的时候传 `null` 或空字符串 = 清掉 |
 | `sub_devices` | 已经拉过订阅的设备数 |
 | `sub_template` | Clash 订阅模板:空 = 默认,内置模板 id,或 https 模板地址 |
-| `used` | 已用流量(字节,各线路之和) |
+| `traffic_ratio` | 流量倍率,默认 1(0.01-100,两位小数):计费用量 = 实际流量 × 倍率。写的时候传空 = 1 |
+| `actual_up` / `actual_down` / `actual_used` | 只读:本期实际流量(字节)= 各线路之和 + 结转 |
+| `carried_up` / `carried_down` | 只读:结转的实际流量(字节):删掉的线路本期用掉的、面板上计数被清零或重建前的、手动调整的;清零时一起清。手动减过时可以是负数 |
+| `used_up` / `used_down` / `used` | 只读:本期计费用量(字节)= 实际 × 倍率。订阅里的 `subscription-userinfo`、自助页、额度判断(超额停用)、用量提醒都按它 |
 | `state` | `active` 正常 / `expired` 已到期 / `over_quota` 已超额 |
 | `sub_token` | 订阅链接是 `https://<后台地址>/sub/<sub_token>` |
 | `sub_url` | 配了 `SUB_BASE_URL` 时是完整的订阅链接,否则为 `null` |
@@ -45,15 +48,18 @@ Authorization: Bearer xh_……
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/customers` | 全部客户 |
-| POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_devices`、`monthly_fee`、`sub_template`、`sub_links`、`upstreams`、`upstream_mode`、`upstream_userinfo` |
+| POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_devices`、`monthly_fee`、`traffic_ratio`、`sub_template`、`sub_links`、`upstreams`、`upstream_mode`、`upstream_userinfo` |
 | PATCH | `/customers/:id` | 修改,只传要改的字段。改了额度 / 到期会立刻停用或恢复他的客户端 |
 | POST | `/customers/:id/renew` | 续期。请求体:`days`(1-3650),`reset_usage`(可选,`true` 时顺带把流量清零)。在现在的到期日上加天数,已到期或没设到期日的从现在起算 |
-| POST | `/customers/:id/reset-usage` | 把已用流量清零 |
+| POST | `/customers/:id/reset-usage` | 把已用流量清零(结转的一起清) |
+| POST | `/customers/:id/adjust-usage` | 调整本期已用。请求体:`up`、`down`(字节,整数,负数 = 减,至少一个不为 0)。按实际流量加减(倍率另乘),记进结转,不改面板上的计数;调完不能小于 0。之后马上停用或恢复他的客户端。迁移时搬旧系统的用量、纠错时用 |
 | POST | `/customers/:id/sub-token` | 重置订阅链接,旧链接立即失效 |
 | POST | `/customers/:id/upstreams/refresh` | 外部订阅马上重新取一遍,返回客户(看 `upstreams`) |
 | GET | `/customers/:id/devices` | 拉过订阅的设备(`id`、`ua`、`ip`、`first_at`、`last_at`) |
 | DELETE | `/customers/:id/devices/:deviceId` | 移除一台设备,让出名额 |
 | DELETE | `/customers/:id` | 删除客户,连同他在各面板上的客户端 |
+
+删线路(包括在面板卡片上删客户端、强制删面板)时,线路本期用掉的流量结转到客户身上,客户的已用不会变少。同步时面板上的计数比上次小(在面板上清零过、删了重建同名客户端、面板重装),旧计数也会结转;要清零请用 `reset-usage`。
 
 ### 外部订阅怎么取
 

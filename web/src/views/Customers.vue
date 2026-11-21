@@ -11,7 +11,7 @@ import MultiSelect from '../components/MultiSelect.vue';
 import { CUSTOMER_SORTS, CUSTOMER_STATES, matchState, queryCustomers, usesPanel, type CustomerQuery, type CustomerSort } from '../customerQuery';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
-import { bytesToGb, dateInputToMs, dueLevel, feeSummary, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
+import { bytesToGb, dateInputToMs, dueLevel, feeSummary, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
 import { toast, toastError } from '../toast';
 import type { ClientProtocol, Customer, EnforceOp, Line, LineRule, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
 
@@ -100,7 +100,7 @@ const proto = (p: string) => PROTOCOL[p] ?? p;
 const editing = ref<Customer | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', remark: '', fee: '', quotaGb: '', expire: '', monthlyReset: false, resetDay: '', limitDevices: '', template: '', customTemplate: '', subLinks: '', upstreams: [] as { url: string; node_name: string }[], upstreamReplace: false, upstreamUserinfo: false });
+const form = ref({ name: '', remark: '', fee: '', ratio: '1', adjustGb: '', quotaGb: '', expire: '', monthlyReset: false, resetDay: '', limitDevices: '', template: '', customTemplate: '', subLinks: '', upstreams: [] as { url: string; node_name: string }[], upstreamReplace: false, upstreamUserinfo: false });
 /** 内置的 Clash 订阅模板;第一次打开表单时取 */
 const templates = ref<SubTemplate[]>([]);
 /** 内置模板的名字和说明按界面语言给(按模板 id 查文案);语言文件里没有的新模板用服务端给的 */
@@ -114,7 +114,7 @@ function openForm(c: Customer | null) {
   editing.value = c;
   const tpl = c?.sub_template ?? '';
   const custom = /^https:/.test(tpl);
-  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', fee: c?.monthly_fee == null ? '' : String(c.monthly_fee), quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', monthlyReset: !!c?.reset_day, resetDay: c?.reset_day ? String(c.reset_day) : '', limitDevices: c?.limit_devices ? String(c.limit_devices) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '', subLinks: (c?.sub_links ?? []).join('\n'), upstreams: (c?.upstreams ?? []).map((u) => ({ url: u.url, node_name: u.node_name })), upstreamReplace: c?.upstream_mode === 'replace', upstreamUserinfo: !!c?.upstream_userinfo };
+  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', fee: c?.monthly_fee == null ? '' : String(c.monthly_fee), ratio: String(c?.traffic_ratio ?? 1), adjustGb: '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', monthlyReset: !!c?.reset_day, resetDay: c?.reset_day ? String(c.reset_day) : '', limitDevices: c?.limit_devices ? String(c.limit_devices) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '', subLinks: (c?.sub_links ?? []).join('\n'), upstreams: (c?.upstreams ?? []).map((u) => ({ url: u.url, node_name: u.node_name })), upstreamReplace: c?.upstream_mode === 'replace', upstreamUserinfo: !!c?.upstream_userinfo };
   showForm.value = true;
 }
 
@@ -139,11 +139,24 @@ function opsNote(ops: EnforceOp[]): string {
 
 async function submit() {
   saving.value = true;
-  const body = { name: form.value.name, remark: form.value.remark, monthly_fee: form.value.fee === '' ? null : Number(form.value.fee), quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template, sub_links: form.value.subLinks.split('\n').map((x) => x.trim()).filter(Boolean), upstreams: form.value.upstreams.map((u) => ({ url: u.url.trim(), node_name: u.node_name.trim() })).filter((u) => u.url), upstream_mode: form.value.upstreamReplace ? ('replace' as const) : ('merge' as const), upstream_userinfo: form.value.upstreamUserinfo };
+  const body = { name: form.value.name, remark: form.value.remark, monthly_fee: form.value.fee === '' ? null : Number(form.value.fee), traffic_ratio: form.value.ratio === '' ? 1 : Number(form.value.ratio), quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template, sub_links: form.value.subLinks.split('\n').map((x) => x.trim()).filter(Boolean), upstreams: form.value.upstreams.map((u) => ({ url: u.url.trim(), node_name: u.node_name.trim() })).filter((u) => u.url), upstream_mode: form.value.upstreamReplace ? ('replace' as const) : ('merge' as const), upstream_userinfo: form.value.upstreamUserinfo };
   try {
     const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
+    let ops = (saved as { ops?: EnforceOp[] }).ops ?? [];
+    // 调整本期已用:客户信息已经存了,这一步没成就留着表单,改了再存一次
+    // type="number" 的 v-model 会给数字,统一按字符串看
+    const adjustText = String(form.value.adjustGb ?? '').trim();
+    const adjust = editing.value && adjustText !== '' ? gbToBytes(Number(adjustText)) : 0;
+    if (adjust) {
+      try {
+        ops = [...ops, ...(await api.adjustUsage(saved.id, { down: adjust })).ops];
+        form.value.adjustGb = '';
+      } catch (e) {
+        await load();
+        throw e;
+      }
+    }
     showForm.value = false;
-    const ops = (saved as { ops?: EnforceOp[] }).ops ?? [];
     // 新填的外部订阅保存时马上取了一次:没取到的提醒一下(照样保存了,原因在客户卡片上)
     const missed = (saved.upstreams ?? []).filter((u) => !u.nodes).length;
     const note = [opsNote(ops), missed ? t('customers.upstreamMissed', { n: missed }) : ''].filter(Boolean).join('; ');
@@ -450,7 +463,7 @@ async function saveRename() {
 }
 
 async function removeLine(line: Line) {
-  if (!confirm(t(line.kind === 'relay' ? 'customers.confirmDeleteRelayLine' : 'customers.confirmDeleteLine', { panel: line.panel_name, email: line.email }))) return;
+  if (!confirm(t(line.kind === 'relay' ? 'customers.confirmDeleteRelayLine' : 'customers.confirmDeleteLine', { panel: line.panel_name, email: line.email, used: fmtBytes(line.up + line.down) }))) return;
   try {
     try {
       await api.deleteLine(line.customer_id, line.id);
@@ -554,6 +567,8 @@ function exitText(l: Line): string {
           <span class="small" :class="{ 'text-warn': dueLevel(c.expire_at) === 'warn', 'text-err': dueLevel(c.expire_at) === 'err', muted: !c.expire_at }" :title="fmtDate(c.expire_at)">
             {{ fmtDue(c.expire_at) }}
           </span>
+          <span v-if="c.traffic_ratio !== 1" class="small ratio" :title="t('customers.ratioHint')">{{ t('customers.ratioValue', { v: c.traffic_ratio }) }}<span class="muted"> · {{ t('customers.actualUsed', { v: fmtBytes(c.actual_used) }) }}</span></span>
+          <span v-if="c.carried_up || c.carried_down" class="muted small" :title="t('customers.carriedHint')">{{ t('customers.carried', { v: fmtSignedBytes(c.carried_up + c.carried_down) }) }}</span>
           <span v-if="c.monthly_fee != null" class="muted small">{{ t('customers.feeValue', { v: fmtCost(c.monthly_fee) }) }}</span>
           <span v-if="c.sub_template" class="muted small" :title="c.sub_template">{{ t('customers.template', { name: templateName(c.sub_template) }) }}</span>
           <span v-if="c.limit_devices" class="small" :class="c.sub_devices >= c.limit_devices ? 'text-warn' : 'muted'" :title="t('customers.devicesHint')">{{ t('customers.devices', { n: c.sub_devices, max: c.limit_devices }) }}</span>
@@ -646,6 +661,11 @@ function exitText(l: Line): string {
           <i18n-t v-else keypath="customers.monthlyDay" tag="span" class="row small reset-day" scope="global"><template #day><input v-model="form.resetDay" type="number" min="1" max="28" step="1" required :aria-label="t('customers.monthlyDayAria')" /></template></i18n-t>
         </div>
       </div>
+      <div class="two">
+        <label class="field">{{ t('customers.trafficRatio') }}<input v-model="form.ratio" type="number" min="0.01" max="100" step="0.01" :title="t('customers.ratioHint')" /></label>
+        <label v-if="editing" class="field">{{ t('customers.adjustUsage') }}<input v-model="form.adjustGb" type="number" step="any" :placeholder="t('customers.adjustPlaceholder')" :title="t('customers.adjustHint')" /></label>
+      </div>
+      <p class="muted small hint ratio-hint">{{ t('customers.ratioHint') }}<template v-if="editing"> {{ t('customers.adjustHint') }}</template></p>
       <div class="two">
         <label class="field">{{ t('customers.expire') }}<input v-model="form.expire" type="date" /></label>
         <label class="field">{{ t('customers.limitDevices') }}<input v-model="form.limitDevices" type="number" min="1" max="100" step="1" :placeholder="t('customers.limitPlaceholder')" /></label>
@@ -1151,5 +1171,11 @@ h2 {
 }
 .reset-day input {
   width: 72px;
+}
+.ratio {
+  color: var(--caution);
+}
+.ratio-hint {
+  margin-top: -8px;
 }
 </style>

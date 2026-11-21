@@ -1,6 +1,6 @@
 // 面板连通性检查:读一遍入站和 client,记下数量或错误。启动后定期跑,也可手动点。
 
-import { linesOnPanel, setLineRoutes, updateLineStats } from '../customers/repo';
+import { carryTraffic, linesOnPanel, setLineRoutes, updateLineStats } from '../customers/repo';
 import { routesForClient } from '../lines/routes';
 import { allSocks } from '../socks/repo';
 import { xrayConfig } from '../xui/json';
@@ -55,14 +55,25 @@ export function checkPanel(db: DB, panel: Panel, probe: PanelProbe, now = Date.n
   });
 }
 
-/** 把面板上客户端的流量和启用状态写到对应线路;面板上已经没有的客户端算停用,流量保留 */
+/**
+ * 把面板上客户端的流量和启用状态写到对应线路;面板上已经没有的客户端算停用,流量保留。
+ * 面板上的计数比记下的小(在面板上清零过、删了重建同名客户端、面板重装):旧计数结转到客户身上,客户的已用不丢。
+ * now 是开始读面板之前的时间:之后在 xui-hub 里清零过的线路,这次读到的是清零前的计数,不写回
+ */
 export function syncLines(db: DB, panelId: number, clients: ReturnType<typeof normalizeClients>, now = Date.now()): void {
   const byEmail = new Map(clients.map((c) => [c.email, c]));
-  for (const line of linesOnPanel(db, panelId)) {
-    const c = byEmail.get(line.email);
-    if (c) updateLineStats(db, line.id, { up: c.up, down: c.down, enable: c.enable, last_online: c.lastOnline }, now);
-    else updateLineStats(db, line.id, { up: line.up, down: line.down, enable: false, last_online: line.last_online }, now);
-  }
+  db.transaction(() => {
+    for (const line of linesOnPanel(db, panelId)) {
+      if (line.zeroed_at >= now) continue;
+      const c = byEmail.get(line.email);
+      if (!c) {
+        updateLineStats(db, line.id, { up: line.up, down: line.down, enable: false, last_online: line.last_online }, now);
+        continue;
+      }
+      carryTraffic(db, line.customer_id, c.up < line.up ? line.up : 0, c.down < line.down ? line.down : 0);
+      updateLineStats(db, line.id, { up: c.up, down: c.down, enable: c.enable, last_online: c.lastOnline }, now);
+    }
+  })();
 }
 
 /** 按面板的 Xray 路由记下每条线路实际的出口;入站已经不在的线路不动 */

@@ -117,8 +117,17 @@ export function updatePanel(db: DB, id: number, patch: PanelInput): Panel {
 /** 删面板(只是不再接入,面板上的东西不动)。挂在它上面的客户线路记录会跟着删掉,所以有线路时要 force 才删 */
 export function deletePanel(db: DB, id: number, force = false): void {
   const { line_count } = panelUsage(db, id);
-  if (line_count && !force) throw new InputError(`这块面板上还有 ${line_count} 条客户线路,删面板会把这些线路记录一并删掉;先删线路,或确认后强制删除`);
-  if (!db.prepare('DELETE FROM panels WHERE id = ?').run(id).changes) throw new InputError('面板不存在');
+  if (line_count && !force) throw new InputError(`这块面板上还有 ${line_count} 条客户线路,删面板会把这些线路记录一并删掉(本期用掉的流量会留在客户的已用里);先删线路,或确认后强制删除`);
+  db.transaction(() => {
+    // 这些线路本期用掉的流量结转到各自客户身上,客户的已用不变
+    db.prepare(
+      `UPDATE customers SET
+         carried_up = carried_up + (SELECT COALESCE(SUM(up), 0) FROM lines WHERE lines.customer_id = customers.id AND lines.panel_id = @id),
+         carried_down = carried_down + (SELECT COALESCE(SUM(down), 0) FROM lines WHERE lines.customer_id = customers.id AND lines.panel_id = @id)
+       WHERE id IN (SELECT customer_id FROM lines WHERE panel_id = @id)`,
+    ).run({ id });
+    if (!db.prepare('DELETE FROM panels WHERE id = @id').run({ id }).changes) throw new InputError('面板不存在');
+  })();
 }
 
 export type CheckResult =

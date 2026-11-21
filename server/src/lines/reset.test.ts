@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addLine, createCustomer, customersDueReset, getCustomer, nextResetAt, periodStart, resetPeriodStart, updateCustomer, updateLineStats } from '../customers/repo';
+import { addLine, adjustUsage, createCustomer, customersDueReset, deleteLine, getCustomer, nextResetAt, periodStart, resetPeriodStart, updateCustomer, updateLineStats } from '../customers/repo';
 import { alreadyNotified, markNotified } from '../notify/events';
 import type { Panel } from '../panels/repo';
 import { addPanel, memoryDb } from '../testUtil';
@@ -96,4 +96,20 @@ test('有到期时间的客户,重置日跟着到期日走:每月到期日那一
   assert.equal((await runMonthlyResets(db, adminFor, day(2026, 3, 21, 0))).length, 1);
   assert.deepEqual(await runMonthlyResets(db, adminFor, day(2026, 4, 20)), []);
   assert.equal((await runMonthlyResets(db, adminFor, day(2026, 4, 21, 0))).length, 1);
+});
+
+test('清零:结转的流量(删掉的线路、手动调整的)一起清零', async () => {
+  const db = memoryDb();
+  const p = addPanel(db, 'p');
+  const cid = createCustomer(db, { name: 'c' });
+  const keep = addLine(db, { customer_id: cid, kind: 'direct', panel_id: p.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'c' });
+  const gone = addLine(db, { customer_id: cid, kind: 'direct', panel_id: p.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'c2' });
+  updateLineStats(db, keep.id, { up: 1, down: 2, enable: true, last_online: 0 });
+  updateLineStats(db, gone.id, { up: 30, down: 40, enable: true, last_online: 0 });
+  deleteLine(db, gone.id);
+  adjustUsage(db, cid, { down: 500 });
+  assert.equal(getCustomer(db, cid)!.actual_used, 573);
+  assert.deepEqual(await resetCustomerUsage(db, getCustomer(db, cid)!, () => ({ resetClientTraffic: async () => {} })), []);
+  const v = getCustomer(db, cid)!;
+  assert.deepEqual([v.actual_used, v.carried_up, v.carried_down, v.lines[0].up], [0, 0, 0, 0]);
 });

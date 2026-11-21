@@ -63,6 +63,8 @@ export const api = {
   resetUsage: (id: number) => call<Customer & { failed: { line: string; error: string }[]; ops: EnforceOp[] }>('POST', `/api/customers/${id}/reset-usage`),
   /** 重置订阅链接(换 token,旧链接立即失效) */
   resetSubToken: (id: number) => call<Customer>('POST', `/api/customers/${id}/sub-token`),
+  /** 调整本期已用(实际流量,字节,可以是负数) */
+  adjustUsage: (id: number, delta: { up?: number; down?: number }) => call<Customer & { ops: EnforceOp[] }>('POST', `/api/customers/${id}/adjust-usage`, delta),
   devices: (id: number) => call<SubDevice[]>('GET', `/api/customers/${id}/devices`),
   /** 删掉一台设备,名额让出来 */
   deleteDevice: (id: number, deviceId: number) => call('DELETE', `/api/customers/${id}/devices/${deviceId}`),
