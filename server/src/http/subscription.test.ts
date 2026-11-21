@@ -85,7 +85,7 @@ test('Clash:text/yaml,带文件名、更新间隔、全局流量;默认转换参
     assert.match(CONFIG, /ACL4SSR_Online_Mini\.ini$/);
     assert.equal(res.headers.get('content-type'), 'text/yaml; charset=utf-8');
     assert.equal(res.headers.get('content-disposition'), `attachment;filename*=UTF-8''${encodeURIComponent('朱先生')}`);
-    assert.equal(res.headers.get('profile-update-interval'), '1');
+    assert.equal(res.headers.get('profile-update-interval'), '24');
     assert.equal(res.headers.get('subscription-userinfo'), USERINFO);
     assert.equal(calls[0].options.emoji, 'true');
     assert.match(calls[0].source, /\/internal\/nodes\/\d+\?key=internal-secret$/);
@@ -182,7 +182,7 @@ test('sing-box 与 Hiddify:本系统生成 JSON(不经 subconverter),Profile-Tit
       const cfg = JSON.parse(await res.text());
       assert.equal(res.headers.get('content-type'), 'application/json');
       assert.equal(res.headers.get('profile-title'), `base64:${Buffer.from('朱先生').toString('base64')}`);
-      assert.equal(res.headers.get('profile-update-interval'), '1');
+      assert.equal(res.headers.get('profile-update-interval'), '24');
       assert.equal(res.headers.get('content-disposition'), null);
       assert.equal(res.headers.get('subscription-userinfo'), USERINFO);
       assert.deepEqual(cfg.outbounds.slice(3).map((o: any) => [o.type, o.tag]), [['vless', 'A'], ['hysteria2', 'B']]);
