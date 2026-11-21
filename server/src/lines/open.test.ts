@@ -224,3 +224,40 @@ test('SOCKS 换地址:走它的线路在各中转上改指到新出站、每块�
   assert.deepEqual([tags('r2'), rules('r2')], [['direct', 'socks-third.example.com-3080'], [['li', 'socks-third.example.com-3080'], [null, 'direct']]]);
   assert.deepEqual([data.r1.restarts, data.r2.restarts], [5, 3]);
 });
+
+test('开线路时带出口规则:和出口路由一次写上、Xray 只重启一次,规则存下、实际出口算好;规则不对什么都不建;中途失败规则一起撤', async () => {
+  const db = memoryDb();
+  const panel = addPanel(db, 'relay', 'https://1.1.1.1:2053/p');
+  const data: Record<string, FakePanel> = { relay: { inbounds: [vlessInbound(5, 500)], clients: [], xray: relayXray(), restarts: 0 } };
+  const adminFor = fakePanels(data);
+  const us = createSocks(db, { name: 'us', address: 'socks5://a:b@2.2.2.2:3000' });
+  const jp = createSocks(db, { name: 'jp', address: 'socks5://c:d@3.3.3.3:4000' });
+  const cid = createCustomer(db, { name: 'li' });
+  const rules = [{ domain: ['geosite:netflix'], ip: [], port: '', network: '', to: { kind: 'socks', socks_id: us } }];
+
+  // 走 jp,流媒体走 us
+  const relay = await openLine(db, cid, { panel_id: panel.id, inbound: { id: 5 }, exit: { kind: 'socks', socks_id: jp }, rules }, adminFor);
+  assert.equal(data.relay.restarts, 1);
+  assert.deepEqual(relay.line.rules.map((r) => [r.domain, r.to]), [[['geosite:netflix'], { kind: 'socks', socks_id: us }]]);
+  const mine = data.relay.xray.routing.rules.filter((r: any) => r.user?.[0] === 'li');
+  assert.equal(mine.length, 2, '一条按规则的 + 一条线路出口');
+  assert.ok(mine[0].ruleTag?.startsWith('xui-hub:') && mine[0].domain?.[0] === 'geosite:netflix');
+  assert.deepEqual(relay.line.routes?.map((h) => [h.fallback, h.to.socks_id ?? null]), [[false, us], [true, jp]]);
+
+  // 直出 + 规则:只有规则,也只重启一次
+  const direct = await openLine(db, cid, { panel_id: panel.id, inbound: { id: 5 }, rules }, adminFor);
+  assert.deepEqual([direct.line.kind, direct.line.rules.length, data.relay.restarts], ['direct', 1, 2]);
+
+  // 规则指向不存在的 SOCKS:面板上什么都不动
+  const before = structuredClone(data.relay);
+  await assert.rejects(openLine(db, cid, { panel_id: panel.id, inbound: { id: 5 }, rules: [{ ...rules[0], to: { kind: 'socks', socks_id: 999 } }] }, adminFor), /SOCKS/);
+  await assert.rejects(openLine(db, cid, { panel_id: panel.id, inbound: { id: 5 }, rules: 'x' }, adminFor), /rules 要是数组/);
+  assert.deepEqual(data.relay, before);
+
+  // client 建好后取链接失败:规则和出口一起撤掉
+  data.relay.fail = { clientLinks: '面板报错' };
+  const xrayBefore = structuredClone(data.relay.xray);
+  await assert.rejects(openLine(db, cid, { panel_id: panel.id, inbound: { id: 5 }, exit: { kind: 'socks', socks_id: jp }, rules }, adminFor), /面板报错/);
+  assert.deepEqual(data.relay.xray, xrayBefore);
+  assert.equal(linesOf(db, cid).length, 2);
+});

@@ -359,14 +359,15 @@ interface BatchResult {
   state: 'wait' | 'doing' | 'ok' | 'err' | 'skip';
   text: string;
 }
-const batch = ref<{ ids: Set<number>; q: string; running: boolean; stop: boolean; done: boolean; results: Record<number, BatchResult> } | null>(null);
+/** exits:单独改过出口的客户 → 'direct' / 'socks:<id>' / 'copy:<线路 id>'(照抄他这条现有线路的出口和出口规则) */
+const batch = ref<{ ids: Set<number>; q: string; running: boolean; stop: boolean; done: boolean; results: Record<number, BatchResult>; exits: Record<number, string> } | null>(null);
 function openBatch() {
   lineFor.value = null;
   opened.value = null;
   const usable = panels.value.filter((p) => !p.check_error);
   lf.value = { panel_id: usable[0]?.id ?? 0, inbound: 'new', protocol: 'vless', exit: 'direct', socks_id: socksList.value[0]?.id ?? 0, node_name: '' };
   void fetchInbounds(lf.value.panel_id);
-  batch.value = { ids: new Set(), q: '', running: false, stop: false, done: false, results: {} };
+  batch.value = { ids: new Set(), q: '', running: false, stop: false, done: false, results: {}, exits: {} };
 }
 /** 这位客户在这块面板上已经有几条线路 */
 const onPanelCount = (c: Customer, panelId: number) => c.lines.filter((l) => l.panel_id === panelId).length;
@@ -384,17 +385,50 @@ function batchToggle(id: number) {
 function batchAll() {
   for (const c of batchList.value) if (!onPanelCount(c, lf.value.panel_id)) batch.value?.ids.add(c.id);
 }
+/** 能照抄的现有线路:直出,或走还在的 SOCKS;规则里用到的 SOCKS 也都还在(老的「中转到面板」那种不行) */
+const socksAlive = (id: number | null | undefined) => id != null && socksList.value.some((s) => s.id === id);
+const copyable = (l: Line) => (l.kind === 'direct' || (l.exit_kind === 'socks' && socksAlive(l.exit_socks_id))) && (l.rules ?? []).every((r) => r.to.kind !== 'socks' || socksAlive(r.to.socks_id));
+/** 上面选的出口(没有现成线路的客户用它) */
+const unifiedExit = computed(() => (lf.value.exit === 'socks' && lf.value.socks_id ? `socks:${lf.value.socks_id}` : 'direct'));
+/** 默认照抄他最新的一条现有线路;没有能照抄的用上面选的 */
+function defaultExit(c: Customer): string {
+  const latest = [...c.lines].reverse().find(copyable);
+  return latest ? `copy:${latest.id}` : unifiedExit.value;
+}
+const exitOf = (c: Customer) => batch.value?.exits[c.id] ?? defaultExit(c);
+function setExit(c: Customer, v: string) {
+  if (batch.value) batch.value.exits[c.id] = v;
+}
+function batchExitOptions(c: Customer): SelectOption<string>[] {
+  const copies = c.lines.filter(copyable).map((l) => {
+    const exit = l.kind === 'relay' ? t('customers.routeSocks', { name: l.exit_socks_name ?? '' }) : t('customers.direct');
+    const rules = l.rules?.length ? t('customers.batchCopyRules', { n: l.rules.length }) : '';
+    return { value: `copy:${l.id}`, label: t('customers.batchCopy', { line: l.node_name ? `${l.panel_name}「${l.node_name}」` : l.panel_name, exit: exit + rules }) };
+  });
+  return [...copies, { value: 'direct', label: t('customers.direct') }, ...socksList.value.map((s) => ({ value: `socks:${s.id}`, label: t('customers.routeSocks', { name: s.name }) }))];
+}
+/** 这位客户这次要开的出口和规则 */
+function planFor(c: Customer): { socks: number | null; rules: LineRule[] } {
+  const v = exitOf(c);
+  if (v.startsWith('copy:')) {
+    const l = c.lines.find((x) => x.id === Number(v.slice(5)));
+    return { socks: l?.kind === 'relay' ? (l.exit_socks_id ?? null) : null, rules: l?.rules ?? [] };
+  }
+  return { socks: v.startsWith('socks:') ? Number(v.slice(6)) : null, rules: [] };
+}
 const batchText = (r: BatchResult) =>
   r.state === 'wait' ? t('customers.batchWait') : r.state === 'doing' ? t('customers.batchDoing') : r.state === 'ok' ? t('customers.batchOk', { email: r.text }) : r.state === 'skip' ? t('customers.batchSkipped') : t('customers.batchErr', { error: r.text });
 async function runBatch() {
   const b = batch.value;
   if (!b || b.running) return;
   const f = lf.value;
-  const viaSocks = f.exit === 'socks';
   const targets = customers.value.filter((c) => b.ids.has(c.id));
   if (!targets.length || !canOpen.value) return;
+  const plans = new Map(targets.map((c) => [c.id, planFor(c)]));
+  // 走 SOCKS 或带规则的,每条都要改一次路由、重启一次 Xray
+  const xray = [...plans.values()].filter((p) => p.socks || p.rules.length).length;
   const panelName = panels.value.find((p) => p.id === f.panel_id)?.name ?? '';
-  if (!confirm(t(viaSocks ? 'customers.batchConfirmRelay' : 'customers.batchConfirm', { panel: panelName, n: targets.length }))) return;
+  if (!confirm(xray ? t('customers.batchConfirmXray', { panel: panelName, n: targets.length, m: xray }) : t('customers.batchConfirm', { panel: panelName, n: targets.length }))) return;
   b.running = true;
   b.stop = false;
   b.done = false;
@@ -406,8 +440,10 @@ async function runBatch() {
   for (const c of targets) {
     if (b.stop) break;
     b.results[c.id] = { state: 'doing', text: '' };
-    const body: OpenLineInput = { kind: viaSocks ? 'relay' : 'direct', panel_id: f.panel_id, inbound };
-    if (viaSocks) body.exit = { kind: 'socks', socks_id: f.socks_id };
+    const plan = plans.get(c.id)!;
+    const body: OpenLineInput = { kind: plan.socks ? 'relay' : 'direct', panel_id: f.panel_id, inbound };
+    if (plan.socks) body.exit = { kind: 'socks', socks_id: plan.socks };
+    if (plan.rules.length) body.rules = plan.rules;
     if (f.node_name.trim()) body.node_name = f.node_name.trim();
     try {
       const r = await api.openLine(c.id, body);
@@ -822,13 +858,13 @@ function exitText(l: Line): string {
         </div>
 
         <div class="field-block">
-          <span class="label">{{ t('customers.exit') }}</span>
+          <span class="label">{{ batch ? t('customers.batchDefaultExit') : t('customers.exit') }}</span>
           <div class="choices">
             <label class="row small"><input v-model="lf.exit" type="radio" value="direct" />{{ t('customers.exitDirect') }}</label>
             <label class="row small"><input v-model="lf.exit" type="radio" value="socks" :disabled="!socksList.length" />{{ t('customers.exitSocks') }}{{ socksList.length ? '' : t('customers.noSocks') }}</label>
             <span v-if="lf.exit === 'socks'" class="inline"><Select v-model="lf.socks_id" :options="socksOptions" :aria-label="t('customers.exitSocks')" /></span>
           </div>
-          <p class="muted small hint">{{ t('customers.relayHint') }}</p>
+          <p class="muted small hint">{{ batch ? t('customers.batchExitHint') : t('customers.relayHint') }}</p>
         </div>
         <label class="field">
           {{ t('customers.nodeNameOptional') }}
@@ -851,6 +887,7 @@ function exitText(l: Line): string {
                 <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
                 <span v-if="onPanelCount(c, lf.panel_id)" class="muted">{{ t('customers.batchHas', { n: onPanelCount(c, lf.panel_id) }) }}</span>
               </label>
+              <span v-if="batch.ids.has(c.id)" class="b-exit"><Select :model-value="exitOf(c)" :options="batchExitOptions(c)" :aria-label="t('customers.batchExitFor', { name: c.name })" @update:model-value="(v: string) => setExit(c, v)" /></span>
               <span v-if="batch.results[c.id]" class="small b-res" :class="batch.results[c.id].state" :title="batch.results[c.id].text">{{ batchText(batch.results[c.id]) }}</span>
             </li>
             <li v-if="!batchList.length" class="muted small">{{ t('customers.batchEmpty') }}</li>
@@ -1318,6 +1355,16 @@ h2 {
   gap: 8px;
   cursor: pointer;
   min-width: 0;
+}
+.b-exit {
+  flex: 0 1 300px;
+  min-width: 160px;
+  margin-left: auto;
+}
+.b-exit :deep(button.select) {
+  width: 100%;
+  font-size: 13px;
+  padding: 4px 8px;
 }
 .b-name {
   font-weight: 500;
