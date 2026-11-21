@@ -27,6 +27,9 @@ await shot('customers', { hash: 'customers', height: 900 });
 await shot('open-line', { hash: 'customers', height: 900, before: async () => {
   await clickText('开线路', 0);
   await sleep(300);
+  // 勾两块面板,一次开两条
+  await page.evaluate(() => [...document.querySelectorAll('.modal .batch-list input[type=checkbox]:not(:disabled)')].slice(0, 2).forEach((c) => c.click()));
+  await sleep(600);
   await clickText('经 SOCKS');
   await sleep(600);
 } });
