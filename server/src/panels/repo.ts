@@ -12,6 +12,9 @@ export interface Panel {
   checked_at: number | null;
   check_ok_at: number | null;
   check_error: string | null;
+  /** 连续失败了几次、第一次失败的时间(成功一次就清零 / 清空) */
+  check_fail_count: number;
+  check_fail_since: number | null;
   inbound_count: number | null;
   client_count: number | null;
   /** 最近一次检查读到的面板版本、Xray 内核版本和状态(running / stopped / error) */
@@ -127,6 +130,8 @@ export function deletePanel(db: DB, id: number, force = false): void {
        WHERE id IN (SELECT customer_id FROM lines WHERE panel_id = @id)`,
     ).run({ id });
     if (!db.prepare('DELETE FROM panels WHERE id = @id').run({ id }).changes) throw new InputError('面板不存在');
+    // 「发过连不上」的记录一起清掉,id 以后可能给新面板用
+    db.prepare('DELETE FROM notified WHERE key = ?').run(`panel_down:${id}`);
   })();
 }
 
@@ -137,11 +142,13 @@ export type CheckResult =
 export function recordCheck(db: DB, id: number, result: CheckResult, now = Date.now()): void {
   if (result.ok) {
     db.prepare(
-      `UPDATE panels SET checked_at = ?, check_ok_at = ?, check_error = NULL, inbound_count = ?, client_count = ?,
+      `UPDATE panels SET checked_at = ?, check_ok_at = ?, check_error = NULL, check_fail_count = 0, check_fail_since = NULL, inbound_count = ?, client_count = ?,
               panel_version = COALESCE(?, panel_version), xray_version = COALESCE(?, xray_version), xray_state = COALESCE(?, xray_state)
        WHERE id = ?`,
     ).run(now, now, result.inbounds, result.clients, result.panel_version ?? null, result.xray_version ?? null, result.xray_state ?? null, id);
   } else {
-    db.prepare('UPDATE panels SET checked_at = ?, check_error = ? WHERE id = ?').run(now, result.error.slice(0, 500), id);
+    db.prepare(
+      'UPDATE panels SET checked_at = ?, check_error = ?, check_fail_count = check_fail_count + 1, check_fail_since = COALESCE(check_fail_since, ?) WHERE id = ?',
+    ).run(now, result.error.slice(0, 500), now, id);
   }
 }

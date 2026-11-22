@@ -11,6 +11,8 @@ export interface Settings {
   notify: {
     /** 面板连不上 / 恢复 */
     panel_down: boolean;
+    /** 连续几次检查失败才算连不上(1 = 一失败就发) */
+    panel_down_after: number;
     /** 客户超额 / 到期被停用、恢复 */
     customer_disabled: boolean;
     /** 客户快到期(提前几天) */
@@ -47,7 +49,7 @@ export const DEFAULT_SETTINGS: Settings = {
   telegram: { token: '', chat_id: '' },
   webhook: { url: '' },
   feishu: { url: '', secret: '' },
-  notify: { panel_down: true, customer_disabled: true, expiring: true, expiring_days: 3, quota_warn: true, quota_warn_pct: 90, monthly_reset: true, sub_share: true, sub_share_ips: 5 },
+  notify: { panel_down: true, panel_down_after: 3, customer_disabled: true, expiring: true, expiring_days: 3, quota_warn: true, quota_warn_pct: 90, monthly_reset: true, sub_share: true, sub_share_ips: 5 },
   backup: { daily: false, remote: { endpoint: '', region: 'auto', bucket: '', access_key: '', secret_key: '', prefix: 'xui-hub', keep_days: 30 } },
 };
 
@@ -99,6 +101,7 @@ export function updateSettings(db: DB, input: any): Settings {
     },
     notify: {
       panel_down: bool(n.panel_down, cur.notify.panel_down),
+      panel_down_after: int(n.panel_down_after, cur.notify.panel_down_after, 1, 60, '连续失败次数'),
       customer_disabled: bool(n.customer_disabled, cur.notify.customer_disabled),
       expiring: bool(n.expiring, cur.notify.expiring),
       expiring_days: int(n.expiring_days, cur.notify.expiring_days, 1, 30, '提前天数'),

@@ -56,6 +56,28 @@ test('从没有订阅的旧版本升级:只补跑后面的迁移,老客户各补
   db.close();
 });
 
+test('升级到「连续失败才算掉线」:已经连不上的面板记成发过「连不上」,恢复时照常发「恢复」;好的面板不动', (t) => {
+  const file = tempFile(t);
+  mkdirSync(dirname(file), { recursive: true });
+  const before = MIGRATIONS.findIndex((m) => m.includes('ADD COLUMN check_fail_count'));
+  assert.ok(before > 0);
+  const old = new Database(file);
+  for (const sql of MIGRATIONS.slice(0, before)) old.exec(sql);
+  old.pragma(`user_version = ${before}`);
+  const add = old.prepare('INSERT INTO panels (name, base_url, token, created_at, checked_at, check_ok_at, check_error) VALUES (?, ?, ?, 1, ?, ?, ?)');
+  add.run('up', 'https://up.example', 't', 500, 500, null);
+  add.run('down', 'https://down.example', 't', 900, 300, '连接超时');
+  add.run('never', 'https://never.example', 't', 900, null, '连接超时');
+  old.close();
+
+  const db = openDb(file);
+  assert.equal(version(db), MIGRATIONS.length);
+  const rows = db.prepare('SELECT name, check_fail_count, check_fail_since FROM panels ORDER BY id').all() as any[];
+  assert.deepEqual(rows.map((r) => [r.name, r.check_fail_count, r.check_fail_since]), [['up', 0, null], ['down', 1, 300], ['never', 1, 900]]);
+  assert.deepEqual(db.prepare('SELECT key, at FROM notified ORDER BY key').all(), [{ key: 'panel_down:2', at: 300 }, { key: 'panel_down:3', at: 900 }]);
+  db.close();
+});
+
 test('meta:没存过返回 undefined,重复写是覆盖', () => {
   const db = openDb(':memory:');
   assert.equal(getMeta(db, 'k'), undefined);

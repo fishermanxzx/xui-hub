@@ -333,7 +333,7 @@ const en: Messages = {
     webhookPlaceholder: 'https://… each notification is POSTed as JSON:',
     tgNote: 'The server must be able to reach api.telegram.org.',
     events: 'What to notify',
-    evPanel: 'Panel unreachable / recovered',
+    evPanel: 'Panel unreachable / recovered: notify after {n} failed checks in a row (checked every minute by default; 1 = on the first failure). "Recovered" is sent only after an "unreachable"',
     evDisabled: 'Customer disabled for quota or expiry, and re-enabled',
     evExpiring: 'Customer about to expire: notify once {n} days before',
     evQuota: 'Notify once when a customer has used {n} % of the quota',

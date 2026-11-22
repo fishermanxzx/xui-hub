@@ -331,7 +331,7 @@ export default {
     webhookPlaceholder: 'https://… 每条通知 POST 一份 JSON:',
     tgNote: '服务器要能访问 api.telegram.org。',
     events: '提醒哪些事',
-    evPanel: '面板连不上 / 恢复',
+    evPanel: '面板连不上 / 恢复:连续 {n} 次检查失败才发(默认每分钟查一次,填 1 = 一失败就发);发过「连不上」的才发「恢复」',
     evDisabled: '客户超额 / 到期被停用,以及恢复',
     evExpiring: '客户快到期:提前 {n} 天提醒一次',
     evQuota: '客户流量用到额度的 {n} % 时提醒一次',

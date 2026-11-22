@@ -217,7 +217,7 @@ async function restore() {
     <section class="sheet block">
       <h3>{{ t('settings.events') }}</h3>
       <div class="checks">
-        <label class="row small"><input v-model="s.notify.panel_down" type="checkbox" />{{ t('settings.evPanel') }}</label>
+        <label class="row small"><input v-model="s.notify.panel_down" type="checkbox" /><i18n-t keypath="settings.evPanel" tag="span" scope="global"><template #n><input v-model.number="s.notify.panel_down_after" type="number" min="1" max="60" class="num" /></template></i18n-t></label>
         <label class="row small"><input v-model="s.notify.customer_disabled" type="checkbox" />{{ t('settings.evDisabled') }}</label>
         <label class="row small"><input v-model="s.notify.expiring" type="checkbox" /><i18n-t keypath="settings.evExpiring" tag="span" scope="global"><template #n><input v-model.number="s.notify.expiring_days" type="number" min="1" max="30" class="num" /></template></i18n-t></label>
         <label class="row small"><input v-model="s.notify.quota_warn" type="checkbox" /><i18n-t keypath="settings.evQuota" tag="span" scope="global"><template #n><input v-model.number="s.notify.quota_warn_pct" type="number" min="50" max="99" class="num" /></template></i18n-t></label>

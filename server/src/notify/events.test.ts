@@ -1,28 +1,74 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { addLine, createCustomer, listCustomers, updateLineStats } from '../customers/repo';
-import { getPanel, recordCheck } from '../panels/repo';
+import { deletePanel, getPanel, recordCheck } from '../panels/repo';
 import { DEFAULT_SETTINGS } from '../settings';
 import { addPanel, memoryDb } from '../testUtil';
-import { enforceEvents, panelEvents, thresholdEvents } from './events';
+import { aboutDuration, enforceEvents, panelEvents, thresholdEvents } from './events';
 import { broadcast, channelsFor, type Message } from './send';
 
-test('面板掉线 / 恢复:只在状态变化时提醒', () => {
+/** 模拟一轮检查:先记下检查前的面板,检查完算通知 */
+function round(db: ReturnType<typeof memoryDb>, id: number, ok: boolean, now: number, downAfter: number) {
+  const before = [getPanel(db, id)!];
+  recordCheck(db, id, ok ? { ok: true, inbounds: 1, clients: 1 } : { ok: false, error: '连接超时' }, now);
+  return panelEvents(db, before, [getPanel(db, id)!], downAfter, now).map((m) => [m.event, m.title, m.text]);
+}
+const MIN = 60_000;
+
+test('面板掉线:连续失败够次数才发「连不上」,发过的恢复时才发「恢复正常」', () => {
   const db = memoryDb();
   const p = addPanel(db, 'a');
-  const before = [getPanel(db, p.id)!];
-  recordCheck(db, p.id, { ok: false, error: '连接失败' });
-  const down = panelEvents(before, [getPanel(db, p.id)!], 1);
-  assert.deepEqual(down.map((m) => [m.event, m.title, m.text]), [['panel_down', '面板「a」连不上', '连接失败']]);
+  const t0 = 1_000_000_000_000;
+  assert.deepEqual(round(db, p.id, false, t0, 3), []);
+  assert.deepEqual(round(db, p.id, false, t0 + MIN, 3), []);
+  assert.deepEqual(round(db, p.id, false, t0 + 2 * MIN, 3), [['panel_down', '面板「a」连不上', '连接超时\n连续 3 次检查失败,已经约 2 分钟']]);
   // 还是坏的:不重复
-  assert.deepEqual(panelEvents([getPanel(db, p.id)!], [getPanel(db, p.id)!], 2), []);
-  const bad = [getPanel(db, p.id)!];
-  recordCheck(db, p.id, { ok: true, inbounds: 1, clients: 1 });
-  assert.deepEqual(panelEvents(bad, [getPanel(db, p.id)!], 3).map((m) => m.event), ['panel_up']);
-  // 新加的面板第一次检查就失败:不算「掉线」
+  assert.deepEqual(round(db, p.id, false, t0 + 3 * MIN, 3), []);
+  assert.equal(getPanel(db, p.id)!.check_fail_count, 4);
+  assert.deepEqual(round(db, p.id, true, t0 + 70 * MIN, 3), [['panel_up', '面板「a」恢复正常', '断了约 1 小时 10 分钟,连续 4 次检查失败\n之前:连接超时']]);
+  assert.deepEqual([getPanel(db, p.id)!.check_fail_count, getPanel(db, p.id)!.check_fail_since], [0, null]);
+  assert.deepEqual(round(db, p.id, true, t0 + 71 * MIN, 3), []);
+});
+
+test('面板掉线:没到次数就恢复的,两条都不发;中间成功一次就重新数', () => {
+  const db = memoryDb();
+  const p = addPanel(db, 'a');
+  const t0 = 1_000_000_000_000;
+  assert.deepEqual(round(db, p.id, false, t0, 3), []);
+  assert.deepEqual(round(db, p.id, false, t0 + MIN, 3), []);
+  assert.deepEqual(round(db, p.id, true, t0 + 2 * MIN, 3), []);
+  assert.deepEqual(round(db, p.id, false, t0 + 3 * MIN, 3), []);
+  assert.deepEqual(round(db, p.id, false, t0 + 4 * MIN, 3), []);
+  assert.deepEqual(round(db, p.id, true, t0 + 5 * MIN, 3), []);
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM notified WHERE key LIKE 'panel%'").get() as { n: number }).n, 0);
+});
+
+test('面板掉线:次数填 1 = 一失败就发(和以前一样),第一次失败不带次数', () => {
+  const db = memoryDb();
+  const p = addPanel(db, 'a');
+  const t0 = 1_000_000_000_000;
+  assert.deepEqual(round(db, p.id, false, t0, 1), [['panel_down', '面板「a」连不上', '连接超时']]);
+  assert.deepEqual(round(db, p.id, true, t0 + MIN, 1), [['panel_up', '面板「a」恢复正常', '断了约 1 分钟\n之前:连接超时']]);
+});
+
+test('面板掉线:发过的记在库里,重启后照样发「恢复」;次数改大了已经发过的不受影响;删面板清记录', () => {
+  const db = memoryDb();
+  const p = addPanel(db, 'a');
   const q = addPanel(db, 'b');
-  recordCheck(db, q.id, { ok: false, error: 'x' });
-  assert.deepEqual(panelEvents(bad, [getPanel(db, q.id)!], 4), []);
+  const t0 = 1_000_000_000_000;
+  for (let i = 0; i < 3; i++) round(db, p.id, false, t0 + i * MIN, 3);
+  // 「重启」:内存里什么都没有,检查前的面板从库里读
+  assert.deepEqual(round(db, p.id, false, t0 + 3 * MIN, 10), []);
+  assert.deepEqual(round(db, p.id, true, t0 + 4 * MIN, 10).map((m) => m[0]), ['panel_up']);
+  // 恢复的是 a,b 的记录不动(id 前缀相同也不误删)
+  for (let i = 0; i < 3; i++) round(db, q.id, false, t0 + i * MIN, 3);
+  assert.ok(db.prepare('SELECT 1 FROM notified WHERE key = ?').get(`panel_down:${q.id}`));
+  deletePanel(db, q.id);
+  assert.equal(db.prepare('SELECT 1 FROM notified WHERE key = ?').get(`panel_down:${q.id}`), undefined);
+});
+
+test('时长的说法', () => {
+  assert.deepEqual([20_000, 5 * MIN, 60 * MIN, 125 * MIN, 26 * 60 * MIN, 48 * 60 * MIN].map(aboutDuration), ['不到 1 分钟', '约 5 分钟', '约 1 小时', '约 2 小时 5 分钟', '约 1 天 2 小时', '约 2 天']);
 });
 
 test('停用 / 恢复按客户汇总;快到期和流量预警各只提醒一次,到期日 / 额度变了再提醒', () => {

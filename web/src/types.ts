@@ -300,6 +300,7 @@ export interface Settings {
   feishu: { url: string; secret: string };
   notify: {
     panel_down: boolean;
+    panel_down_after: number;
     customer_disabled: boolean;
     expiring: boolean;
     expiring_days: number;
