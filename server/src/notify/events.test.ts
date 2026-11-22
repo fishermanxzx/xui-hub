@@ -4,7 +4,7 @@ import { addLine, createCustomer, listCustomers, updateLineStats } from '../cust
 import { deletePanel, getPanel, recordCheck } from '../panels/repo';
 import { DEFAULT_SETTINGS } from '../settings';
 import { addPanel, memoryDb } from '../testUtil';
-import { aboutDuration, enforceEvents, panelEvents, thresholdEvents } from './events';
+import { aboutDuration, enforceEvents, panelEvents, panelLabel, thresholdEvents } from './events';
 import { broadcast, channelsFor, type Message } from './send';
 
 /** 模拟一轮检查:先记下检查前的面板,检查完算通知 */
@@ -21,11 +21,11 @@ test('面板掉线:连续失败够次数才发「连不上」,发过的恢复时
   const t0 = 1_000_000_000_000;
   assert.deepEqual(round(db, p.id, false, t0, 3), []);
   assert.deepEqual(round(db, p.id, false, t0 + MIN, 3), []);
-  assert.deepEqual(round(db, p.id, false, t0 + 2 * MIN, 3), [['panel_down', '面板「a」连不上', '连接超时\n连续 3 次检查失败,已经约 2 分钟']]);
+  assert.deepEqual(round(db, p.id, false, t0 + 2 * MIN, 3), [['panel_down', '面板「a」(a.example)连不上', '连接超时\n连续 3 次检查失败,已经约 2 分钟']]);
   // 还是坏的:不重复
   assert.deepEqual(round(db, p.id, false, t0 + 3 * MIN, 3), []);
   assert.equal(getPanel(db, p.id)!.check_fail_count, 4);
-  assert.deepEqual(round(db, p.id, true, t0 + 70 * MIN, 3), [['panel_up', '面板「a」恢复正常', '断了约 1 小时 10 分钟,连续 4 次检查失败\n之前:连接超时']]);
+  assert.deepEqual(round(db, p.id, true, t0 + 70 * MIN, 3), [['panel_up', '面板「a」(a.example)恢复正常', '断了约 1 小时 10 分钟,连续 4 次检查失败\n之前:连接超时']]);
   assert.deepEqual([getPanel(db, p.id)!.check_fail_count, getPanel(db, p.id)!.check_fail_since], [0, null]);
   assert.deepEqual(round(db, p.id, true, t0 + 71 * MIN, 3), []);
 });
@@ -47,8 +47,8 @@ test('面板掉线:次数填 1 = 一失败就发(和以前一样),第一次失�
   const db = memoryDb();
   const p = addPanel(db, 'a');
   const t0 = 1_000_000_000_000;
-  assert.deepEqual(round(db, p.id, false, t0, 1), [['panel_down', '面板「a」连不上', '连接超时']]);
-  assert.deepEqual(round(db, p.id, true, t0 + MIN, 1), [['panel_up', '面板「a」恢复正常', '断了约 1 分钟\n之前:连接超时']]);
+  assert.deepEqual(round(db, p.id, false, t0, 1), [['panel_down', '面板「a」(a.example)连不上', '连接超时']]);
+  assert.deepEqual(round(db, p.id, true, t0 + MIN, 1), [['panel_up', '面板「a」(a.example)恢复正常', '断了约 1 分钟\n之前:连接超时']]);
 });
 
 test('面板掉线:发过的记在库里,重启后照样发「恢复」;次数改大了已经发过的不受影响;删面板清记录', () => {
@@ -65,6 +65,14 @@ test('面板掉线:发过的记在库里,重启后照样发「恢复」;次数�
   assert.ok(db.prepare('SELECT 1 FROM notified WHERE key = ?').get(`panel_down:${q.id}`));
   deletePanel(db, q.id);
   assert.equal(db.prepare('SELECT 1 FROM notified WHERE key = ?').get(`panel_down:${q.id}`), undefined);
+});
+
+test('通知里的面板带上地址:IP / IPv6 / 域名;名字里已经有就不重复', () => {
+  assert.equal(panelLabel({ name: 'hk-1', base_url: 'https://192.0.2.10:2053/path' }), '「hk-1」(192.0.2.10)');
+  assert.equal(panelLabel({ name: 'v6', base_url: 'https://[2001:db8::1]:2053/' }), '「v6」(2001:db8::1)');
+  assert.equal(panelLabel({ name: 'jp', base_url: 'https://jp.example:2053' }), '「jp」(jp.example)');
+  assert.equal(panelLabel({ name: 'us-192.0.2.10', base_url: 'https://192.0.2.10:2053' }), '「us-192.0.2.10」');
+  assert.equal(panelLabel({ name: 'bad', base_url: 'not a url' }), '「bad」');
 });
 
 test('时长的说法', () => {
