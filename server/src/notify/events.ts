@@ -1,5 +1,5 @@
 // 每轮同步后看看有什么要提醒的:面板掉线 / 恢复、客户被停用 / 恢复、快到期、流量快用完、按月清零。
-// 同一件事只提醒一次(notified 表记 key);面板掉线 / 恢复按状态变化判断,不用记。
+// 同一件事只提醒一次(notified 表记 key);面板掉线记成 panel_down:<id>,恢复时清掉。
 
 import { type CustomerView, listCustomers } from '../customers/repo';
 import type { DB } from '../db';
@@ -15,6 +15,10 @@ export function alreadyNotified(db: DB, key: string): boolean {
 
 export function markNotified(db: DB, key: string, now = Date.now()): void {
   db.prepare('INSERT OR REPLACE INTO notified (key, at) VALUES (?, ?)').run(key, now);
+}
+
+export function unmarkNotified(db: DB, key: string): void {
+  db.prepare('DELETE FROM notified WHERE key = ?').run(key);
 }
 
 /** 清掉某个前缀的记录(流量清零后「用到 90%」要能再提醒) */
@@ -35,15 +39,42 @@ const fmtDate = (ms: number) => {
 };
 const STATE: Record<string, string> = { expired: '已到期', over_quota: '已超额' };
 
-/** 面板连通性变化:上一轮正常这轮连不上(或反过来) */
-export function panelEvents(before: Panel[], after: Panel[], now: number): Message[] {
-  const prev = new Map(before.map((p) => [p.id, p.check_error]));
+/** 一段时长的大概说法:不到 1 分钟 / 约 12 分钟 / 约 2 小时 5 分钟 / 约 3 天 4 小时 */
+export function aboutDuration(ms: number): string {
+  const min = Math.round(ms / 60_000);
+  if (min < 1) return '不到 1 分钟';
+  if (min < 60) return `约 ${min} 分钟`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `约 ${h} 小时${min % 60 ? ` ${min % 60} 分钟` : ''}`;
+  return `约 ${Math.floor(h / 24)} 天${h % 24 ? ` ${h % 24} 小时` : ''}`;
+}
+
+/**
+ * 面板连不上 / 恢复。连续 downAfter 次检查失败才发「连不上」(1 = 一失败就发);
+ * 只有发过「连不上」的,恢复时才发「恢复正常」,没到次数就好了的两条都不发。
+ * 发没发过记在 notified 表(panel_down:<面板 id>,at = 第一次失败的时间),进程重启后照样接得上。
+ * before 是这轮检查之前的面板,用来在「恢复」里说之前是什么错、连续失败了几次。
+ */
+export function panelEvents(db: DB, before: Panel[], panels: Panel[], downAfter: number, now: number): Message[] {
+  const prev = new Map(before.map((p) => [p.id, p]));
+  const sentAt = db.prepare('SELECT at FROM notified WHERE key = ?');
   const out: Message[] = [];
-  for (const p of after) {
-    if (!prev.has(p.id)) continue;
-    const was = prev.get(p.id);
-    if (!was && p.check_error) out.push({ event: 'panel_down', title: `面板「${p.name}」连不上`, text: p.check_error, at: now });
-    else if (was && !p.check_error) out.push({ event: 'panel_up', title: `面板「${p.name}」恢复正常`, text: `之前:${was}`, at: now });
+  for (const p of panels) {
+    const key = `panel_down:${p.id}`;
+    const sent = sentAt.get(key) as { at: number } | undefined;
+    if (p.check_error) {
+      if (sent || p.check_fail_count < downAfter) continue;
+      const since = p.check_fail_since ?? now;
+      markNotified(db, key, since);
+      const streak = p.check_fail_count > 1 ? `\n连续 ${p.check_fail_count} 次检查失败,已经${aboutDuration(now - since)}` : '';
+      out.push({ event: 'panel_down', title: `面板「${p.name}」连不上`, text: p.check_error + streak, at: now });
+    } else if (sent) {
+      unmarkNotified(db, key);
+      const was = prev.get(p.id);
+      const lines = [`断了${aboutDuration(now - sent.at)}` + (was && was.check_fail_count > 1 ? `,连续 ${was.check_fail_count} 次检查失败` : '')];
+      if (was?.check_error) lines.push(`之前:${was.check_error}`);
+      out.push({ event: 'panel_up', title: `面板「${p.name}」恢复正常`, text: lines.join('\n'), at: now });
+    }
   }
   return out;
 }

@@ -15,6 +15,14 @@ test('设置:默认值;没传的字段不动;token / 地址 / 数字有校验', 
   assert.throws(() => updateSettings(db, { telegram: { token: 'nope' } }), /Bot token 格式不对/);
   assert.throws(() => updateSettings(db, { webhook: { url: 'ftp://x' } }), /http/);
   assert.throws(() => updateSettings(db, { notify: { quota_warn_pct: 10 } }), /50 到 99/);
+  // 面板连续失败几次才算连不上:默认 3,1 到 60
+  assert.equal(getSettings(db).notify.panel_down_after, 3);
+  assert.equal(updateSettings(db, { notify: { panel_down_after: 1 } }).notify.panel_down_after, 1);
+  assert.throws(() => updateSettings(db, { notify: { panel_down_after: 0 } }), /连续失败次数只能是 1 到 60/);
+  assert.throws(() => updateSettings(db, { notify: { panel_down_after: 2.5 } }), /1 到 60/);
+  // 存着的老设置里没有这项:按默认 3
+  db.prepare("UPDATE meta SET value = json_remove(value, '$.notify.panel_down_after') WHERE key = 'settings'").run();
+  assert.deepEqual([getSettings(db).notify.panel_down_after, getSettings(db).notify.expiring_days], [3, 7]);
   // 清空
   assert.equal(updateSettings(db, { telegram: { token: '' } }).telegram.token, '');
 });

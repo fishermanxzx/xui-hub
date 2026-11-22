@@ -26,7 +26,7 @@ import { mihomoTemplateMatcher } from './subscription/mihomo';
 import { defaultFetcher } from './subscription/service';
 import { enforceCustomers } from './lines/enforce';
 import { runMonthlyResets } from './lines/reset';
-import { alreadyNotified, enforceEvents, markNotified, panelEvents, pruneNotified, resetEvent, shareEvents, thresholdEvents } from './notify/events';
+import { alreadyNotified, enforceEvents, forgetNotified, markNotified, panelEvents, pruneNotified, resetEvent, shareEvents, thresholdEvents } from './notify/events';
 import { broadcast, channelsFor, type Message } from './notify/send';
 import { checkAllPanels } from './panels/check';
 import { listPanels, type Panel } from './panels/repo';
@@ -169,7 +169,10 @@ const check = noOverlap(async () => {
     const settings = getSettings(db).notify;
     const before = listPanels(db);
     const after = await checkAllPanels(db, clientFor);
-    const messages: Message[] = settings.panel_down ? panelEvents(before, after, now) : [];
+    const messages: Message[] = [];
+    // 关着时不记「发过连不上」,重新打开后按当时的状态算
+    if (settings.panel_down) messages.push(...panelEvents(db, before, after, settings.panel_down_after, now));
+    else forgetNotified(db, 'panel_down:');
     for (const r of await runMonthlyResets(db, clientFor, now)) {
       console.log(`按月清零 ${r.customer.name}${r.failed.length ? `,${r.failed.length} 个客户端没清成` : ''}`);
       if (settings.monthly_reset) messages.push(resetEvent(r.customer, r.failed.length, now));

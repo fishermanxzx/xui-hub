@@ -278,6 +278,14 @@ export const MIGRATIONS: string[] = [
   -- 线路上次在 xui-hub 里清零的时间:清零前读到的面板计数不再写回(不然会被当成面板上清零了而结转)
   ALTER TABLE lines ADD COLUMN zeroed_at INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- 面板连续检查失败的次数和第一次失败的时间(成功一次就清零):连续失败够设置里的次数才发「连不上」
+  ALTER TABLE panels ADD COLUMN check_fail_count INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE panels ADD COLUMN check_fail_since INTEGER;
+  -- 升级时已经连不上的面板:旧版本一失败就发了「连不上」,这里记成发过,恢复时照常发「恢复正常」
+  UPDATE panels SET check_fail_count = 1, check_fail_since = COALESCE(check_ok_at, checked_at) WHERE check_error IS NOT NULL;
+  INSERT OR IGNORE INTO notified (key, at) SELECT 'panel_down:' || id, COALESCE(check_ok_at, checked_at, 0) FROM panels WHERE check_error IS NOT NULL;
+  `,
 ];
 
 export function openDb(file: string): DB {
