@@ -107,6 +107,13 @@ export default {
     excludeN: '排除 {n} 块面板',
     excludedNote: '没算 {list} 上的流量:合计、每天的走势、按客户(客户在这些面板上的线路)、按面板都不算。只是统计时跳过,记录照常保留,取消排除就回来。排除哪些记在这个浏览器里。',
   },
+  customerTraffic: {
+    peak: '峰值',
+    byLine: '各条线路',
+    line: '线路',
+    note: '和「流量」页按客户的统计是同一份:每分钟同步面板时记下,按天汇总(服务器时区),保留一年;线路删了,之前用的照样算在这位客户名下。',
+    ratioNote: '这里是实际流量,没乘倍率 ×{v}。',
+  },
   version: {
     dev: '开发版',
     checkFailed: '检查更新失败:{error}',
@@ -538,6 +545,8 @@ export default {
     nextReset: '每月重置流量 · 下次 {date}',
     openLine: '开线路',
     topology: '网络拓扑',
+    trafficTrend: '流量趋势',
+    trafficTrendTitle: '「{name}」的流量趋势',
     resetUsage: '清零流量',
     sub: '订阅',
     subAria: '订阅链接',

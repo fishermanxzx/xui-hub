@@ -7,6 +7,7 @@ import ClientLinks from '../components/ClientLinks.vue';
 import TopologyGraph from '../components/TopologyGraph.vue';
 import GeoField from '../components/GeoField.vue';
 import Modal from '../components/Modal.vue';
+import CustomerTraffic from '../components/CustomerTraffic.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import MultiSelect from '../components/MultiSelect.vue';
 import { CUSTOMER_SORTS, CUSTOMER_STATES, matchState, queryCustomers, usesPanel, type CustomerQuery, type CustomerSort } from '../customerQuery';
@@ -245,6 +246,8 @@ async function syncNow() {
 
 /** 拓扑弹窗 */
 const topoFor = ref<Customer | null>(null);
+/** 流量趋势弹窗 */
+const trafficFor = ref<Customer | null>(null);
 
 // ---------- 订阅 ----------
 const qrFor = ref<Customer | null>(null);
@@ -902,6 +905,7 @@ function exitText(l: Line): string {
         <div class="ops">
           <button class="primary small-btn" :disabled="!panels.length" @click="openLineFor(c)">{{ t('customers.openLine') }}</button>
           <button class="link" :disabled="!c.lines.length" @click="topoFor = c">{{ t('customers.topology') }}</button>
+          <button class="link" @click="trafficFor = c">{{ t('customers.trafficTrend') }}</button>
           <button class="link" :disabled="!c.lines.length" @click="resetUsage(c)">{{ t('customers.resetUsage') }}</button>
           <button class="link" @click="openForm(c)">{{ t('common.edit') }}</button>
           <button class="link danger" @click="remove(c)">{{ t('common.delete') }}</button>
@@ -1276,6 +1280,10 @@ function exitText(l: Line): string {
       </table>
     </div>
     <p class="muted small">{{ t('customers.fetchesNote') }}</p>
+  </Modal>
+
+  <Modal v-if="trafficFor" :title="t('customers.trafficTrendTitle', { name: trafficFor.name })" wide @close="trafficFor = null">
+    <CustomerTraffic :customer="trafficFor" />
   </Modal>
 
   <Modal v-if="topoFor" :title="t('customers.topoTitle', { name: topoFor.name })" wide @close="topoFor = null">
