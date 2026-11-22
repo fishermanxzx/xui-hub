@@ -1,6 +1,8 @@
 // 3x-ui v3 面板 API 客户端。鉴权:Authorization: Bearer <token>。
 // undici 直连面板,不读 shell 的代理变量;面板多为自签证书,不校验 TLS。
 
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { Agent, fetch, type Dispatcher } from 'undici';
 
 export class XUIError extends Error {
@@ -144,6 +146,11 @@ export class XUIClient {
     await this.req('POST', `/inbounds/del/${id}`);
   }
 
+  /** 面板地址的 IP:地址本身是 IP 就是它,域名就解析(优先 IPv4);解析不出来返回 null */
+  hostIp(timeoutMs = 5000): Promise<string | null> {
+    return resolveHostIp(new URL(this.conn.base_url).hostname, timeoutMs);
+  }
+
   /** 面板版本、Xray 内核版本与运行状态(/server/status 的一小部分) */
   async serverStatus(): Promise<{ panelVersion: string; xrayVersion: string; xrayState: string; xrayError: string }> {
     const s = await this.req<any>('GET', '/server/status');
@@ -248,5 +255,23 @@ export class XUIClient {
   async panelCert(): Promise<{ certFile: string; keyFile: string }> {
     const s = await this.req<any>('POST', '/setting/all');
     return { certFile: String(s?.webCertFile ?? ''), keyFile: String(s?.webKeyFile ?? '') };
+  }
+}
+
+/** 主机名 → IP:本身是 IP(含 [IPv6])直接返回;域名用系统解析,多个地址时优先 IPv4,超时或失败返回 null */
+export async function resolveHostIp(hostname: string, timeoutMs = 5000): Promise<string | null> {
+  const host = hostname.replace(/^\[|\]$/g, '');
+  if (isIP(host)) return host;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const all = await Promise.race([
+      lookup(host, { all: true }),
+      new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error('timeout')), timeoutMs))),
+    ]);
+    return (all.find((a) => a.family === 4) ?? all[0])?.address ?? null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }

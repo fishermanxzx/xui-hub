@@ -21,6 +21,8 @@ export interface Panel {
   panel_version: string | null;
   xray_version: string | null;
   xray_state: string | null;
+  /** 面板地址解析出的 IP(地址本身是 IP 就是它),null = 还没解析到 */
+  ip: string | null;
   /** 月成本,null = 没填 */
   monthly_cost: number | null;
   /** 到期时间(毫秒),0 = 没填 / 不限期 */
@@ -106,9 +108,12 @@ export function updatePanel(db: DB, id: number, patch: PanelInput): Panel {
   const name = patch.name !== undefined ? patch.name.trim() : current.name;
   if (!name) throw new InputError('面板名称不能为空');
   if (name !== current.name && db.prepare('SELECT 1 FROM panels WHERE name = ?').get(name)) throw new InputError(`面板名称已存在:${name}`);
-  db.prepare('UPDATE panels SET name = ?, base_url = ?, token = ?, monthly_cost = ?, expire_at = ? WHERE id = ?').run(
+  const baseUrl = patch.base_url !== undefined ? normalizeBaseUrl(patch.base_url) : current.base_url;
+  // 地址换了主机,旧 IP 不算数,下次检查再解析
+  const hostChanged = new URL(baseUrl).hostname !== new URL(current.base_url).hostname;
+  db.prepare(`UPDATE panels SET name = ?, base_url = ?, token = ?, monthly_cost = ?, expire_at = ?${hostChanged ? ', ip = NULL' : ''} WHERE id = ?`).run(
     name,
-    patch.base_url !== undefined ? normalizeBaseUrl(patch.base_url) : current.base_url,
+    baseUrl,
     patch.token?.trim() || current.token, // 留空表示不修改 token
     patch.monthly_cost !== undefined ? validCost(patch.monthly_cost) : current.monthly_cost,
     patch.expire_at !== undefined ? validExpire(patch.expire_at) : current.expire_at,
@@ -133,6 +138,10 @@ export function deletePanel(db: DB, id: number, force = false): void {
     // 「发过连不上」的记录一起清掉,id 以后可能给新面板用
     db.prepare('DELETE FROM notified WHERE key = ?').run(`panel_down:${id}`);
   })();
+}
+
+export function recordIp(db: DB, id: number, ip: string): void {
+  db.prepare('UPDATE panels SET ip = ? WHERE id = ?').run(ip, id);
 }
 
 export type CheckResult =

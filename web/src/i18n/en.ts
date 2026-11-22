@@ -250,6 +250,7 @@ const en: Messages = {
     restartHint: 'Restart the panel and the Xray core',
     openPanel: 'Open panel',
     openPanelHint: 'Requires the panel\'s own username and password',
+    ipHint: 'IP the panel address resolves to, refreshed on every check',
     loadFailed: 'Failed to read the panel: {error}',
     retry: 'Retry',
     loadingDetail: 'Reading inbounds and clients…',

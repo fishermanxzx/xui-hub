@@ -49,12 +49,14 @@ export function aboutDuration(ms: number): string {
   return `约 ${Math.floor(h / 24)} 天${h % 24 ? ` ${h % 24} 小时` : ''}`;
 }
 
-/** 通知里的面板:「名字」(IP),地址是域名就写域名;名字里已经有这个地址就不重复 */
-export function panelLabel(p: Pick<Panel, 'name' | 'base_url'>): string {
-  let host = '';
-  try {
-    host = new URL(p.base_url).hostname.replace(/^\[|\]$/g, '');
-  } catch {}
+/** 通知里的面板:「名字」(IP)。用检查时解析出的 IP,还没有就用地址里的主机名;名字里已经有就不重复 */
+export function panelLabel(p: Pick<Panel, 'name' | 'base_url'> & { ip?: string | null }): string {
+  let host = p.ip ?? '';
+  if (!host) {
+    try {
+      host = new URL(p.base_url).hostname.replace(/^\[|\]$/g, '');
+    } catch {}
+  }
   return host && !p.name.includes(host) ? `「${p.name}」(${host})` : `「${p.name}」`;
 }
 

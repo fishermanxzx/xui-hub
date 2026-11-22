@@ -67,12 +67,14 @@ test('面板掉线:发过的记在库里,重启后照样发「恢复」;次数�
   assert.equal(db.prepare('SELECT 1 FROM notified WHERE key = ?').get(`panel_down:${q.id}`), undefined);
 });
 
-test('通知里的面板带上地址:IP / IPv6 / 域名;名字里已经有就不重复', () => {
+test('通知里的面板带上 IP:解析出的 IP 优先,没有就用地址里的 IP / IPv6 / 域名;名字里已经有就不重复', () => {
   assert.equal(panelLabel({ name: 'hk-1', base_url: 'https://192.0.2.10:2053/path' }), '「hk-1」(192.0.2.10)');
   assert.equal(panelLabel({ name: 'v6', base_url: 'https://[2001:db8::1]:2053/' }), '「v6」(2001:db8::1)');
   assert.equal(panelLabel({ name: 'jp', base_url: 'https://jp.example:2053' }), '「jp」(jp.example)');
   assert.equal(panelLabel({ name: 'us-192.0.2.10', base_url: 'https://192.0.2.10:2053' }), '「us-192.0.2.10」');
   assert.equal(panelLabel({ name: 'bad', base_url: 'not a url' }), '「bad」');
+  // 检查时解析出的 IP 优先(地址是域名时)
+  assert.equal(panelLabel({ name: 'jp', base_url: 'https://jp.example:2053', ip: '192.0.2.20' }), '「jp」(192.0.2.20)');
 });
 
 test('时长的说法', () => {

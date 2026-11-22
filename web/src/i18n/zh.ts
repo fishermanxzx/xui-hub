@@ -248,6 +248,7 @@ export default {
     restartHint: '重启面板和 Xray 内核',
     openPanel: '打开面板',
     openPanelHint: '需要用面板的账号密码登录',
+    ipHint: '面板地址解析出的 IP,每次检查时更新',
     loadFailed: '读取面板失败:{error}',
     retry: '重试',
     loadingDetail: '正在读取入站和客户端…',

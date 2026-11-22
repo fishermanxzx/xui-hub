@@ -8,7 +8,7 @@ import type { DB } from '../db';
 import { recordTraffic } from '../traffic/daily';
 import { errorText, mapLimit, using } from '../util';
 import { normalizeClients } from '../xui/normalize';
-import { getPanel, listPanels, recordCheck, type Panel } from './repo';
+import { getPanel, listPanels, recordCheck, recordIp, type Panel } from './repo';
 
 export interface PanelProbe {
   listInbounds(): Promise<any[]>;
@@ -17,11 +17,15 @@ export interface PanelProbe {
   serverStatus?(): Promise<{ panelVersion: string; xrayVersion: string; xrayState: string; xrayError: string }>;
   /** 可选:Xray 配置(看线路实际从哪些出口出去),读不到不算检查失败 */
   xraySettings?(): Promise<unknown>;
+  /** 可选:面板地址的 IP(域名就解析),拿不到返回 null,不影响检查 */
+  hostIp?(): Promise<string | null>;
   close?(): Promise<void>;
 }
 
 export function checkPanel(db: DB, panel: Panel, probe: PanelProbe, now = Date.now()): Promise<Panel> {
   return using(probe, async () => {
+    // 和读面板同时解析;连不上时也记,通知里好知道是哪台
+    const ip = probe.hostIp?.().catch(() => null);
     try {
       // 这块面板上有线路时才读 Xray 配置
       const hasLines = linesOnPanel(db, panel.id).length > 0;
@@ -51,6 +55,8 @@ export function checkPanel(db: DB, panel: Panel, probe: PanelProbe, now = Date.n
     } catch (e) {
       recordCheck(db, panel.id, { ok: false, error: errorText(e) }, now);
     }
+    const resolved = await ip;
+    if (resolved) recordIp(db, panel.id, resolved);
     return getPanel(db, panel.id) ?? panel;
   });
 }

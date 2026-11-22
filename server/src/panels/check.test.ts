@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import { addLine, createCustomer, getCustomer, getLine, updateLineStats, zeroLineTraffic } from '../customers/repo';
 import { createSocks } from '../socks/repo';
 import { addPanel, memoryDb, vlessInbound } from '../testUtil';
-import { XUIError } from '../xui/client';
+import { XUIError, resolveHostIp } from '../xui/client';
 import { checkAllPanels, checkPanel, type PanelProbe } from './check';
-import { getPanel } from './repo';
+import { getPanel, updatePanel } from './repo';
 
 const status = (over: Partial<{ panelVersion: string; xrayVersion: string; xrayState: string }> = {}) => ({ panelVersion: '3.0.0', xrayVersion: '25.1.1', xrayState: 'running', xrayError: '', ...over });
 const timeout = async () => Promise.reject(new XUIError('连接失败:超时'));
@@ -45,6 +45,26 @@ test('检查面板:成功记下数量、版本和 Xray 状态并清掉上次的�
 
   const again = await checkPanel(db, a, fakeProbe([], { listClients: async () => Promise.reject(new Error('boom')) }), 300);
   assert.deepEqual([again.checked_at, again.check_ok_at, again.check_error, again.client_count, again.xray_version], [300, 200, 'boom', 2, '25.1.1']);
+});
+
+test('检查时记下面板地址的 IP:连不上也记;解析不出来留着上次的;地址换了主机清掉,等下次检查', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  assert.equal(getPanel(db, a.id)!.ip, null);
+  assert.equal((await checkPanel(db, a, fakeProbe([], { hostIp: async () => '192.0.2.7' }), 100)).ip, '192.0.2.7');
+  const down = await checkPanel(db, a, fakeProbe([], { listInbounds: timeout, hostIp: async () => '192.0.2.8' }), 200);
+  assert.deepEqual([down.ip, !!down.check_error], ['192.0.2.8', true]);
+  assert.equal((await checkPanel(db, a, fakeProbe([], { hostIp: async () => null }), 300)).ip, '192.0.2.8');
+  assert.equal((await checkPanel(db, a, fakeProbe([], { hostIp: async () => Promise.reject(new Error('x')) }), 400)).ip, '192.0.2.8');
+  // 只改端口 / 路径:IP 还算数;换了主机:清掉
+  assert.equal(updatePanel(db, a.id, { base_url: 'https://a.example:2096/other' }).ip, '192.0.2.8');
+  assert.equal(updatePanel(db, a.id, { base_url: 'https://b.example:2096/other' }).ip, null);
+});
+
+test('解析面板地址:本身是 IP(含 IPv6)直接用,域名走系统解析且优先 IPv4', async () => {
+  assert.equal(await resolveHostIp('192.0.2.1'), '192.0.2.1');
+  assert.equal(await resolveHostIp('[2001:db8::1]'), '2001:db8::1');
+  assert.equal(await resolveHostIp('localhost'), '127.0.0.1');
 });
 
 test('读不到面板版本不算检查失败:沿用上次记的;读到了但 Xray 状态为空记成 unknown', async () => {
