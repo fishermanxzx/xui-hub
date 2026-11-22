@@ -286,6 +286,10 @@ export const MIGRATIONS: string[] = [
   UPDATE panels SET check_fail_count = 1, check_fail_since = COALESCE(check_ok_at, checked_at) WHERE check_error IS NOT NULL;
   INSERT OR IGNORE INTO notified (key, at) SELECT 'panel_down:' || id, COALESCE(check_ok_at, checked_at, 0) FROM panels WHERE check_error IS NOT NULL;
   `,
+  `
+  -- 面板地址解析出的 IP(地址本身就是 IP 时也记),检查时更新;解析不出来保留上次的
+  ALTER TABLE panels ADD COLUMN ip TEXT;
+  `,
 ];
 
 export function openDb(file: string): DB {

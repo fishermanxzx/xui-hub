@@ -9,6 +9,8 @@ export interface Panel {
   checked_at: number | null;
   check_ok_at: number | null;
   check_error: string | null;
+  /** 面板地址解析出的 IP(检查时更新) */
+  ip: string | null;
   inbound_count: number | null;
   client_count: number | null;
   /** 最近一次检查读到的面板版本、Xray 内核版本和状态 */

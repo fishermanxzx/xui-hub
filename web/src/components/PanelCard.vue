@@ -11,6 +11,16 @@ import Modal from './Modal.vue';
 import Select, { type SelectOption } from './Select.vue';
 
 const props = defineProps<{ panel: Panel; open: boolean }>();
+/** 地址是域名时,检查时解析出的 IP;地址本身就是 IP 就不重复显示 */
+const resolvedIp = computed(() => {
+  const ip = props.panel.ip;
+  if (!ip) return '';
+  try {
+    return new URL(props.panel.base_url).hostname.replace(/^\[|\]$/g, '') === ip ? '' : ip;
+  } catch {
+    return ip;
+  }
+});
 const emit = defineEmits<{ toggle: []; edit: []; remove: []; changed: [] }>();
 
 const detail = ref<PanelDetail | null>(null);
@@ -258,6 +268,7 @@ async function removeClient(c: PanelClient) {
         <span class="caret" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
         <span class="name">{{ panel.name }}</span>
         <span class="muted small host">{{ hostOf(panel.base_url) }}</span>
+        <span v-if="resolvedIp" class="small ip" :title="t('card.ipHint')">{{ resolvedIp }}</span>
       </button>
       <div class="facts small">
         <span v-if="panel.check_error" class="text-err" :title="panel.check_error">{{ t('card.down', { error: panel.check_error.slice(0, 36) }) }}</span>
@@ -453,6 +464,12 @@ async function removeClient(c: PanelClient) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ip {
+  flex-shrink: 0;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  user-select: all;
 }
 .facts {
   grid-column: 1;

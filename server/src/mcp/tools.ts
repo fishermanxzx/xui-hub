@@ -355,13 +355,14 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'list_panels',
     title: '面板列表',
-    description: '列出接入的 3x-ui 面板:id、名称、是否连得上、版本、入站和客户端数量、月成本和到期时间。开线路前用它拿 panel_id。',
+    description: '列出接入的 3x-ui 面板:id、名称、IP、是否连得上、版本、入站和客户端数量、月成本和到期时间。开线路前用它拿 panel_id。',
     inputSchema: obj({}),
     annotations: { readOnlyHint: true },
     run: async (_a, ctx) =>
       (await call(ctx, 'GET', '/panels')).map((p: any) => ({
         id: p.id,
         name: p.name,
+        ip: p.ip ?? null,
         ok: !p.check_error,
         error: p.check_error || null,
         checked_at: iso(p.checked_at ?? 0),

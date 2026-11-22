@@ -49,6 +49,17 @@ export function aboutDuration(ms: number): string {
   return `约 ${Math.floor(h / 24)} 天${h % 24 ? ` ${h % 24} 小时` : ''}`;
 }
 
+/** 通知里的面板:「名字」(IP)。用检查时解析出的 IP,还没有就用地址里的主机名;名字里已经有就不重复 */
+export function panelLabel(p: Pick<Panel, 'name' | 'base_url'> & { ip?: string | null }): string {
+  let host = p.ip ?? '';
+  if (!host) {
+    try {
+      host = new URL(p.base_url).hostname.replace(/^\[|\]$/g, '');
+    } catch {}
+  }
+  return host && !p.name.includes(host) ? `「${p.name}」(${host})` : `「${p.name}」`;
+}
+
 /**
  * 面板连不上 / 恢复。连续 downAfter 次检查失败才发「连不上」(1 = 一失败就发);
  * 只有发过「连不上」的,恢复时才发「恢复正常」,没到次数就好了的两条都不发。
@@ -67,13 +78,13 @@ export function panelEvents(db: DB, before: Panel[], panels: Panel[], downAfter:
       const since = p.check_fail_since ?? now;
       markNotified(db, key, since);
       const streak = p.check_fail_count > 1 ? `\n连续 ${p.check_fail_count} 次检查失败,已经${aboutDuration(now - since)}` : '';
-      out.push({ event: 'panel_down', title: `面板「${p.name}」连不上`, text: p.check_error + streak, at: now });
+      out.push({ event: 'panel_down', title: `面板${panelLabel(p)}连不上`, text: p.check_error + streak, at: now });
     } else if (sent) {
       unmarkNotified(db, key);
       const was = prev.get(p.id);
       const lines = [`断了${aboutDuration(now - sent.at)}` + (was && was.check_fail_count > 1 ? `,连续 ${was.check_fail_count} 次检查失败` : '')];
       if (was?.check_error) lines.push(`之前:${was.check_error}`);
-      out.push({ event: 'panel_up', title: `面板「${p.name}」恢复正常`, text: lines.join('\n'), at: now });
+      out.push({ event: 'panel_up', title: `面板${panelLabel(p)}恢复正常`, text: lines.join('\n'), at: now });
     }
   }
   return out;
