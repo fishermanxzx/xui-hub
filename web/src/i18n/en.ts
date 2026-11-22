@@ -109,6 +109,13 @@ const en: Messages = {
     excludeN: 'Excluding {n} panels',
     excludedNote: 'Traffic on {list} is left out: totals, the daily chart, per-customer figures (their lines on these panels) and the per-panel view. It is only skipped when calculating; the records are kept and come back when you stop excluding. The choice is remembered in this browser.',
   },
+  customerTraffic: {
+    peak: 'Peak',
+    byLine: 'By line',
+    line: 'Line',
+    note: 'Same data as the per-customer view on the Traffic page: recorded each time panels are synced (every minute), summed per day (server time zone) and kept for a year. Traffic of lines that were later deleted still counts for this customer.',
+    ratioNote: 'This is actual traffic, not multiplied by the rate ×{v}.',
+  },
   version: {
     dev: 'dev build',
     checkFailed: 'Update check failed: {error}',
@@ -540,6 +547,8 @@ const en: Messages = {
     nextReset: 'Monthly reset · next {date}',
     openLine: 'Open line',
     topology: 'Topology',
+    trafficTrend: 'Traffic trend',
+    trafficTrendTitle: 'Traffic trend of "{name}"',
     resetUsage: 'Reset usage',
     sub: 'Subscription',
     subAria: 'Subscription link',
