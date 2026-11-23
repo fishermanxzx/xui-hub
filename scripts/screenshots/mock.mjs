@@ -10,9 +10,9 @@ const DAY = 86_400_000;
 const GB = 1024 ** 3;
 
 const panels = [
-  { id: 1, name: '香港-1', base_url: 'https://hk1.example.com:2053/panel', inbound_count: 2, client_count: 5, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 45, expire_at: now + 52 * DAY },
-  { id: 2, name: '美国-1', base_url: 'https://us1.example.com:2053/panel', inbound_count: 3, client_count: 4, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 30, expire_at: now + 5 * DAY },
-  { id: 3, name: '日本-1', base_url: 'https://jp1.example.com:2053/panel', inbound_count: 2, client_count: 2, panel_version: '3.10.2', xray_version: '26.10.21', monthly_cost: null, expire_at: 0 },
+  { id: 1, name: '香港-1', base_url: 'https://hk1.example.com:2053/panel', ip: '203.0.113.10', node_name: '香港 01', tags: ['香港', '中转'], inbound_count: 2, client_count: 5, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 45, expire_at: now + 52 * DAY },
+  { id: 2, name: '美国-1', base_url: 'https://us1.example.com:2053/panel', ip: '198.51.100.8', node_name: '美国 01', tags: ['美国', '便宜'], inbound_count: 3, client_count: 4, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 30, expire_at: now + 5 * DAY },
+  { id: 3, name: '日本-1', base_url: 'https://jp1.example.com:2053/panel', ip: '192.0.2.31', node_name: '', tags: ['日本'], inbound_count: 2, client_count: 2, panel_version: '3.10.2', xray_version: '26.10.21', monthly_cost: null, expire_at: 0 },
 ].map((p) => ({ ...p, created_at: now - 40 * DAY, checked_at: now - 20_000, check_ok_at: now - 20_000, check_error: null, xray_state: 'running' }));
 
 const socks = [
@@ -24,7 +24,7 @@ const socks = [
 
 let lid = 0;
 const line = (customer_id, o) => ({
-  id: ++lid, customer_id, exit_kind: null, exit_panel_id: null, exit_panel_name: null, exit_port: null, exit_socks_id: null, exit_socks_name: null, exit_label: '', node_name: '', rules: [], routes: null, routes_at: 0,
+  id: ++lid, customer_id, exit_kind: null, exit_panel_id: null, exit_panel_name: null, exit_port: null, exit_socks_id: null, exit_socks_name: null, exit_label: '', node_name: '', panel_node_name: '', rules: [], routes: null, routes_at: 0,
   created_at: now - 12 * DAY, enable: true, auto_disabled: false, last_online: now - 180_000, synced_at: now - 20_000, ...o,
 });
 const customer = (id, name, remark, quotaGb, expireDays, lines, extra = {}) => {
@@ -86,6 +86,7 @@ const details = {
 
 // 面板 / SOCKS 上的线路数、入站能不能挂客户端,从上面的数据算出来
 const lines = customers.flatMap((x) => x.lines);
+for (const l of lines) l.panel_node_name = panels.find((x) => x.id === l.panel_id)?.node_name ?? '';
 for (const x of panels) Object.assign(x, { line_count: lines.filter((l) => l.panel_id === x.id).length, exit_line_count: lines.filter((l) => l.exit_panel_id === x.id).length });
 for (const x of socks) x.used_by = lines.filter((l) => l.exit_socks_id === x.id).length;
 for (const d of Object.values(details)) for (const i of d.inbounds) i.accepts_clients = i.protocol !== 'mixed';
