@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import vm from 'node:vm';
 import { addLine, createCustomer, deleteLine, getCustomer, updateLineStats } from '../customers/repo';
 import { addPanel, memoryDb } from '../testUtil';
 import { importLinks, pageNodes, qrSvg, renderSubPage, trendHtml } from './subPage';
@@ -89,4 +90,67 @@ test('自助页的每天用量:柱子和日期一一对应,纵轴取整,写日�
   assert.ok(trendHtml({ days: days.slice(0, 7), bytes: [0, 0, 330 * 1024 ** 2, 0, 0, 0, 0] }).includes('>400 MB<'));
   assert.equal(trendHtml(undefined), '');
   assert.equal(trendHtml({ days, bytes: days.map(() => 0) }), '');
+});
+
+/** 在一个假浏览器里跑自助页的脚本:线路列表由 /nodes 给,记下测速探测连了哪些地址 */
+async function runPage(nodes: { name: string; host: string; port: number; udp: boolean }[]) {
+  const db = memoryDb();
+  const html = renderSubPage({ customer: getCustomer(db, createCustomer(db, { name: 'a' }))!, url: 'https://sub.example/sub/tok' });
+  const script = html.slice(html.lastIndexOf('<script>') + 8, html.lastIndexOf('</script>'));
+  const el = (): any => {
+    const e: any = { children: [] as any[], textContent: '', className: '', title: '', disabled: true };
+    Object.defineProperty(e, 'innerHTML', { set: () => void (e.children = []) });
+    e.appendChild = (c: any) => void e.children.push(c);
+    return e;
+  };
+  const box = el();
+  const again = el();
+  const probed: string[] = [];
+  let clock = 0;
+  const ctx: any = {
+    document: { getElementById: (id: string) => (id === 'nodes' ? box : id === 'reping' ? again : null), createElement: el, querySelectorAll: () => [] },
+    fetch: (url: string) => {
+      if (url.endsWith('/nodes')) return Promise.resolve({ json: () => Promise.resolve({ nodes }) });
+      probed.push(new URL(url).host);
+      return Promise.reject(new Error('refused'));
+    },
+    performance: { now: () => (clock += 60) },
+    AbortController,
+    setTimeout,
+    clearTimeout,
+    Math,
+    Promise,
+  };
+  vm.runInNewContext(script, ctx);
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+  await settle();
+  const shown = () => box.children.map((li: any) => [li.children[0].textContent, li.children[1].textContent, li.children[1].className]);
+  return { probed, shown, again, pingAll: async () => (ctx.pingAll(), await settle()) };
+}
+
+test('自助页测速:UDP 线路(hy2 / tuic)不发探测,直接提示用客户端测、不标红;TCP 线路照测,重新测速也只测 TCP;全是 UDP 时重新测速一直灰着', async () => {
+  const page = await runPage([
+    { name: '香港 vless', host: '198.51.100.1', port: 443, udp: false },
+    { name: '美国 hy2', host: '198.51.100.2', port: 8443, udp: true },
+  ]);
+  assert.deepEqual(page.probed, ['198.51.100.1', '198.51.100.1', '198.51.100.1']);
+  const [tcp, udp] = page.shown();
+  assert.match(tcp[1], /^\d+ ms$/);
+  assert.deepEqual(udp, ['美国 hy2', 'UDP 线路,请用客户端测', 'ms udp']);
+  assert.equal(page.again.disabled, false);
+  // 重新测速:还是只测 TCP 那条
+  await page.pingAll();
+  assert.equal(page.probed.filter((h) => h.startsWith('198.51.100.2')).length, 0);
+  assert.equal(page.probed.length, 6);
+
+  const allUdp = await runPage([{ name: 'hy2', host: '198.51.100.3', port: 443, udp: true }]);
+  assert.deepEqual(allUdp.probed, []);
+  assert.equal(allUdp.again.disabled, true);
+  assert.match(allUdp.again.title, /都是 UDP 线路/);
+});
+
+test('自助页线路说明里写了 UDP 线路浏览器测不了(不写具体协议名)', () => {
+  const db = memoryDb();
+  const html = renderSubPage({ customer: getCustomer(db, createCustomer(db, { name: 'a' }))!, url: 'https://sub.example/sub/tok' });
+  assert.ok(html.includes('UDP 线路浏览器测不了,看客户端里的延迟'));
 });
