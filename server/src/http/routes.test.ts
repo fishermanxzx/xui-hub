@@ -149,6 +149,17 @@ test('接入面板:保存后马上检查;连不上也存下来并带上错误;�
     assert.deepEqual([patched.body.base_url, patched.body.check_error], ['https://hk2.example.com:2053', null]);
     assert.equal(getPanel(db, hk.body.id)!.token, 'secret-token');
 
+    // 标签:逗号 / 空格分开的字符串或数组都行,去空白和重复;不传 = 不改
+    assert.deepEqual(hk.body.tags, []);
+    assert.deepEqual((await call('PATCH', `/panels/${hk.body.id}`, { tags: ' 美国, 便宜 美国,,' })).body.tags, ['美国', '便宜']);
+    assert.deepEqual((await call('PATCH', `/panels/${hk.body.id}`, { monthly_cost: 3 })).body.tags, ['美国', '便宜']);
+    assert.deepEqual((await call('GET', '/panels')).body.find((p: any) => p.id === hk.body.id).tags, ['美国', '便宜']);
+    assert.deepEqual((await call('PATCH', `/panels/${hk.body.id}`, { tags: ['a', 'a', ' b '] })).body.tags, ['a', 'b']);
+    assert.match((await call('PATCH', `/panels/${hk.body.id}`, { tags: ['x'.repeat(21)] })).body.error, /20/);
+    assert.match((await call('PATCH', `/panels/${hk.body.id}`, { tags: Array.from({ length: 21 }, (_, i) => `t${i}`) })).body.error, /20/);
+    assert.equal((await call('PATCH', `/panels/${hk.body.id}`, { tags: 5 })).status, 400);
+    assert.deepEqual((await call('PATCH', `/panels/${hk.body.id}`, { tags: [] })).body.tags, []);
+
     const detail = await call('GET', `/panels/${hk.body.id}/inbounds`);
     assert.deepEqual(detail.body.inbounds.map((i: any) => [i.id, i.protocol, i.accepts_clients]), [[7, 'vless', true]]);
     assert.ok(!JSON.stringify(detail.body).includes('privateKey'));

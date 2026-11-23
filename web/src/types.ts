@@ -6,6 +6,8 @@ export interface Panel {
   base_url: string;
   /** 节点名:这块面板上没单独设节点名的线路在订阅里用它;空 = 用面板生成的名字 */
   node_name: string;
+  /** 标签(面板页 / 客户页按标签筛) */
+  tags: string[];
   created_at: number;
   /** 最近一次连通性检查 */
   checked_at: number | null;
@@ -46,6 +48,7 @@ export interface PanelInput {
   monthly_cost?: number | null;
   expire_at?: number;
   node_name?: string;
+  tags?: string[];
 }
 
 export interface PanelClient {

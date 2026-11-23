@@ -447,6 +447,7 @@ export const TOOLS: ToolDef[] = [
         monthly_cost: p.monthly_cost ?? null,
         // 这块面板上没单独设节点名的线路在订阅里用的名字;null = 用面板生成的
         node_name: p.node_name || null,
+        tags: p.tags?.length ? p.tags : undefined,
         expire_at: iso(p.expire_at ?? 0),
       })),
   },

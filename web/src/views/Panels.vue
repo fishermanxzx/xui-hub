@@ -36,6 +36,8 @@ function toggle(id: number) {
 async function load() {
   try {
     panels.value = await api.panels();
+    // 没有面板再带的标签不再选着
+    pickedTags.value = pickedTags.value.filter((x) => panels.value.some((p) => p.tags?.includes(x)));
     // 只有一块面板时默认展开
     if (panels.value.length === 1 && !open.value.size) toggle(panels.value[0].id);
   } catch (e) {
@@ -60,11 +62,31 @@ async function checkAll() {
 const editing = ref<Panel | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', base_url: '', token: '', cost: '', expire: '', nodeName: '' });
+const form = ref({ name: '', base_url: '', token: '', cost: '', expire: '', nodeName: '', tags: '' });
+/** 表单里填的标签(逗号 / 空格分开) */
+const splitTags = (s: string) => [...new Set(s.split(/[,,\s]+/).map((x) => x.trim()).filter(Boolean))];
+/** 别的面板用过、这里还没填的标签,点一下加上 */
+const tagSuggestions = computed(() => {
+  const have = new Set(splitTags(form.value.tags));
+  return allTags.value.filter((x) => !have.has(x));
+});
+function addTag(tag: string) {
+  form.value.tags = [...splitTags(form.value.tags), tag].join(', ');
+}
+
+// ---------- 按标签筛面板 ----------
+/** 所有面板用到的标签(按出现先后) */
+const allTags = computed(() => [...new Set(panels.value.flatMap((p) => p.tags ?? []))]);
+const pickedTags = ref<string[]>([]);
+function toggleTag(tag: string) {
+  pickedTags.value = pickedTags.value.includes(tag) ? pickedTags.value.filter((x) => x !== tag) : [...pickedTags.value, tag];
+}
+/** 选了标签:带其中任一个的面板 */
+const shownPanels = computed(() => (pickedTags.value.length ? panels.value.filter((p) => p.tags?.some((x) => pickedTags.value.includes(x))) : panels.value));
 
 function openForm(panel: Panel | null) {
   editing.value = panel;
-  form.value = { name: panel?.name ?? '', base_url: panel?.base_url ?? '', token: '', cost: panel?.monthly_cost == null ? '' : String(panel.monthly_cost), expire: msToDateInput(panel?.expire_at ?? 0), nodeName: panel?.node_name ?? '' };
+  form.value = { name: panel?.name ?? '', base_url: panel?.base_url ?? '', token: '', cost: panel?.monthly_cost == null ? '' : String(panel.monthly_cost), expire: msToDateInput(panel?.expire_at ?? 0), nodeName: panel?.node_name ?? '', tags: (panel?.tags ?? []).join(', ') };
   showForm.value = true;
 }
 
@@ -72,7 +94,7 @@ async function submit() {
   // 到期日没动就原样发回(表单里只有日期,重算会把到期时刻改成当天 23:59)
   const was = editing.value;
   const expireAt = was && form.value.expire === msToDateInput(was.expire_at) ? was.expire_at : dateInputToMs(form.value.expire);
-  const body: PanelInput = { name: form.value.name, base_url: form.value.base_url, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: expireAt, node_name: form.value.nodeName.trim() };
+  const body: PanelInput = { name: form.value.name, base_url: form.value.base_url, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: expireAt, node_name: form.value.nodeName.trim(), tags: splitTags(form.value.tags) };
   if (form.value.token) body.token = form.value.token;
   saving.value = true;
   try {
@@ -129,8 +151,17 @@ onUnmounted(() => clearInterval(timer));
     </div>
   </div>
 
+  <div v-if="allTags.length" class="tag-filter small" role="group" :aria-label="t('panels.filterTags')">
+    <span class="muted">{{ t('panels.filterTags') }}</span>
+    <button type="button" class="tag-btn" :aria-pressed="!pickedTags.length" @click="pickedTags = []">{{ t('panels.allTags') }}</button>
+    <button v-for="tag in allTags" :key="tag" type="button" class="tag-btn" :aria-pressed="pickedTags.includes(tag)" @click="toggleTag(tag)">
+      {{ tag }} <span class="muted">{{ panels.filter((p) => p.tags?.includes(tag)).length }}</span>
+    </button>
+    <span v-if="pickedTags.length" class="muted">{{ t('panels.shown', { n: shownPanels.length, total: panels.length }) }}</span>
+  </div>
+
   <div class="cards">
-    <PanelCard v-for="p in panels" :key="p.id" :panel="p" :open="open.has(p.id)" @toggle="toggle(p.id)" @edit="openForm(p)" @remove="remove(p)" @changed="load" />
+    <PanelCard v-for="p in shownPanels" :key="p.id" :panel="p" :open="open.has(p.id)" :picked-tags="pickedTags" @toggle="toggle(p.id)" @edit="openForm(p)" @remove="remove(p)" @changed="load" @tag="toggleTag" />
   </div>
   <div v-if="!panels.length" class="empty sheet">{{ t('panels.empty') }}</div>
 
@@ -144,6 +175,14 @@ onUnmounted(() => clearInterval(timer));
       </label>
       <label class="field">{{ t('panels.nodeName') }}<input v-model="form.nodeName" maxlength="64" :placeholder="t('panels.nodeNamePlaceholder')" /></label>
       <p class="muted small hint node-hint">{{ t('panels.nodeNameHint') }}</p>
+      <label class="field">{{ t('panels.tags') }}<input v-model="form.tags" :placeholder="t('panels.tagsPlaceholder')" /></label>
+      <p class="muted small hint node-hint">
+        {{ t('panels.tagsHint') }}
+        <template v-if="tagSuggestions.length">
+          <br />{{ t('panels.tagsUsed') }}
+          <button v-for="tag in tagSuggestions" :key="tag" type="button" class="tag-btn" @click="addTag(tag)">+ {{ tag }}</button>
+        </template>
+      </p>
       <div class="two">
         <label class="field">{{ t('cost.field') }}<input v-model="form.cost" type="number" min="0" step="0.01" /></label>
         <label class="field">{{ t('cost.expireField') }}<input v-model="form.expire" type="date" /></label>
@@ -188,6 +227,27 @@ h2 {
 }
 .node-hint {
   margin-top: -6px;
+}
+.tag-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.tag-btn {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 20px;
+}
+.tag-btn[aria-pressed='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+.node-hint .tag-btn {
+  margin: 4px 4px 0 0;
 }
 .two {
   display: grid;

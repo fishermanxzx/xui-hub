@@ -12,7 +12,7 @@ import LineExit from '../components/LineExit.vue';
 import CustomerRenew from '../components/CustomerRenew.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import MultiSelect from '../components/MultiSelect.vue';
-import { CUSTOMER_SORTS, CUSTOMER_STATES, matchState, queryCustomers, usesPanel, type CustomerQuery, type CustomerSort } from '../customerQuery';
+import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, exitIps, matchCount, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort } from '../customerQuery';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
@@ -43,7 +43,7 @@ function savedSort(): Pick<CustomerQuery, 'sort' | 'reverse'> {
   }
   return { sort: 'name', reverse: false };
 }
-const query = ref<CustomerQuery>({ q: '', panels: [], state: '', ...savedSort() });
+const query = ref<CustomerQuery>({ q: '', panels: [], state: '', tags: [], lines: '', exits: '', ...savedSort() });
 watch(
   () => [query.value.sort, query.value.reverse],
   () => {
@@ -58,12 +58,22 @@ watch(
 watch(panels, (list) => {
   const ids = new Set(list.map((p) => p.id));
   if (query.value.panels.some((id) => !ids.has(id))) query.value.panels = query.value.panels.filter((id) => ids.has(id));
+  // 没有面板再带的标签也去掉
+  const tags = new Set(list.flatMap((p) => p.tags ?? []));
+  if (query.value.tags.some((x) => !tags.has(x))) query.value.tags = query.value.tags.filter((x) => tags.has(x));
 });
-const shown = computed(() => queryCustomers(customers.value, query.value));
+const shown = computed(() => queryCustomers(customers.value, query.value, Date.now(), { panels: panels.value, socks: socksList.value }));
+/** 每位客户的落地 IP(去重;按线路主出口算,见 lineExitIp) */
+const exitsOf = computed(() => {
+  const pm = new Map(panels.value.map((p) => [p.id, p]));
+  const sm = new Map(socksList.value.map((s) => [s.id, s]));
+  return new Map(customers.value.map((c) => [c.id, exitIps(c, pm, sm)]));
+});
+const exitCount = (c: Customer) => exitsOf.value.get(c.id)?.length ?? 0;
 /** 按面板过滤时,客户卡片里不在这些面板上的线路淡一点 */
-const pickedPanels = computed(() => new Set(query.value.panels));
+const pickedPanels = computed(() => new Set([...query.value.panels, ...(query.value.tags.length ? panelsTagged(panels.value, query.value.tags) : [])]));
 const offPanel = (l: Line) => pickedPanels.value.size > 0 && !pickedPanels.value.has(l.panel_id) && !(l.exit_panel_id != null && pickedPanels.value.has(l.exit_panel_id));
-const filtering = computed(() => !!query.value.q.trim() || !!query.value.panels.length || !!query.value.state);
+const filtering = computed(() => !!query.value.q.trim() || !!query.value.panels.length || !!query.value.state || !!query.value.tags.length || !!query.value.lines || !!query.value.exits);
 // ---------- 线路默认收起:只留一行(条数、节点名、停用了几条),点开看详情;展开了哪些记在浏览器里 ----------
 const OPEN_LINES_KEY = 'xui-hub.openCustomerLines';
 const openLines = ref<Set<number>>(new Set());
@@ -112,8 +122,29 @@ const nodeNamePh = (panelId: number) => (panelNodeName(panelId) ? t('customers.f
 const linesOff = (c: Customer) => c.lines.filter((l) => !l.enable).length;
 
 function clearFilters() {
-  query.value = { ...query.value, q: '', panels: [], state: '' };
+  query.value = { ...query.value, q: '', panels: [], state: '', tags: [], lines: '', exits: '' };
 }
+/** 面板上用到的所有标签(按面板顺序出现的先后) */
+const allTags = computed(() => [...new Set(panels.value.flatMap((p) => p.tags ?? []))]);
+const tagFilterOptions = computed<SelectOption<string>[]>(() =>
+  allTags.value.map((tag) => {
+    const ids = panelsTagged(panels.value, [tag]);
+    return { value: tag, label: t('customers.panelOption', { name: tag, n: customers.value.filter((c) => usesPanel(c, ids)).length }) };
+  }),
+);
+const tagFilterLabel = computed(() => {
+  const picked = query.value.tags;
+  if (!picked.length) return t('customers.allTags');
+  return picked.length === 1 ? picked[0] : t('customers.tagsPicked', { n: picked.length });
+});
+const linesFilterOptions = computed<SelectOption<CountFilter>[]>(() => [
+  { value: '', label: t('customers.allLineCounts') },
+  ...COUNT_FILTERS.map((f) => ({ value: f, label: t(f === '5+' ? 'customers.lineCountMore' : 'customers.lineCountOption', { label: f.replace('+', ''), n: customers.value.filter((c) => matchCount(c.lines.length, f)).length }) })),
+]);
+const exitsFilterOptions = computed<SelectOption<CountFilter>[]>(() => [
+  { value: '', label: t('customers.allExitCounts') },
+  ...COUNT_FILTERS.map((f) => ({ value: f, label: t(f === '5+' ? 'customers.exitCountMore' : 'customers.exitCountOption', { label: f.replace('+', ''), n: customers.value.filter((c) => matchCount(exitCount(c), f)).length }) })),
+]);
 const panelFilterOptions = computed<SelectOption<number>[]>(() =>
   panels.value.map((p) => ({ value: p.id, label: t('customers.panelOption', { name: p.name, n: customers.value.filter((c) => usesPanel(c, new Set([p.id]))).length }) })),
 );
@@ -893,7 +924,10 @@ function exitText(l: Line): string {
   <div v-if="customers.length" class="filters">
     <input v-model="query.q" type="search" class="search" :placeholder="t('customers.searchPlaceholder')" :aria-label="t('customers.search')" />
     <MultiSelect v-model="query.panels" :options="panelFilterOptions" :label="panelFilterLabel" :all-label="t('customers.allPanels')" :aria-label="t('customers.filterPanels')" />
+    <MultiSelect v-if="allTags.length" v-model="query.tags" :options="tagFilterOptions" :label="tagFilterLabel" :all-label="t('customers.allTags')" :aria-label="t('customers.filterTags')" searchable />
     <Select v-model="query.state" :options="stateOptions" :aria-label="t('customers.filterState')" />
+    <Select v-model="query.lines" :options="linesFilterOptions" :aria-label="t('customers.filterLineCount')" />
+    <Select v-model="query.exits" :options="exitsFilterOptions" :aria-label="t('customers.filterExitCount')" />
     <span class="sort">
       <Select v-model="query.sort" :options="sortOptions" :aria-label="t('customers.sortBy')" />
       <button type="button" class="dir" :title="t('customers.sortDirHint')" :aria-pressed="query.reverse" @click="query.reverse = !query.reverse">
@@ -971,6 +1005,7 @@ function exitText(l: Line): string {
       <button v-if="c.lines.length && !linesForced" type="button" class="lines-toggle" :class="{ open: linesShown(c) }" :aria-expanded="linesShown(c)" @click="toggleLines(c)">
         <svg class="chev" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
         <span class="count">{{ t('customers.lineCount', { n: c.lines.length }, c.lines.length) }}</span>
+        <span v-if="exitCount(c)" class="count muted" :title="exitsOf.get(c.id)?.join('\n')">· {{ t('customers.exitCount', { n: exitCount(c) }, exitCount(c)) }}</span>
         <span v-if="!linesShown(c)" class="muted names" :title="lineNames(c)">{{ lineNames(c) }}</span>
         <span v-if="!linesShown(c) && linesOff(c)" class="badge err">{{ t('customers.linesOff', { n: linesOff(c) }) }}</span>
       </button>

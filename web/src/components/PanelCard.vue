@@ -10,7 +10,7 @@ import ClientLinks from './ClientLinks.vue';
 import Modal from './Modal.vue';
 import Select, { type SelectOption } from './Select.vue';
 
-const props = defineProps<{ panel: Panel; open: boolean }>();
+const props = defineProps<{ panel: Panel; open: boolean; /** 面板页正按这些标签筛 */ pickedTags?: string[] }>();
 /** 地址是域名时,检查时解析出的 IP;地址本身就是 IP 就不重复显示 */
 const resolvedIp = computed(() => {
   const ip = props.panel.ip;
@@ -21,7 +21,7 @@ const resolvedIp = computed(() => {
     return ip;
   }
 });
-const emit = defineEmits<{ toggle: []; edit: []; remove: []; changed: [] }>();
+const emit = defineEmits<{ toggle: []; edit: []; remove: []; changed: []; tag: [tag: string] }>();
 
 // ---------- 一键改名:这块面板上的线路都用面板的节点名 ----------
 const renaming = ref(false);
@@ -298,6 +298,7 @@ async function removeClient(c: PanelClient) {
         </template>
         <span v-else class="muted">{{ t('card.notChecked') }}</span>
         <span v-if="panel.node_name" class="node-name" :title="t('card.nodeNameHint')">{{ t('card.nodeName', { name: panel.node_name }) }}</span>
+        <button v-for="tag in panel.tags ?? []" :key="tag" type="button" class="tag" :class="{ on: pickedTags?.includes(tag) }" :title="t('card.tagHint')" @click="emit('tag', tag)">{{ tag }}</button>
         <span v-if="panel.monthly_cost != null" class="muted">{{ t('cost.value', { v: fmtCost(panel.monthly_cost) }) }}</span>
         <span v-if="panel.expire_at" :class="dueClass(panel.expire_at, 'muted')">{{ t('cost.expireOn', { date: fmtDate(panel.expire_at) }) }} · {{ fmtDue(panel.expire_at) }}</span>
       </div>
@@ -491,6 +492,24 @@ async function removeClient(c: PanelClient) {
 }
 .facts .node-name {
   font-weight: 500;
+}
+.facts .tag {
+  padding: 0 8px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+.facts .tag:hover {
+  border-color: var(--accent);
+}
+.facts .tag.on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-strong);
 }
 .facts {
   grid-column: 1;
