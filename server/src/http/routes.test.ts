@@ -13,10 +13,10 @@ import { XUIError } from '../xui/client';
 import { apiRouter } from './routes';
 
 /** 起一个只挂 /api 的服务;call 返回状态码、响应体和这次下发的 cookie */
-async function serve(db: DB, data: Record<string, FakePanel> = {}, adminPassword = '', subBaseUrl = '', fetchUpstream?: UpstreamFetcher) {
+async function serve(db: DB, data: Record<string, FakePanel> = {}, adminPassword = '', subBaseUrl = '', fetchUpstream?: UpstreamFetcher, clientFor = fakePanels(data)) {
   const app = express();
   app.use(express.json());
-  app.use('/api', apiRouter({ db, adminPassword, clientFor: fakePanels(data), subBaseUrl, subLogDays: 7, fetchUpstream }));
+  app.use('/api', apiRouter({ db, adminPassword, clientFor, subBaseUrl, subLogDays: 7, fetchUpstream }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
@@ -730,6 +730,109 @@ test('批量删线路:同一块面板只重启一次 Xray,删成了的删记录�
 
     // 参数不对
     for (const body of [{}, { line_ids: [] }, { line_ids: [lines[1]] }, { line_ids: ['x'] }]) assert.equal((await call('POST', '/lines/batch-delete', body)).status, 400, JSON.stringify(body));
+  } finally {
+    await close();
+  }
+});
+
+test('线路原地换出口:单条换 SOCKS、整位客户换直出;UUID 不变、不删线路;同一块面板只重启一次;条件规则和手配规则不碰;已经是这个出口不重启', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  const b = addPanel(db, 'b');
+  const data = { a: relayPanel(), b: relayPanel() };
+  const { call, close } = await serve(db, data);
+  try {
+    const s1 = (await call('POST', '/socks', { name: 'isp1', address: 'socks5://u:p@isp1.example.com:1080' })).body.id;
+    const s2 = (await call('POST', '/socks', { name: 'isp2', address: 'socks5://u2:p2@isp2.example.com:2080' })).body.id;
+    const c = (await call('POST', '/customers', { name: 'zhang' })).body;
+    const open = async (panel_id: number, exit?: number) => (await call('POST', `/customers/${c.id}/lines`, { panel_id, inbound: { id: 5 }, ...(exit ? { exit: { kind: 'socks', socks_id: exit } } : {}) })).body.line;
+    const l1 = await open(a.id);
+    const l2 = await open(a.id, s1);
+    const l3 = await open(b.id, s1);
+    // l2 带一条出口规则;面板 a 上还有一条手配的、点名 l2 的带条件规则
+    await call('PUT', `/customers/${c.id}/lines/${l2.id}/rules`, { rules: [{ domain: ['ads.example.com'], to: { kind: 'block' } }] });
+    data.a.xray.routing.rules.unshift({ type: 'field', inboundTag: ['in-500'], user: [l2.email], port: '25', outboundTag: 'direct' });
+    const uuids = () => [...data.a.clients, ...data.b.clients].map((x) => `${x.email}:${x.id}`).sort();
+    const before = uuids();
+    const restarts = () => [data.a.restarts, data.b.restarts];
+    const r0 = restarts();
+    const userRule = (d: FakePanel, email: string) => d.xray.routing.rules.find((r: any) => r.user?.[0] === email && !r.ruleTag && Object.keys(r).length === 4);
+    const outOf = (d: FakePanel, tag: string) => d.xray.outbounds.find((o: any) => o.tag === tag);
+
+    // 单条:直出 → SOCKS isp2
+    const one = await call('PUT', `/customers/${c.id}/lines/${l1.id}/exit`, { exit: { kind: 'socks', socks_id: s2 } });
+    assert.equal(one.status, 200);
+    assert.deepEqual([one.body.kind, one.body.exit_kind, one.body.exit_socks_id, one.body.exit_label], ['relay', 'socks', s2, 'SOCKS isp2']);
+    assert.equal(outOf(data.a, userRule(data.a, l1.email).outboundTag).settings.servers[0].address, 'isp2.example.com');
+    // 实际出口马上刷新
+    assert.deepEqual(one.body.routes.map((h: any) => [h.to.kind, h.to.socks_id ?? null]), [['socks', s2]]);
+    assert.deepEqual(restarts(), [r0[0] + 1, r0[1]]);
+
+    // 整位客户:全部换成直出。面板 a、b 各重启一次;l2 的出口规则和手配规则还在;没人用的 socks 出站删掉
+    const all = await call('POST', '/lines/batch-exit', { customer_id: c.id, exit: { kind: 'direct' } });
+    assert.deepEqual([all.body.changed.sort(), all.body.failed], [[l1.id, l2.id, l3.id], []]);
+    assert.deepEqual(restarts(), [r0[0] + 2, r0[1] + 1]);
+    for (const [d, e] of [[data.a, l1.email], [data.a, l2.email], [data.b, l3.email]] as const) assert.equal(userRule(d, e), undefined, e);
+    assert.ok(data.a.xray.routing.rules.some((r: any) => r.ruleTag && r.user?.[0] === l2.email && r.domain?.[0] === 'ads.example.com'));
+    assert.ok(data.a.xray.routing.rules.some((r: any) => r.port === '25' && r.user?.[0] === l2.email));
+    assert.deepEqual([data.a.xray.outbounds.filter((o: any) => o.protocol === 'socks').length, data.b.xray.outbounds.filter((o: any) => o.protocol === 'socks').length], [0, 0]);
+    const lines = getCustomer(db, c.id)!.lines;
+    assert.deepEqual(lines.map((l) => [l.kind, l.exit_socks_id, l.exit_label]), [['direct', null, ''], ['direct', null, ''], ['direct', null, '']]);
+    // 不删线路、UUID 不变
+    assert.deepEqual([lines.length, uuids()], [3, before]);
+
+    // 已经是直出:不写、不重启
+    await call('POST', '/lines/batch-exit', { line_ids: [l1.id, l3.id], exit: { kind: 'direct' } });
+    assert.deepEqual(restarts(), [r0[0] + 2, r0[1] + 1]);
+
+    // 写错的:出口不对、SOCKS 不存在、线路不是这位客户的、啥都没给
+    const other = (await call('POST', '/customers', { name: 'li' })).body;
+    for (const [path, body] of [
+      [`/customers/${c.id}/lines/${l1.id}/exit`, { exit: { kind: 'panel', panel_id: b.id } }],
+      [`/customers/${c.id}/lines/${l1.id}/exit`, { exit: { kind: 'socks', socks_id: 999 } }],
+      ['/lines/batch-exit', { customer_id: other.id, line_ids: [l1.id], exit: { kind: 'direct' } }],
+      ['/lines/batch-exit', { exit: { kind: 'direct' } }],
+      ['/lines/batch-exit', { customer_id: other.id, exit: { kind: 'direct' } }],
+    ] as const)
+      assert.equal((await call(path.endsWith('/exit') ? 'PUT' : 'POST', path, body)).status, 400, JSON.stringify(body));
+  } finally {
+    await close();
+  }
+});
+
+test('批量换出口:哪块面板没成,只有那块上的线路不改记录、带原因,其余照常;单条没成回 502', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  const b = addPanel(db, 'b');
+  const data = { a: relayPanel(), b: relayPanel() };
+  const { call, close } = await serve(db, data);
+  try {
+    const s1 = (await call('POST', '/socks', { name: 'isp1', address: 'socks5://isp1.example.com:1080' })).body.id;
+    const c = (await call('POST', '/customers', { name: 'zhang' })).body;
+    const la = (await call('POST', `/customers/${c.id}/lines`, { panel_id: a.id, inbound: { id: 5 } })).body.line;
+    const lb = (await call('POST', `/customers/${c.id}/lines`, { panel_id: b.id, inbound: { id: 5 } })).body.line;
+    data.b.fail = { updateXray: new XUIError('连接失败:超时') };
+    const r = await call('POST', '/lines/batch-exit', { line_ids: [la.id, lb.id], exit: { kind: 'socks', socks_id: s1 } });
+    assert.deepEqual(r.body.changed, [la.id]);
+    assert.deepEqual(r.body.failed, [{ id: lb.id, line: `b 上的 ${lb.email}`, error: '连接失败:超时' }]);
+    const [ka, kb] = getCustomer(db, c.id)!.lines;
+    assert.deepEqual([ka.kind, ka.exit_socks_id, kb.kind, kb.exit_socks_id], ['relay', s1, 'direct', null]);
+    assert.equal((await call('PUT', `/customers/${c.id}/lines/${lb.id}/exit`, { exit: { kind: 'socks', socks_id: s1 } })).status, 502);
+
+    // 写进去了但读回来不对(面板没存上):不改记录
+    delete data.b.fail;
+    const fake = fakePanels(data);
+    const { call: call2, close: close2 } = await serve(db, data, '', '', undefined, (p) => {
+      const client = fake(p);
+      return p.name === 'b' ? { ...client, updateXray: async () => {} } : client;
+    });
+    try {
+      const bad = await call2('PUT', `/customers/${c.id}/lines/${lb.id}/exit`, { exit: { kind: 'socks', socks_id: s1 } });
+      assert.deepEqual([bad.status, /读回来/.test(bad.body.error)], [502, true]);
+      assert.equal(getCustomer(db, c.id)!.lines[1].kind, 'direct');
+    } finally {
+      await close2();
+    }
   } finally {
     await close();
   }

@@ -49,6 +49,7 @@ const money = (n: number | null) => (n == null ? '没填' : String(n));
 const onOff = (v: unknown) => (v ? '开' : '关');
 const lineName = (l: Line) => `${l.panel_name} · ${l.email}`;
 const span = (p: Payment) => (p.months ? `${p.months} 个月` : `${p.days} 天`);
+const exitOf = (l: Line) => (l.kind === 'direct' ? '直出' : l.exit_label || '走代理');
 
 function decode(s: string): string {
   try {
@@ -93,8 +94,9 @@ export function snapshot(db: DB, path: string, body: unknown): Before {
       if (segs.length === 1) b.settings = structuredClone(getSettings(db));
       break;
     case 'lines': {
-      const ids = (body as { line_ids?: unknown })?.line_ids;
-      if (segs[1] === 'batch-delete' && Array.isArray(ids)) b.lines = ids.slice(0, 1000).flatMap((x) => getLine(db, Number(x)) ?? []);
+      const { line_ids: ids, customer_id: owner } = (body ?? {}) as { line_ids?: unknown; customer_id?: unknown };
+      if ((segs[1] === 'batch-delete' || segs[1] === 'batch-exit') && Array.isArray(ids)) b.lines = ids.slice(0, 1000).flatMap((x) => getLine(db, Number(x)) ?? []);
+      else if (segs[1] === 'batch-exit' && owner != null) b.lines = getCustomer(db, Number(owner))?.lines ?? [];
       break;
     }
   }
@@ -189,6 +191,13 @@ function settingsDiff(a: Settings, b: Settings): string[] {
   return out;
 }
 
+/** 请求里要换成的出口 */
+function exitTarget(db: DB, exit: any): string {
+  if (exit?.kind === 'direct') return '直出';
+  const s = getSocks(db, Number(exit?.socks_id));
+  return s ? `SOCKS ${s.name}` : `SOCKS #${exit?.socks_id ?? ''}`;
+}
+
 export interface Described {
   summary: string;
   customer_id: number | null;
@@ -260,6 +269,20 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
     case 'PUT /customers/:id/lines/:lid/rules': {
       const n = Array.isArray(body.rules) ? body.rules.length : 0;
       return S(`改${cname}线路${ofLine}的出口规则(${n ? `${n} 条` : '全部去掉'})`);
+    }
+    case 'PUT /customers/:id/lines/:lid/exit': {
+      const after = b.line && getLine(db, b.line.id);
+      if (ok && b.line && after && exitOf(b.line) === exitOf(after)) return null;
+      return S(`给${cname}线路${ofLine}换出口:${b.line ? exitOf(b.line) : ''} → ${ok && after ? exitOf(after) : exitTarget(db, body.exit)}`);
+    }
+    case 'POST /lines/batch-exit': {
+      const lines = b.lines ?? [];
+      const owners = new Set(lines.map((l) => l.customer_id));
+      const done = Array.isArray(result?.changed) ? result.changed.length : 0;
+      const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
+      const names = lines.slice(0, 5).map((l) => `「${getCustomer(db, l.customer_id)?.name ?? `#${l.customer_id}`}」${lineName(l)}`);
+      const counts = ok ? `换好 ${done} 条${failed ? `,${failed} 条没成` : ''}` : `${lines.length} 条`;
+      return S(`批量换出口 → ${exitTarget(db, body.exit)}(${counts}):${names.join('、')}${lines.length > 5 ? ' 等' : ''}`, owners.size === 1 ? [...owners][0] : null);
     }
     case 'DELETE /customers/:id/lines/:lid':
       return S(`删除${cname}的线路${b.line ? ` ${lineName(b.line)}` : ''}`);

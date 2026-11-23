@@ -131,6 +131,37 @@ export function routeUserToExit(xray: any, inboundTag: string, email: string, se
   return outTag;
 }
 
+/**
+ * 去掉这个客户端的出口(「入站 + user → 出站」那一条),流量回到这个入站的兜底规则(一般是直出)。换成直出时用。
+ * 带条件的出口规则(xui-hub: 标记的)和面板上手配的规则都不动;出站没人用了随之删掉。本来就没有就返回 false
+ */
+export function unrouteUserExit(xray: any, inboundTag: string, email: string): boolean {
+  const rules: any[] = Array.isArray(xray.routing?.rules) ? xray.routing.rules : [];
+  const mine = rules.filter((r) => isUserRule(r, inboundTag, email));
+  if (!mine.length) return false;
+  xray.routing = { ...(xray.routing ?? {}), rules: rules.filter((r) => !mine.includes(r)) };
+  for (const r of mine) dropUnusedOutbound(xray, r.outboundTag);
+  return true;
+}
+
+/**
+ * 这个客户端现在的出口(读回核对用):null = 没有他自己的出口规则(走兜底,即直出);
+ * 否则是规则指向的出站 tag,指向 socks 出站时带上它连的地址和账号
+ */
+export function userExit(xray: any, inboundTag: string, email: string): { tag: string; server: ExitServer | null } | null {
+  const rules: any[] = Array.isArray(xray.routing?.rules) ? xray.routing.rules : [];
+  const rule = rules.find((r) => isUserRule(r, inboundTag, email));
+  if (!rule) return null;
+  const tag = String(rule.outboundTag ?? '');
+  const out = (Array.isArray(xray.outbounds) ? xray.outbounds : []).find((o: any) => o?.tag === tag);
+  if (out?.protocol !== 'socks') return { tag, server: null };
+  const v = serverOf(out);
+  return { tag, server: { address: v.address, port: v.port, user: v.user, pass: v.pass } };
+}
+
+/** 两个 socks 地址是不是同一个(地址不分大小写) */
+export const sameServer = (a: ExitServer, b: ExitServer) => a.address.toLowerCase() === b.address.toLowerCase() && a.port === b.port && a.user === b.user && a.pass === b.pass;
+
 /** 出口规则(lines/rules.ts)写到面板上带的 ruleTag 前缀;本系统只认、只改带它的条件规则 */
 const MANAGED = 'xui-hub:';
 

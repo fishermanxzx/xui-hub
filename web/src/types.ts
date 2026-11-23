@@ -510,3 +510,6 @@ export interface OpLog {
   error: string;
   customer_id: number | null;
 }
+
+/** 换出口:换成 SOCKS 页登记的代理,或直出 */
+export type LineExitTarget = { kind: 'direct' } | { kind: 'socks'; socks_id: number };

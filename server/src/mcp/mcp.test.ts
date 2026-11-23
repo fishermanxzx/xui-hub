@@ -84,6 +84,11 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
     assert.match(c.sub_url, new RegExp(`^${base}/sub/[\\w-]+$`));
     const line = toolJson(await call('open_line', { customer_id: c.id, panel_id: 1 }));
     assert.deepEqual([line.email, line.links.length, data.p1.clients.map((x) => x.email)], ['小王', 1, ['小王']]);
+    // 换出口:直出 → SOCKS → 直出,线路还是那条
+    const exitBad = await call('change_line_exit', { customer_id: c.id, direct: true, socks_id: 1 });
+    assert.equal(exitBad.body.result.isError, true);
+    const direct = toolJson(await call('change_line_exit', { customer_id: c.id, direct: true }));
+    assert.deepEqual([direct.changed.length, direct.changed[0].exit, direct.failed], [1, '直出', []]);
     const renewed = toolJson(await call('renew_customer', { customer_id: c.id, days: 30 }));
     assert.ok(Math.abs(Date.parse(renewed.expire_at) - Date.parse(c.expire_at) - 30 * 86_400_000) < 1000);
     assert.deepEqual([renewed.payment.amount, renewed.payment.days, renewed.last_payment], [null, 30, null]);

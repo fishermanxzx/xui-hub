@@ -4,7 +4,7 @@ import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { DB } from '../db';
 import { apiRouter } from '../http/routes';
-import { addPanel, fakePanels, memoryDb } from '../testUtil';
+import { addPanel, fakePanels, memoryDb, relayXray, vlessInbound, type FakePanel } from '../testUtil';
 import { addOpLog, decodeActor, encodeActor, listOpLog, pruneOpLog, OPLOG_KEEP_DAYS } from './log';
 
 async function serve(db: DB, adminPassword = 'pw') {
@@ -147,4 +147,32 @@ test('操作日志的存取:翻页、筛选、清掉一年前的;内部通道带
 
   assert.deepEqual(decodeActor(encodeActor('MCP · 令牌「a」', '1.2.3.4')), { by: 'MCP · 令牌「a」', ip: '1.2.3.4' });
   for (const bad of [undefined, '', '%E0', encodeURIComponent('{"x":1}')]) assert.equal(decodeActor(bad), null);
+});
+
+test('操作日志:线路换出口写成「直出 → SOCKS isp」;批量写换好几条;已经是这个出口的不记', async () => {
+  const db = memoryDb();
+  const p = addPanel(db, 'hk');
+  const data: Record<string, FakePanel> = { hk: { inbounds: [vlessInbound(5, 500)], clients: [], xray: relayXray(), restarts: 0 } };
+  const app = express();
+  app.use(express.json());
+  app.use('/api', apiRouter({ db, adminPassword: '', clientFor: fakePanels(data), subBaseUrl: '', subLogDays: 7 }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  const call = async (method: string, path: string, body?: unknown) => (await fetch(base + path, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })).json() as Promise<any>;
+  try {
+    const s = await call('POST', '/socks', { name: 'isp', address: 'socks5://isp.example.com:1080' });
+    const c = await call('POST', '/customers', { name: '张三' });
+    const l = (await call('POST', `/customers/${c.id}/lines`, { panel_id: p.id, inbound: { id: 5 } })).line;
+    await call('PUT', `/customers/${c.id}/lines/${l.id}/exit`, { exit: { kind: 'socks', socks_id: s.id } });
+    assert.equal(summaries(db)[0], `给「张三」线路 hk · ${l.email} 换出口:直出 → SOCKS isp`);
+    const n = listOpLog(db).rows.length;
+    await call('PUT', `/customers/${c.id}/lines/${l.id}/exit`, { exit: { kind: 'socks', socks_id: s.id } });
+    assert.equal(listOpLog(db).rows.length, n);
+    await call('POST', '/lines/batch-exit', { customer_id: c.id, exit: { kind: 'direct' } });
+    const row = listOpLog(db).rows[0];
+    assert.deepEqual([row.summary, row.customer_id], [`批量换出口 → 直出(换好 1 条):「张三」hk · ${l.email}`, c.id]);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
 });

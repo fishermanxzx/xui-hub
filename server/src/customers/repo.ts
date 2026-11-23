@@ -496,6 +496,17 @@ export function setLineRoutes(db: DB, id: number, routes: RouteHop[], now = Date
   db.prepare('UPDATE lines SET routes = ?, routes_at = ? WHERE id = ?').run(JSON.stringify(routes), now, id);
 }
 
+/** 换出口后改记录:给 SOCKS = 走它(relay);null = 直出(direct)。旧版本的「落地面板」出口一并清掉 */
+export function setLineExit(db: DB, id: number, exit: { socks_id: number; label: string } | null): void {
+  db.prepare('UPDATE lines SET kind = ?, exit_kind = ?, exit_panel_id = NULL, exit_port = NULL, exit_socks_id = ?, exit_label = ? WHERE id = ?').run(
+    exit ? 'relay' : 'direct',
+    exit ? 'socks' : null,
+    exit?.socks_id ?? null,
+    exit?.label ?? '',
+    id,
+  );
+}
+
 export function setLineName(db: DB, id: number, name: string): void {
   if (!db.prepare('UPDATE lines SET node_name = ? WHERE id = ?').run(name, id).changes) throw new InputError('线路不存在');
 }
