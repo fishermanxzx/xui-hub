@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import vm from 'node:vm';
 import { addLine, createCustomer, deleteLine, getCustomer, updateLineStats } from '../customers/repo';
 import { addPanel, memoryDb } from '../testUtil';
+import { updatePanel } from '../panels/repo';
 import { importLinks, pageNodes, qrSvg, renderSubPage, trendHtml } from './subPage';
 
 test('自助页:剩余流量、到期、线路、一键导入链接;HTML 转义;停用状态有提示', () => {
@@ -40,7 +41,8 @@ test('自助页只给客户看按倍率算的用量:已用、剩余都是计费�
   const db = memoryDb();
   const p = addPanel(db, 'hk');
   const GB = 1024 ** 3;
-  const cid = createCustomer(db, { name: 'a', quota_bytes: 100 * GB, traffic_ratio: 2 });
+  updatePanel(db, p.id, { traffic_ratio: 2 });
+  const cid = createCustomer(db, { name: 'a', quota_bytes: 100 * GB });
   const l = addLine(db, { customer_id: cid, kind: 'direct', panel_id: p.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'a' });
   const gone = addLine(db, { customer_id: cid, kind: 'direct', panel_id: p.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'a2' });
   updateLineStats(db, l.id, { up: 0, down: 10 * GB, enable: true, last_online: 0 });

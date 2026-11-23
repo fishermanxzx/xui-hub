@@ -126,7 +126,6 @@ function customerDiff(a: CustomerView, b: CustomerView): string[] {
   else if (a.reset_day !== b.reset_day && !b.expire_at) out.push(`每月重置日 ${a.reset_day} 号 → ${b.reset_day} 号`);
   ch('设备数上限', a.limit_devices, b.limit_devices, (n) => (n ? String(n) : '不限'));
   ch('月费', a.monthly_fee, b.monthly_fee, money);
-  ch('流量倍率', a.traffic_ratio, b.traffic_ratio, (v) => `×${v}`);
   if (a.sub_template !== b.sub_template) out.push('换了订阅模板');
   if (JSON.stringify(a.sub_links) !== JSON.stringify(b.sub_links)) out.push(`自定义链接 ${a.sub_links.length} → ${b.sub_links.length} 条`);
   const ups = (c: CustomerView) => JSON.stringify(c.upstreams.map((u) => [u.url, u.node_name]));
@@ -143,13 +142,16 @@ function costDiff(a: { name: string; monthly_cost: number | null; expire_at: num
   return out;
 }
 
-const panelDiff = (a: Panel, b: Panel) =>
+const panelDiff = (db: DB, a: Panel, b: Panel) =>
   costDiff(a, b, [
     ...(a.base_url !== b.base_url ? ['地址改了'] : []),
     ...(a.token !== b.token ? ['令牌改了'] : []),
     ...(a.node_name !== b.node_name ? [`节点名 ${a.node_name || '(面板生成的)'} → ${b.node_name || '(面板生成的)'}`] : []),
     ...(JSON.stringify(a.tags) !== JSON.stringify(b.tags) ? [`标签 ${a.tags.join('、') || '(无)'} → ${b.tags.join('、') || '(无)'}`] : []),
+    ...(a.traffic_ratio !== b.traffic_ratio ? [`流量倍率 ×${a.traffic_ratio} → ×${b.traffic_ratio}(上面有 ${customersOnPanel(db, b.id)} 位客户的线路,本期已用按新倍率重算)`] : []),
   ]);
+
+const customersOnPanel = (db: DB, panelId: number) => (db.prepare('SELECT COUNT(DISTINCT customer_id) AS n FROM lines WHERE panel_id = ?').get(panelId) as { n: number }).n;
 
 const socksDiff = (a: SocksProxy, b: SocksProxy) =>
   costDiff(a, b, [
@@ -266,7 +268,7 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
       return S(`清零${cname}的流量${c ? `(清零前已用 ${used(c.used)})` : ''}`);
     case 'POST /customers/:id/adjust-usage': {
       const n = (Number(body.up) || 0) + (Number(body.down) || 0);
-      return S(`调整${cname}本期已用 ${n >= 0 ? '+' : ''}${+(n / GB).toFixed(2)} GB(实际流量)`);
+      return S(`调整${cname}本期已用 ${n >= 0 ? '+' : ''}${+(n / GB).toFixed(2)} GB(计费用量)`);
     }
     case 'POST /customers/:id/sub-token':
       return S(`重置${cname}的订阅链接(旧链接失效)`);
@@ -321,7 +323,7 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
       return S(`新增面板「${result?.name ?? body.name ?? ''}」`, null);
     case 'PATCH /panels/:id': {
       const after = b.panel && getPanel(db, b.panel.id);
-      return changed(`修改面板${pname}`, b.panel && after ? panelDiff(b.panel, after) : [], null);
+      return changed(`修改面板${pname}`, b.panel && after ? panelDiff(db, b.panel, after) : [], null);
     }
     case 'DELETE /panels/:id':
       return S(`删除面板${pname}${req.query?.force === '1' ? '(连同上面的线路记录)' : ''}`, null);

@@ -299,6 +299,7 @@ async function removeClient(c: PanelClient) {
         <span v-else class="muted">{{ t('card.notChecked') }}</span>
         <span v-if="panel.node_name" class="node-name" :title="t('card.nodeNameHint')">{{ t('card.nodeName', { name: panel.node_name }) }}</span>
         <button v-for="tag in panel.tags ?? []" :key="tag" type="button" class="tag" :class="{ on: pickedTags?.includes(tag) }" :title="t('card.tagHint')" @click="emit('tag', tag)">{{ tag }}</button>
+        <span v-if="panel.traffic_ratio !== 1" class="ratio" :title="t('card.ratioHint')">{{ t('card.ratio', { v: panel.traffic_ratio }) }}</span>
         <span v-if="panel.monthly_cost != null" class="muted">{{ t('cost.value', { v: fmtCost(panel.monthly_cost) }) }}</span>
         <span v-if="panel.expire_at" :class="dueClass(panel.expire_at, 'muted')">{{ t('cost.expireOn', { date: fmtDate(panel.expire_at) }) }} · {{ fmtDue(panel.expire_at) }}</span>
       </div>
@@ -491,6 +492,10 @@ async function removeClient(c: PanelClient) {
   user-select: all;
 }
 .facts .node-name {
+  font-weight: 500;
+}
+.facts .ratio {
+  color: var(--caution);
   font-weight: 500;
 }
 .facts .tag {

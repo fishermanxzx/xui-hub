@@ -33,10 +33,10 @@ Authorization: Bearer xh_……
 | `monthly_fee` | 月费(每月收这位客户多少),`null` = 没填;只用来记账,不影响任何功能。写的时候传 `null` 或空字符串 = 清掉 |
 | `sub_devices` | 已经拉过订阅的设备数 |
 | `sub_template` | Clash 订阅模板:空 = 默认,内置模板 id,或 https 模板地址 |
-| `traffic_ratio` | 流量倍率,默认 1(0.01-100,两位小数):计费用量 = 实际流量 × 倍率。写的时候传空 = 1 |
 | `actual_up` / `actual_down` / `actual_used` | 只读:本期实际流量(字节)= 各线路之和 + 结转 |
 | `carried_up` / `carried_down` | 只读:结转的实际流量(字节):删掉的线路本期用掉的、面板上计数被清零或重建前的、手动调整的;清零时一起清。手动减过时可以是负数 |
-| `used_up` / `used_down` / `used` | 只读:本期计费用量(字节)= 实际 × 倍率。订阅里的 `subscription-userinfo`、自助页(含最近 30 天每天用量)、额度判断(超额停用)、用量提醒都按它 |
+| `carried_used_up` / `carried_used_down` | 只读:结转的计费用量(字节):结转时按当时那块面板的流量倍率折好存下(手动调整的按 1),之后改面板倍率不重算它 |
+| `used_up` / `used_down` / `used` | 只读:本期计费用量(字节)= 各线路实际流量 × 所在面板的流量倍率(见面板的 `traffic_ratio`)之和 + 结转的计费用量。订阅里的 `subscription-userinfo`、自助页(含最近 30 天每天用量)、额度判断(超额停用)、用量提醒、账本都按它。1.21 以前倍率设在客户上(`traffic_ratio`),现在改到面板上,客户对象里不再有这个字段,写的时候传了也不认 |
 | `state` | `active` 正常 / `expired` 已到期 / `over_quota` 已超额 |
 | `sub_token` | 订阅链接是 `https://<后台地址>/sub/<sub_token>` |
 | `sub_url` | 配了 `SUB_BASE_URL` 时是完整的订阅链接,否则为 `null` |
@@ -50,13 +50,13 @@ Authorization: Bearer xh_……
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/customers` | 全部客户 |
-| POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_devices`、`monthly_fee`、`traffic_ratio`、`sub_template`、`sub_links`、`upstreams`、`upstream_mode`、`upstream_userinfo` |
+| POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_devices`、`monthly_fee`、`sub_template`、`sub_links`、`upstreams`、`upstream_mode`、`upstream_userinfo` |
 | PATCH | `/customers/:id` | 修改,只传要改的字段。改了额度 / 到期会立刻停用或恢复他的客户端 |
 | POST | `/customers/:id/renew` | 续费。请求体:`months`(1-120,按自然月加,日子不变;那个月没有这一天就取月底)或 `days`(1-3650),给一个;`amount`(可选,收了多少钱,负数 = 退款)、`paid_at`(可选,收款日期,毫秒,默认现在)、`note`(可选,备注,最多 200 字)、`reset_usage`(可选,`true` 时顺带把流量清零)。在现在的到期日上加,已到期或没设到期日的从现在起算。每次都记一条续费记录(没填 `amount` 的记成只续期),返回的客户里带 `payment` |
 | GET | `/customers/:id/payments` | 这位客户的续费 / 收款记录,新的在前 |
 | POST | `/customers/:id/payments` | 单独记一笔收款,不续期。请求体:`amount`(必填)、`paid_at`、`note` |
 | POST | `/customers/:id/reset-usage` | 把已用流量清零(结转的一起清) |
-| POST | `/customers/:id/adjust-usage` | 调整本期已用。请求体:`up`、`down`(字节,整数,负数 = 减,至少一个不为 0)。按实际流量加减(倍率另乘),记进结转,不改面板上的计数;调完不能小于 0。之后马上停用或恢复他的客户端。迁移时搬旧系统的用量、纠错时用 |
+| POST | `/customers/:id/adjust-usage` | 调整本期已用。请求体:`up`、`down`(字节,整数,负数 = 减,至少一个不为 0)。直接加减计费用量(`used`,不乘面板倍率;实际流量加同样的字节),记进结转,不改面板上的计数;调完不能小于 0。之后马上停用或恢复他的客户端。迁移时搬旧系统的用量、纠错时用 |
 | POST | `/customers/:id/sub-token` | 重置订阅链接,旧链接立即失效 |
 | POST | `/customers/:id/upstreams/refresh` | 外部订阅马上重新取一遍,返回客户(看 `upstreams`) |
 | GET | `/customers/:id/devices` | 拉过订阅的设备(`id`、`ua`、`ip`、`first_at`、`last_at`) |
@@ -143,6 +143,8 @@ Authorization: Bearer xh_……
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/panels` | 面板列表(拿 `panel_id`) |
+| POST / PATCH | `/panels`、`/panels/:id` | 新建 / 修改面板:`name`、`base_url`、`token`、`monthly_cost`、`expire_at`、`node_name`、`tags`、`traffic_ratio`(见下) |
+| GET | `/panels/:id/ratio-preview?ratio=1.2` | 面板改成这个倍率之后,上面各位客户的已用会变成多少、谁会超额,只算不改:`ratio_before`、`ratio`、`customers`(每位 `id`、`name`、`quota_bytes`、`used_before`、`used_after`、`over_before`、`over_after`)、`over_after`(改完会从没超额变成超额的人数) |
 | GET | `/panels/:id/inbounds` | 面板上的入站和客户端 |
 | GET | `/panels/:id/geodata/files` | 面板 Xray 目录里的 geo 库:`files` 每项有 `name`、`kind`(`site` 域名库 / `ip` IP 库)、`size`、`modifiedAt`、`categories`、`error`(解析不了时)。面板低于 3x-ui 3.7.0 时返回 `{ "supported": false }`,下面三个也一样 |
 | GET | `/panels/:id/geodata/categories?file=geosite.dat` | 一个库的全部分类:`items` 每项有 `code`、`entries`(条数)、`attributes`(如 `ads`、`cn`) |
@@ -167,6 +169,8 @@ Authorization: Bearer xh_……
 面板带 `node_name`(节点名,空 = 用面板生成的名字):线路没单独设节点名的,订阅里就用它;改面板的节点名不动线路各自设的。线路里的 `panel_node_name` 是它所在面板的节点名,订阅里实际用的是 `node_name` 不空就用它、否则 `panel_node_name`。一份订阅里重名的节点依次加「 2」「 3」。
 
 面板带 `tags`(标签,字符串数组):新建 / 修改面板时传数组或用逗号 / 空格分开的一串,去掉首尾空白和重复的;每个最多 20 个字、最多 20 个,不能有逗号或换行;不传 = 不改,空数组 = 清空。只用来分组筛选。
+
+面板带 `traffic_ratio`(流量倍率,默认 1,0.01-100,两位小数;写的时候传空 = 1):这块面板上每条线路的计费用量 = 线路实际流量 × 倍率,客户的已用(`used`)是各线路计费用量之和加结转。改倍率后这块面板上的客户本期已用当场按新倍率重算(可能有人立刻超额被停用,改之前用 `ratio-preview` 看一眼);已经结转的部分(删掉的线路等)按结转时的倍率,不重算。线路对象里的 `panel_ratio` 是所在面板的倍率,`used_up` / `used_down` 是这条线路的计费用量。线路上的 `up` / `down` 和 `/traffic` 统计还是实际流量。
 
 面板和 SOCKS 都带 `monthly_cost`(月成本,`null` = 没填)和 `expire_at`(到期时间,毫秒,`0` = 没填),只用来记账和提醒续费,在后台的面板页 / SOCKS 页填写。
 

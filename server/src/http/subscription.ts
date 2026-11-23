@@ -19,15 +19,10 @@ import { collectLinks, encodeSubscription, mergeLinks, userinfoHeader, type Link
 import { cachedUpstream, fetchUpstream, HOP_HEADER, refreshUpstreams, userinfoText, type UpstreamFetcher } from '../subscription/upstream';
 import { pageNodes, renderSubPage } from './subPage';
 import { uniqueNames } from '../subscription/nodeName';
-import { trafficReport } from '../traffic/daily';
+import { dailyBilled } from '../traffic/daily';
 import { templateUrl } from '../subscription/templates';
 import { admitDevice, deleteDevice, deviceKey, listDevices } from '../subscription/devices';
 
-/** 自助页的最近 30 天每天用量:这位客户各线路(含删掉的)每天的上下行之和,乘上倍率(和订阅里的已用一样按计费用量给) */
-function dailyUsage(db: DB, customerId: number, ratio: number): { days: string[]; bytes: number[] } {
-  const r = trafficReport(db, { by: 'customer', days: 30, id: customerId });
-  return { days: r.days, bytes: r.total.up.map((up, i) => Math.round((up + r.total.down[i]) * ratio)) };
-}
 
 export interface SubscriptionDeps {
   db: DB;
@@ -194,7 +189,8 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
           devices: listDevices(db, customer.id),
           removed: req.query.removed === '1',
           upstream: up ? { nodes: up.links.length, replace: customer.upstream_mode === 'replace', userinfo: customer.upstream_userinfo ? up.userinfo : null } : undefined,
-          daily: dailyUsage(db, customer.id, customer.traffic_ratio ?? 1),
+          // 最近 30 天每天用量,按各面板的倍率算(和订阅里的已用一个口径)
+          daily: dailyBilled(db, customer.id, 30),
         }),
       );
       return;

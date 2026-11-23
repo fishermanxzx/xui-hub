@@ -1,4 +1,4 @@
-import type { OpLog, Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
+import type { OpLog, Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, RatioPreview, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
 import { locale } from './i18n';
 
 let onUnauthorized: (() => void) | null = null;
@@ -69,6 +69,8 @@ export const api = {
   panels: () => call<Panel[]>('GET', '/api/panels'),
   createPanel: (body: PanelInput) => call<Panel>('POST', '/api/panels', body),
   updatePanel: (id: number, body: PanelInput) => call<Panel>('PATCH', `/api/panels/${id}`, body),
+  /** 面板改成这个倍率之后,上面各位客户的已用会变成多少、谁会超额(只算不改) */
+  panelRatioPreview: (id: number, ratio: number) => call<RatioPreview>('GET', `/api/panels/${id}/ratio-preview?${new URLSearchParams({ ratio: String(ratio) })}`),
   /** 一键改名:这块面板上的线路都用面板的节点名(清掉各自设的),只改订阅里显示的名字 */
   panelLineNames: (id: number) => call<{ changed: number; panel: Panel }>('POST', `/api/panels/${id}/line-names`),
   /** 面板上还记着客户线路时要 force,线路记录一并删掉 */

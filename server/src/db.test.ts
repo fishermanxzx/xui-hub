@@ -114,3 +114,19 @@ test('客户 / 面板的 id 不复用:删掉最新的再建,拿新号;升级时�
   assert.equal(createCustomer(old as any, { name: 'new' }), 8);
   assert.equal(createPanel(old as any, { name: 'p', base_url: 'https://p.example:2053/x', token: 't' }).id, 6);
 });
+
+test('迁移 29:倍率搬到面板上;客户上原来的倍率不再用,已经结转的流量按当时客户的倍率折成计费用量存下', () => {
+  const old = new Database(':memory:');
+  const last = MIGRATIONS.length - 1;
+  for (let i = 0; i < last; i++) old.exec(MIGRATIONS[i]);
+  old.pragma(`user_version = ${last}`);
+  old.prepare("INSERT INTO customers (id, name, sub_token, created_at, updated_at, traffic_ratio, carried_up, carried_down) VALUES (1, 'x', 'tok1', 0, 0, 1.2, 100, 200)").run();
+  old.prepare("INSERT INTO customers (id, name, sub_token, created_at, updated_at) VALUES (2, 'y', 'tok2', 0, 0)").run();
+  old.prepare("INSERT INTO panels (id, name, base_url, token, created_at) VALUES (1, 'p', 'https://p.example:2053/x', 't', 0)").run();
+  old.exec(MIGRATIONS[last]);
+  assert.deepEqual(old.prepare('SELECT id, carried_used_up, carried_used_down FROM customers ORDER BY id').all(), [
+    { id: 1, carried_used_up: 120, carried_used_down: 240 },
+    { id: 2, carried_used_up: 0, carried_used_down: 0 },
+  ]);
+  assert.equal((old.prepare('SELECT traffic_ratio FROM panels WHERE id = 1').get() as { traffic_ratio: number }).traffic_ratio, 1);
+});

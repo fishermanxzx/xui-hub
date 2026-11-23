@@ -61,10 +61,9 @@ function customerView(c: any, ctx: ToolContext) {
     remark: c.remark,
     state: c.state,
     quota_gb: c.quota_bytes ? +(c.quota_bytes / GB).toFixed(2) : null,
-    // 已用 = 计费用量(实际 × 倍率),额度按它算;actual_used_gb 是实际流量(含删掉的线路结转过来的)
+    // 已用 = 计费用量(各线路实际流量 × 所在面板的倍率),额度按它算;actual_used_gb 是实际流量(含删掉的线路结转过来的)
     used_gb: +(c.used / GB).toFixed(2),
     actual_used_gb: +((c.actual_used ?? c.used) / GB).toFixed(2),
-    traffic_ratio: c.traffic_ratio ?? 1,
     expire_at: iso(c.expire_at),
     reset_day: c.reset_day || null,
     next_reset_at: c.next_reset_at ? new Date(c.next_reset_at).toISOString() : null,
@@ -116,7 +115,7 @@ function customerView(c: any, ctx: ToolContext) {
 /** quota_gb / expire_at(ISO 或 +N 天)换成接口要的字节和毫秒 */
 function customerInput(a: any): Record<string, unknown> {
   const body: Record<string, unknown> = {};
-  for (const k of ['name', 'remark', 'reset_day', 'limit_devices', 'monthly_fee', 'traffic_ratio', 'sub_template', 'sub_links', 'upstreams', 'upstream_mode', 'upstream_userinfo']) if (a[k] !== undefined) body[k] = a[k];
+  for (const k of ['name', 'remark', 'reset_day', 'limit_devices', 'monthly_fee', 'sub_template', 'sub_links', 'upstreams', 'upstream_mode', 'upstream_userinfo']) if (a[k] !== undefined) body[k] = a[k];
   if (a.quota_gb !== undefined) body.quota_bytes = Math.round(Number(a.quota_gb) * GB);
   if (a.expire_at !== undefined) {
     if (a.expire_at === '' || a.expire_at === null) body.expire_at = 0;
@@ -139,7 +138,6 @@ const customerFields = {
   reset_day: int('按月重置流量:0 = 不重置;1-28 = 开启。客户有到期时间时重置日跟着到期日走(每月到期日那天),这个数只在没有到期时间时当「每月几号」用', { minimum: 0, maximum: 28 }),
   limit_devices: int('能拉订阅的设备数上限,0 = 不限', { minimum: 0, maximum: 100 }),
   monthly_fee: { type: ['number', 'null'], minimum: 0, maximum: 100_000_000, description: '月费(每月收这位客户多少钱),只用来记账;null = 清掉(不填)' },
-  traffic_ratio: { type: 'number', minimum: 0.01, maximum: 100, description: '流量倍率,默认 1:计费用量 = 实际流量 × 倍率,订阅里显示的已用和额度判断都按它(线路贵的客户调高)。实际流量和流量统计不变' },
   sub_template: str('Clash 订阅模板:内置模板 id(如 ACL4SSR_Online_Full)或 https 模板地址;空字符串 = 默认'),
   sub_links: {
     type: 'array',
@@ -175,7 +173,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'list_customers',
     title: '客户列表',
-    description: '列出全部客户:状态(active 正常 / expired 已到期 / over_quota 已超额)、已用(used_gb 是按倍率算的计费用量,actual_used_gb 是实际流量)和总流量、流量倍率、到期时间、月费(monthly_fee,null = 没填)、订阅链接、线路。',
+    description: '列出全部客户:状态(active 正常 / expired 已到期 / over_quota 已超额)、已用(used_gb 是计费用量 = 各线路实际流量 × 所在面板的流量倍率,actual_used_gb 是实际流量)和总流量、到期时间、月费(monthly_fee,null = 没填)、订阅链接、线路。',
     inputSchema: obj({}),
     annotations: { readOnlyHint: true },
     run: async (_a, ctx) => (await call(ctx, 'GET', '/customers')).map((c: any) => customerView(c, ctx)),
@@ -253,7 +251,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'adjust_customer_usage',
     title: '调整本期已用',
-    description: '给客户本期已用加上或减去一些实际流量(倍率另乘),比如迁移时把旧系统里的本期用量搬过来、或者纠错。只记在 xui-hub 里,不改面板上的计数;清零时一起清。正数加、负数减,调完不能小于 0。执行前向用户确认数量。',
+    description: '给客户本期已用加上或减去一些流量(直接加减计费用量 used_gb,不乘面板倍率),比如迁移时把旧系统里的本期用量搬过来、或者纠错。只记在 xui-hub 里,不改面板上的计数;清零时一起清。正数加、负数减,调完不能小于 0。执行前向用户确认数量。',
     inputSchema: obj(
       {
         customer_id: customerId,
@@ -428,7 +426,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'list_panels',
     title: '面板列表',
-    description: '列出接入的 3x-ui 面板:id、名称、IP、是否连得上、版本、入站和客户端数量、月成本和到期时间。开线路前用它拿 panel_id。',
+    description: '列出接入的 3x-ui 面板:id、名称、IP、是否连得上、版本、入站和客户端数量、标签、流量倍率(traffic_ratio:这块面板上线路的计费用量 = 实际流量 × 它,默认 1;改倍率在后台面板页)、月成本和到期时间。开线路前用它拿 panel_id。',
     inputSchema: obj({}),
     annotations: { readOnlyHint: true },
     run: async (_a, ctx) =>
@@ -448,6 +446,8 @@ export const TOOLS: ToolDef[] = [
         // 这块面板上没单独设节点名的线路在订阅里用的名字;null = 用面板生成的
         node_name: p.node_name || null,
         tags: p.tags?.length ? p.tags : undefined,
+        // 流量倍率:这块面板上线路的计费用量 = 实际流量 × 它(默认 1)
+        traffic_ratio: p.traffic_ratio ?? 1,
         expire_at: iso(p.expire_at ?? 0),
       })),
   },

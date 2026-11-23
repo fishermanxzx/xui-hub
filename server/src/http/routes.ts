@@ -7,9 +7,10 @@ import type { DB } from '../db';
 import { createClient, type ClientAdmin } from '../clients/create';
 import { checkAllPanels, checkPanel, type PanelProbe } from '../panels/check';
 import { readPanelDetail, type PanelReader } from '../panels/inbounds';
-import { createPanel, deletePanel, getPanel, InputError, listPanels, toPanelView, updatePanel, type Panel } from '../panels/repo';
+import { createPanel, deletePanel, getPanel, InputError, listPanels, toPanelView, updatePanel, validRatio, type Panel } from '../panels/repo';
 import {
   adjustUsage,
+  previewPanelRatio,
   createCustomer,
   deleteCustomer,
   deleteLine,
@@ -262,8 +263,23 @@ export function apiRouter(deps: RouteDeps): Router {
   r.patch(
     '/panels/:id',
     wrap(async (req) => {
+      const before = getPanel(db, idParam(req));
       const panel = updatePanel(db, idParam(req), req.body ?? {});
-      return view(await checkPanel(db, panel, deps.clientFor(panel)));
+      const checked = view(await checkPanel(db, panel, deps.clientFor(panel)));
+      // 倍率变了:上面客户的已用当场重算,马上执行一次停用 / 恢复(不等下一轮同步)
+      const ops = before && before.traffic_ratio !== panel.traffic_ratio ? await enforceCustomers(db, deps.clientFor) : [];
+      return { ...checked, ops };
+    }),
+  );
+  // 面板改成 ?ratio= 这个倍率之后,上面各位客户的已用会变成多少、谁会超额(只算,不改)
+  r.get(
+    '/panels/:id/ratio-preview',
+    wrap((req) => {
+      const panel = getPanel(db, idParam(req));
+      if (!panel) throw new InputError('面板不存在');
+      const ratio = validRatio(req.query.ratio);
+      const customers = previewPanelRatio(db, panel.id, ratio);
+      return { ratio_before: panel.traffic_ratio, ratio, customers, over_after: customers.filter((c) => c.over_after && !c.over_before).length };
     }),
   );
   // 面板上还有客户线路时要带 ?force=1(线路记录会跟着删掉)
@@ -605,7 +621,7 @@ export function apiRouter(deps: RouteDeps): Router {
       return { ...customerOf(c.id), failed, ops };
     }),
   );
-  // 调整本期已用(实际流量,倍率另乘):up / down 加减的字节,记进结转;调完马上执行一次停用 / 恢复
+  // 调整本期已用(计费用量,不乘倍率):up / down 加减的字节,记进结转;调完马上执行一次停用 / 恢复
   r.post(
     '/customers/:id/adjust-usage',
     wrap(async (req) => {

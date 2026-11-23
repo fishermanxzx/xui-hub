@@ -5,7 +5,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
 import Modal from '../components/Modal.vue';
 import PanelCard from '../components/PanelCard.vue';
-import { costSummary, dateInputToMs, fmtCost, msToDateInput } from '../format';
+import { costSummary, dateInputToMs, fmtBytes, fmtCost, msToDateInput } from '../format';
 import { toast, toastError } from '../toast';
 import type { Panel, PanelInput } from '../types';
 
@@ -62,7 +62,7 @@ async function checkAll() {
 const editing = ref<Panel | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', base_url: '', token: '', cost: '', expire: '', nodeName: '', tags: '' });
+const form = ref({ name: '', base_url: '', token: '', cost: '', expire: '', nodeName: '', tags: '', ratio: '1' });
 /** 表单里填的标签(逗号 / 空格分开) */
 const splitTags = (s: string) => [...new Set(s.split(/[,,\s]+/).map((x) => x.trim()).filter(Boolean))];
 /** 别的面板用过、这里还没填的标签,点一下加上 */
@@ -86,7 +86,7 @@ const shownPanels = computed(() => (pickedTags.value.length ? panels.value.filte
 
 function openForm(panel: Panel | null) {
   editing.value = panel;
-  form.value = { name: panel?.name ?? '', base_url: panel?.base_url ?? '', token: '', cost: panel?.monthly_cost == null ? '' : String(panel.monthly_cost), expire: msToDateInput(panel?.expire_at ?? 0), nodeName: panel?.node_name ?? '', tags: (panel?.tags ?? []).join(', ') };
+  form.value = { name: panel?.name ?? '', base_url: panel?.base_url ?? '', token: '', cost: panel?.monthly_cost == null ? '' : String(panel.monthly_cost), expire: msToDateInput(panel?.expire_at ?? 0), nodeName: panel?.node_name ?? '', tags: (panel?.tags ?? []).join(', '), ratio: String(panel?.traffic_ratio ?? 1) };
   showForm.value = true;
 }
 
@@ -94,10 +94,13 @@ async function submit() {
   // 到期日没动就原样发回(表单里只有日期,重算会把到期时刻改成当天 23:59)
   const was = editing.value;
   const expireAt = was && form.value.expire === msToDateInput(was.expire_at) ? was.expire_at : dateInputToMs(form.value.expire);
-  const body: PanelInput = { name: form.value.name, base_url: form.value.base_url, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: expireAt, node_name: form.value.nodeName.trim(), tags: splitTags(form.value.tags) };
+  const ratio = form.value.ratio === '' ? 1 : Number(form.value.ratio);
+  const body: PanelInput = { name: form.value.name, base_url: form.value.base_url, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: expireAt, node_name: form.value.nodeName.trim(), tags: splitTags(form.value.tags), traffic_ratio: ratio };
   if (form.value.token) body.token = form.value.token;
   saving.value = true;
   try {
+    // 改倍率:这块面板上的客户本期已用会当场按新倍率重算,先算出谁会超额,确认了再存
+    if (was && ratio !== was.traffic_ratio && was.line_count && !(await confirmRatio(was, ratio))) return;
     const saved = editing.value ? await api.updatePanel(editing.value.id, body) : await api.createPanel(body);
     showForm.value = false;
     toast(saved.check_error ? t('panels.savedButDown', { error: saved.check_error }) : t('panels.savedOk'), saved.check_error ? 'err' : 'ok');
@@ -108,6 +111,20 @@ async function submit() {
   } finally {
     saving.value = false;
   }
+}
+
+async function confirmRatio(panel: Panel, ratio: number): Promise<boolean> {
+  const p = await api.panelRatioPreview(panel.id, ratio);
+  const over = p.customers.filter((c) => c.over_after && !c.over_before);
+  const lines = [
+    t('panels.ratioConfirm', { name: panel.name, from: p.ratio_before, to: p.ratio, n: p.customers.length }),
+    '',
+    ...p.customers.slice(0, 12).map((c) => t('panels.ratioRow', { name: c.name, before: fmtBytes(c.used_before), after: fmtBytes(c.used_after), quota: c.quota_bytes ? fmtBytes(c.quota_bytes) : t('customers.unlimited').trim() }) + (c.over_after && !c.over_before ? ` ← ${t('panels.ratioOver')}` : c.over_after ? ` (${t('panels.ratioAlreadyOver')})` : '')),
+    ...(p.customers.length > 12 ? [t('panels.ratioMore', { n: p.customers.length - 12 })] : []),
+    '',
+    over.length ? t('panels.ratioOverSummary', { n: over.length, names: over.map((c) => c.name).join('、') }) : t('panels.ratioNoneOver'),
+  ];
+  return confirm(lines.join('\n'));
 }
 
 async function remove(panel: Panel) {
@@ -187,6 +204,8 @@ onUnmounted(() => clearInterval(timer));
         <label class="field">{{ t('cost.field') }}<input v-model="form.cost" type="number" min="0" step="0.01" /></label>
         <label class="field">{{ t('cost.expireField') }}<input v-model="form.expire" type="date" /></label>
       </div>
+      <label class="field">{{ t('panels.trafficRatio') }}<input v-model="form.ratio" type="number" min="0.01" max="100" step="0.01" :title="t('panels.ratioHint')" /></label>
+      <p class="muted small hint node-hint">{{ t('panels.ratioHint') }}</p>
       <p class="muted small hint">{{ t('panels.hint') }} {{ t('cost.hint') }}</p>
     </form>
     <template #footer>

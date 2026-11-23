@@ -46,8 +46,8 @@ test('操作日志:登录、客户的新建 / 修改(只写改了的,前后对�
     await call('PATCH', `/customers/${c.id}`, { name: '张三', quota_bytes: c.quota_bytes, monthly_fee: 30, upstreams: [], sub_links: [] });
     assert.equal(listOpLog(db).rows.length, 3);
 
-    await call('PATCH', `/customers/${c.id}`, { quota_bytes: 200 * 1024 ** 3, monthly_fee: null, remark: '老客户', traffic_ratio: 1.5 });
-    assert.equal(summaries(db)[0], '修改客户「张三」:备注改成「老客户」;额度 100 GB → 200 GB;月费 30 → 没填;流量倍率 ×1 → ×1.5');
+    await call('PATCH', `/customers/${c.id}`, { quota_bytes: 200 * 1024 ** 3, monthly_fee: null, remark: '老客户' });
+    assert.equal(summaries(db)[0], '修改客户「张三」:备注改成「老客户」;额度 100 GB → 200 GB;月费 30 → 没填');
 
     await call('POST', `/customers/${c.id}/renew`, { months: 1, amount: 30, note: '微信' });
     assert.match(summaries(db)[0], /^给「张三」续费 1 个月:到期 不限期 → \d{4}-\d{2}-\d{2};收款 30;备注「微信」$/);
@@ -57,12 +57,12 @@ test('操作日志:登录、客户的新建 / 修改(只写改了的,前后对�
     await call('DELETE', `/payments/${pay.id}`);
     assert.match(summaries(db)[0], /^删除「张三」\d{4}-\d{2}-\d{2} 的一笔记录\(金额 -5,只记收款;到期日不变\)$/);
     await call('POST', `/customers/${c.id}/adjust-usage`, { down: 2 * 1024 ** 3 });
-    assert.equal(summaries(db)[0], '调整「张三」本期已用 +2 GB(实际流量)');
+    assert.equal(summaries(db)[0], '调整「张三」本期已用 +2 GB(计费用量)');
     await call('POST', `/customers/${c.id}/sub-token`);
     assert.equal(summaries(db)[0], '重置「张三」的订阅链接(旧链接失效)');
     // 清零:已用 0 写 0 GB
     await call('POST', `/customers/${c.id}/reset-usage`);
-    assert.equal(summaries(db)[0], '清零「张三」的流量(清零前已用 3 GB)');
+    assert.equal(summaries(db)[0], '清零「张三」的流量(清零前已用 2 GB)');
     await call('POST', `/customers/${c.id}/reset-usage`);
     assert.equal(summaries(db)[0], '清零「张三」的流量(清零前已用 0 GB)');
     // 到期只改了时刻:带上时刻
@@ -117,6 +117,8 @@ test('操作日志:设置只写开关和数字的前后,令牌 / 密钥不写值
     assert.equal(summaries(db)[0], '把面板「hk」上 0 条线路的节点名改成跟着面板的「香港 01」');
     await call('PATCH', `/panels/${p.id}`, { tags: '亚洲,便宜' });
     assert.equal(summaries(db)[0], '修改面板「hk」:标签 (无) → 亚洲、便宜');
+    await call('PATCH', `/panels/${p.id}`, { traffic_ratio: 1.2 });
+    assert.equal(summaries(db)[0], '修改面板「hk」:流量倍率 ×1 → ×1.2(上面有 0 位客户的线路,本期已用按新倍率重算)');
   } finally {
     await close();
   }

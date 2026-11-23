@@ -8,6 +8,8 @@ export interface Panel {
   node_name: string;
   /** 标签(面板页 / 客户页按标签筛) */
   tags: string[];
+  /** 流量倍率:这块面板上线路的计费用量 = 实际流量 × 倍率,默认 1 */
+  traffic_ratio: number;
   created_at: number;
   /** 最近一次连通性检查 */
   checked_at: number | null;
@@ -49,6 +51,16 @@ export interface PanelInput {
   expire_at?: number;
   node_name?: string;
   tags?: string[];
+  traffic_ratio?: number;
+}
+
+/** 改面板倍率前的预览:上面每位客户改完的已用、谁会超额 */
+export interface RatioPreview {
+  ratio_before: number;
+  ratio: number;
+  /** 改完会从没超额变成超额的人数 */
+  over_after: number;
+  customers: { id: number; name: string; quota_bytes: number; used_before: number; used_after: number; over_before: boolean; over_after: boolean }[];
 }
 
 export interface PanelClient {
@@ -166,6 +178,10 @@ export interface Line {
   /** 最近一次同步到的客户端流量与状态 */
   up: number;
   down: number;
+  /** 所在面板的流量倍率;本期计费用量 = up / down × 它 */
+  panel_ratio: number;
+  used_up: number;
+  used_down: number;
   enable: boolean;
   auto_disabled: boolean;
   last_online: number;
@@ -216,11 +232,12 @@ export interface Customer {
   limit_devices: number;
   /** 月费,null = 没填;只用来记账 */
   monthly_fee: number | null;
-  /** 流量倍率:计费用量 = 实际流量 × 倍率,默认 1 */
-  traffic_ratio: number;
   /** 结转的实际流量(删掉的线路、面板上清零前的计数、手动调整),清零时一起清;可以是负数 */
   carried_up: number;
   carried_down: number;
+  /** 结转的计费用量(结转时按当时那块面板的倍率折好的) */
+  carried_used_up: number;
+  carried_used_down: number;
   /** 订阅链接 /sub/<token> 里的 token */
   sub_token: string;
   /** 订阅链接;未配置 SUB_BASE_URL 时为 null,前端用当前地址拼 */
@@ -251,7 +268,7 @@ export interface Customer {
   actual_up: number;
   actual_down: number;
   actual_used: number;
-  /** 本期计费用量 = 实际 × 倍率(订阅里显示的、额度判断用的) */
+  /** 本期计费用量 = 各线路实际流量 × 所在面板的倍率 + 结转(订阅里显示的、额度判断用的) */
   used_up: number;
   used_down: number;
   used: number;
@@ -286,7 +303,6 @@ export interface CustomerInput {
   sub_template?: string;
   limit_devices?: number;
   monthly_fee?: number | null;
-  traffic_ratio?: number;
   sub_links?: string[];
   upstreams?: { url: string; node_name?: string }[];
   upstream_mode?: 'merge' | 'replace';

@@ -93,7 +93,7 @@ export function syncLines(db: DB, panelId: number, clients: ReturnType<typeof no
         updateLineStats(db, line.id, { up: line.up, down: line.down, enable: c.enable, last_online: line.last_online }, now);
         continue;
       }
-      carryTraffic(db, line.customer_id, c.up < line.up ? line.up : 0, c.down < line.down ? line.down : 0);
+      carryTraffic(db, line.customer_id, c.up < line.up ? line.up : 0, c.down < line.down ? line.down : 0, line.panel_ratio);
       updateLineStats(db, line.id, { up: c.up, down: c.down, enable: c.enable, last_online: c.lastOnline }, now);
     }
   })();

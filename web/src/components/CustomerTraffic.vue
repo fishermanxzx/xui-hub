@@ -106,7 +106,7 @@ const share = (v: number) => (total.value ? `${((v / total.value) * 100).toFixed
     </div>
     <p v-else class="muted small">{{ t('traffic.empty') }}</p>
     <p class="muted small note">
-      {{ t('customerTraffic.note') }}<template v-if="customer.traffic_ratio !== 1"> {{ t('customerTraffic.ratioNote', { v: customer.traffic_ratio }) }}</template>
+      {{ t('customerTraffic.note') }}<template v-if="customer.actual_used !== customer.used"> {{ t('customerTraffic.ratioNote') }}</template>
     </p>
   </template>
 </template>

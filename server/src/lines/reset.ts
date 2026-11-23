@@ -44,7 +44,7 @@ export async function resetCustomerUsage(db: DB, c: CustomerView, adminFor: (pan
     );
   }
   clearCarried(db, c.id);
-  for (const l of missed) carryTraffic(db, c.id, -l.up, -l.down);
+  for (const l of missed) carryTraffic(db, c.id, -l.up, -l.down, l.panel_ratio);
   // 「流量用到 90%」下个周期要能再提醒
   forgetNotified(db, `quota:${c.id}:`);
   return failed;

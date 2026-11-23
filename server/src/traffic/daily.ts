@@ -48,6 +48,24 @@ export function recordTraffic(db: DB, panelId: number, clients: { email: string;
   })();
 }
 
+/**
+ * 一位客户最近 days 天每天的计费用量:各线路(含删掉的)每天的上下行,各乘上所在面板现在的倍率(面板已删的按 1)。
+ * 自助页的「每天用量」用它,和订阅里的已用一个口径
+ */
+export function dailyBilled(db: DB, customerId: number, days: number, now = Date.now()): { days: string[]; bytes: number[] } {
+  const list = lastDays(days, now);
+  const index = new Map(list.map((d, i) => [d, i]));
+  const bytes = list.map(() => 0);
+  const rows = db
+    .prepare('SELECT t.day, SUM(t.up + t.down) AS total, COALESCE(p.traffic_ratio, 1) AS ratio FROM traffic_daily t LEFT JOIN panels p ON p.id = t.panel_id WHERE t.customer_id = ? AND t.day >= ? GROUP BY t.day, t.panel_id')
+    .all(customerId, list[0]) as { day: string; total: number; ratio: number }[];
+  for (const r of rows) {
+    const i = index.get(r.day);
+    if (i !== undefined) bytes[i] += Math.round(r.total * r.ratio);
+  }
+  return { days: list, bytes };
+}
+
 export function pruneTraffic(db: DB, now = Date.now()): void {
   db.prepare('DELETE FROM traffic_daily WHERE day < ?').run(dayKey(now - TRAFFIC_KEEP_DAYS * DAY_MS));
 }
