@@ -7,14 +7,48 @@ export function setUnauthorizedHandler(fn: () => void): void {
   onUnauthorized = fn;
 }
 
+/**
+ * 接口报的错。lost = 没拿到后台的结果:连接中途断了,或中间的代理 / CDN 回了自己的错误页(5xx、不是后台的 JSON)。
+ * 这时后台可能照样做完了,改东西的操作要回头核对,不能直接当没成。
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly lost: boolean,
+  ) {
+    super(message);
+  }
+}
+export const isLost = (e: unknown) => e instanceof ApiError && e.lost;
+
+/** 每个改东西的请求一个新 key:连接断了浏览器 / 代理把它再发一遍时,后台认得是同一个,不做第二遍 */
+function requestKey(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    // 不是 https 打开的页面没有 randomUUID
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  }
+}
+
 async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
   const rawBody = body instanceof Blob;
-  const res = await fetch(url, {
-    method,
-    // 带上界面语言:服务端按它给出错误信息
-    headers: { 'Accept-Language': locale.value, ...(body !== undefined ? { 'Content-Type': rawBody ? 'application/octet-stream' : 'application/json' } : {}) },
-    body: body === undefined ? undefined : rawBody ? body : JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      // 带上界面语言:服务端按它给出错误信息
+      headers: {
+        'Accept-Language': locale.value,
+        ...(method !== 'GET' ? { 'Idempotency-Key': requestKey() } : {}),
+        ...(body !== undefined ? { 'Content-Type': rawBody ? 'application/octet-stream' : 'application/json' } : {}),
+      },
+      body: body === undefined ? undefined : rawBody ? body : JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new ApiError(e instanceof Error ? e.message : String(e), 0, true);
+  }
   const text = await res.text();
   let data: any = null;
   try {
@@ -23,7 +57,7 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
     /* 非 JSON 错误页 */
   }
   if (res.status === 401 && !url.endsWith('/login')) onUnauthorized?.();
-  if (!res.ok) throw new Error(data?.error || text || `HTTP ${res.status}`);
+  if (!res.ok) throw new ApiError(data?.error || text.slice(0, 200) || `HTTP ${res.status}`, res.status, res.status >= 500 && typeof data?.error !== 'string');
   return data as T;
 }
 
@@ -106,7 +140,7 @@ export const api = {
   batchLineExit: (body: { customer_id?: number; line_ids?: number[]; exit: LineExitTarget }) =>
     call<{ changed: number[]; lines: Line[]; failed: { id: number; line: string; error: string }[] }>('POST', '/api/lines/batch-exit', body),
   /** 批量删线路:面板上删成了的删记录;force = 面板上删没删成都删记录 */
-  deleteLines: (lineIds: number[], force = false) => call<{ deleted: number[]; failed: { id: number; line: string; error: string }[] }>('POST', '/api/lines/batch-delete', { line_ids: lineIds, force }),
+  deleteLines: (lineIds: number[], force = false) => call<{ deleted: number[]; missing: number[]; failed: { id: number; line: string; error: string }[] }>('POST', '/api/lines/batch-delete', { line_ids: lineIds, force }),
   /** 把面板上已有的客户端归到客户名下(成为直连线路),面板上不改 */
   importClients: (id: number, panelId: number, emails: string[]) => call<ImportResult>('POST', `/api/customers/${id}/lines/import`, { panel_id: panelId, emails }),
 

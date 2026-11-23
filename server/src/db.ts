@@ -348,6 +348,10 @@ export const MIGRATIONS: string[] = [
   -- 面板的标签(JSON 字符串数组),面板页 / 客户页按标签筛
   ALTER TABLE panels ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
   `,
+  `
+  -- 线路的 id 也不再复用(删了最新的线路再开,新线路不会顶上旧 id;停在旧页面上的操作不会落到别的线路上)
+  INSERT OR REPLACE INTO meta (key, value) SELECT 'lines_max_id', CAST(COALESCE(MAX(id), 0) AS TEXT) FROM lines;
+  `,
 ];
 
 export function openDb(file: string): DB {
@@ -383,7 +387,7 @@ export function setMeta(db: DB, key: string, value: string): void {
  * 新客户 / 新面板的 id:比现在的和以前用过的都大。SQLite 不带 AUTOINCREMENT 的表会复用删掉的最大 id,
  * 而收款、流量统计、操作日志、拉取记录按 id 留着删掉的客户 / 面板的记录,复用了就会串到新的头上
  */
-export function nextId(db: DB, table: 'customers' | 'panels'): number {
+export function nextId(db: DB, table: 'customers' | 'panels' | 'lines'): number {
   const key = `${table}_max_id`;
   const max = Math.max(Number(getMeta(db, key)) || 0, (db.prepare(`SELECT COALESCE(MAX(id), 0) AS m FROM ${table}`).get() as { m: number }).m);
   setMeta(db, key, String(max + 1));

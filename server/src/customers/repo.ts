@@ -465,10 +465,10 @@ export interface LineInsert {
 export function addLine(db: DB, l: LineInsert, now = Date.now()): Line {
   const info = db
     .prepare(
-      `INSERT INTO lines (customer_id, kind, panel_id, inbound_id, inbound_remark, protocol, email, exit_kind, exit_panel_id, exit_port, exit_socks_id, exit_label, node_name, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO lines (id, customer_id, kind, panel_id, inbound_id, inbound_remark, protocol, email, exit_kind, exit_panel_id, exit_port, exit_socks_id, exit_label, node_name, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(l.customer_id, l.kind, l.panel_id, l.inbound_id, l.inbound_remark, l.protocol, l.email, l.exit_kind ?? null, l.exit_panel_id ?? null, l.exit_port ?? null, l.exit_socks_id ?? null, l.exit_label ?? '', l.node_name ?? '', now);
+    .run(nextId(db, 'lines'), l.customer_id, l.kind, l.panel_id, l.inbound_id, l.inbound_remark, l.protocol, l.email, l.exit_kind ?? null, l.exit_panel_id ?? null, l.exit_port ?? null, l.exit_socks_id ?? null, l.exit_label ?? '', l.node_name ?? '', now);
   return getLine(db, Number(info.lastInsertRowid))!;
 }
 
