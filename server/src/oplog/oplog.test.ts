@@ -60,6 +60,15 @@ test('操作日志:登录、客户的新建 / 修改(只写改了的,前后对�
     assert.equal(summaries(db)[0], '调整「张三」本期已用 +2 GB(实际流量)');
     await call('POST', `/customers/${c.id}/sub-token`);
     assert.equal(summaries(db)[0], '重置「张三」的订阅链接(旧链接失效)');
+    // 清零:已用 0 写 0 GB
+    await call('POST', `/customers/${c.id}/reset-usage`);
+    assert.equal(summaries(db)[0], '清零「张三」的流量(清零前已用 3 GB)');
+    await call('POST', `/customers/${c.id}/reset-usage`);
+    assert.equal(summaries(db)[0], '清零「张三」的流量(清零前已用 0 GB)');
+    // 到期只改了时刻:带上时刻
+    const exp = (await call('GET', '/customers')).body.find((x: any) => x.id === c.id).expire_at;
+    await call('PATCH', `/customers/${c.id}`, { expire_at: exp - 3600_000 });
+    assert.match(summaries(db)[0], /^修改客户「张三」:到期 \d{4}-\d{2}-\d{2} \d{2}:\d{2} → \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
 
     // 没成的:记原因
     assert.equal((await call('POST', '/customers/999/renew', { months: 1 })).status, 400);
@@ -73,7 +82,7 @@ test('操作日志:登录、客户的新建 / 修改(只写改了的,前后对�
     await call('DELETE', `/customers/${c.id}`);
     assert.equal(summaries(db)[0], '删除客户「张三」(连同 0 条线路)');
     // 客户删了,他的日志还能按 id 筛出来
-    assert.equal(listOpLog(db, { customer_id: c.id }).rows.length, 8);
+    assert.equal(listOpLog(db, { customer_id: c.id }).rows.length, 11);
     assert.deepEqual(listOpLog(db, { failed: true }).rows.map((r) => r.summary), ['给「#999」续费', '登录']);
     assert.deepEqual(listOpLog(db, { q: '退款' }).rows.map((r) => r.summary), ['给「张三」记一笔退款 -5']);
   } finally {
@@ -174,6 +183,9 @@ test('操作日志:线路换出口写成「直出 → SOCKS isp」;批量写换�
     const n = listOpLog(db).rows.length;
     await call('PUT', `/customers/${c.id}/lines/${l.id}/exit`, { exit: { kind: 'socks', socks_id: s.id } });
     assert.equal(listOpLog(db).rows.length, n);
+    // 在面板上直接建客户端:写面板上实际的名字
+    await call('POST', `/panels/${p.id}/clients`, { name: 'alice', inbound_id: 5 });
+    assert.equal(summaries(db)[0], '在面板「hk」上新建客户端 alice');
     await call('POST', '/lines/batch-exit', { customer_id: c.id, exit: { kind: 'direct' } });
     const row = listOpLog(db).rows[0];
     assert.deepEqual([row.summary, row.customer_id], [`批量换出口 → 直出(换好 1 条):「张三」hk · ${l.email}`, c.id]);

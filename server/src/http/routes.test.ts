@@ -187,7 +187,7 @@ test('客户全流程:建客户、开线路、取链接、超额停用、清零�
 
     // 面板上流量超了额度:同步后停用
     data.hk.clients[0].traffic = { up: 600, down: 600 };
-    assert.deepEqual((await call('POST', '/sync')).body, { ops: [{ customer: '李四', panel: 'hk', email: '李四', action: 'disable', ok: true }] });
+    assert.deepEqual((await call('POST', '/sync')).body, { ops: [{ customer_id: c.id, customer: '李四', panel: 'hk', email: '李四', action: 'disable', ok: true }] });
     assert.equal(data.hk.clients[0].enable, false);
     let listed = (await call('GET', '/customers')).body[0];
     assert.deepEqual([listed.state, listed.used, listed.lines[0].enable, listed.lines[0].auto_disabled], ['over_quota', 1200, false, true]);
@@ -201,7 +201,7 @@ test('客户全流程:建客户、开线路、取链接、超额停用、清零�
     // 改成已到期:马上停;面板报错时结果里带上
     data.hk.fail = { setClientsEnabled: '面板报错' };
     let patched = (await call('PATCH', `/customers/${c.id}`, { expire_at: 1 })).body;
-    assert.deepEqual([patched.state, patched.ops], ['expired', [{ customer: '李四', panel: 'hk', email: '李四', action: 'disable', ok: false, error: '面板报错' }]]);
+    assert.deepEqual([patched.state, patched.ops], ['expired', [{ customer_id: c.id, customer: '李四', panel: 'hk', email: '李四', action: 'disable', ok: false, error: '面板报错' }]]);
     data.hk.fail = {};
     patched = (await call('PATCH', `/customers/${c.id}`, { remark: '续费中' })).body;
     assert.deepEqual([patched.remark, patched.ops.map((o: any) => [o.action, o.ok]), data.hk.clients[0].enable], ['续费中', [['disable', true]], false]);
@@ -818,6 +818,14 @@ test('批量换出口:哪块面板没成,只有那块上的线路不改记录、
     const [ka, kb] = getCustomer(db, c.id)!.lines;
     assert.deepEqual([ka.kind, ka.exit_socks_id, kb.kind, kb.exit_socks_id], ['relay', s1, 'direct', null]);
     assert.equal((await call('PUT', `/customers/${c.id}/lines/${lb.id}/exit`, { exit: { kind: 'socks', socks_id: s1 } })).status, 502);
+
+    // 写进去了,但 Xray 没起来:面板改回原来的配置,记录不动
+    data.b.fail = { restartXray: new XUIError('Xray 没有恢复运行') };
+    const originalB = JSON.stringify(data.b.xray);
+    const down = await call('PUT', `/customers/${c.id}/lines/${lb.id}/exit`, { exit: { kind: 'socks', socks_id: s1 } });
+    assert.deepEqual([down.status, down.body.error], [502, 'Xray 没有恢复运行']);
+    assert.equal(JSON.stringify(data.b.xray), originalB);
+    assert.equal(getCustomer(db, c.id)!.lines[1].kind, 'direct');
 
     // 写进去了但读回来不对(面板没存上):不改记录
     delete data.b.fail;

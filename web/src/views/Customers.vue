@@ -203,7 +203,11 @@ function opsNote(ops: EnforceOp[]): string {
 
 async function submit() {
   saving.value = true;
-  const body = { name: form.value.name, remark: form.value.remark, monthly_fee: form.value.fee === '' ? null : Number(form.value.fee), traffic_ratio: form.value.ratio === '' ? 1 : Number(form.value.ratio), quota_bytes: form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb)), expire_at: dateInputToMs(form.value.expire), reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template, sub_links: form.value.subLinks.split('\n').map((x) => x.trim()).filter(Boolean), upstreams: form.value.upstreams.map((u) => ({ url: u.url.trim(), node_name: u.node_name.trim() })).filter((u) => u.url), upstream_mode: form.value.upstreamReplace ? ('replace' as const) : ('merge' as const), upstream_userinfo: form.value.upstreamUserinfo };
+  // 到期日、额度没动就原样发回:表单里只有日期和取整过的 GB,按表单重算会把到期时刻改成当天 23:59、额度变成取整后的值
+  const was = editing.value;
+  const expireAt = was && form.value.expire === msToDateInput(was.expire_at) ? was.expire_at : dateInputToMs(form.value.expire);
+  const quotaBytes = was && String(form.value.quotaGb ?? '') === (was.quota_bytes ? String(bytesToGb(was.quota_bytes)) : '') ? was.quota_bytes : form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb));
+  const body = { name: form.value.name, remark: form.value.remark, monthly_fee: form.value.fee === '' ? null : Number(form.value.fee), traffic_ratio: form.value.ratio === '' ? 1 : Number(form.value.ratio), quota_bytes: quotaBytes, expire_at: expireAt, reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template, sub_links: form.value.subLinks.split('\n').map((x) => x.trim()).filter(Boolean), upstreams: form.value.upstreams.map((u) => ({ url: u.url.trim(), node_name: u.node_name.trim() })).filter((u) => u.url), upstream_mode: form.value.upstreamReplace ? ('replace' as const) : ('merge' as const), upstream_userinfo: form.value.upstreamUserinfo };
   try {
     const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
     let ops = (saved as { ops?: EnforceOp[] }).ops ?? [];
@@ -1026,7 +1030,7 @@ function exitText(l: Line): string {
         <label class="field">{{ t('customers.monthlyFee') }}<input v-model="form.fee" type="number" min="0" step="0.01" /></label>
       </div>
       <div class="two">
-        <label class="field">{{ t('customers.quota') }}<input v-model="form.quotaGb" type="number" min="0" step="1" /></label>
+        <label class="field">{{ t('customers.quota') }}<input v-model="form.quotaGb" type="number" min="0" step="any" /></label>
         <div class="field">
           <label class="row small check"><input v-model="form.monthlyReset" type="checkbox" @change="onMonthlyReset" />{{ t('customers.monthlyReset') }}</label>
           <span v-if="!form.monthlyReset" class="muted small">{{ t('customers.monthlyOff') }}</span>

@@ -327,6 +327,20 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX op_log_customer ON op_log(customer_id, id);
   `,
   `
+  -- 客户 / 面板的 id 不再复用:记下用过的最大 id(含已经删掉、只剩收款 / 流量 / 日志 / 拉取记录的),新建时从它往上数(见 nextId)
+  INSERT OR REPLACE INTO meta (key, value) SELECT 'customers_max_id', CAST(COALESCE(MAX(m), 0) AS TEXT) FROM (
+    SELECT MAX(id) AS m FROM customers
+    UNION ALL SELECT MAX(customer_id) FROM payments
+    UNION ALL SELECT MAX(customer_id) FROM traffic_daily
+    UNION ALL SELECT MAX(customer_id) FROM op_log
+    UNION ALL SELECT MAX(customer_id) FROM sub_fetches
+  );
+  INSERT OR REPLACE INTO meta (key, value) SELECT 'panels_max_id', CAST(COALESCE(MAX(m), 0) AS TEXT) FROM (
+    SELECT MAX(id) AS m FROM panels
+    UNION ALL SELECT MAX(panel_id) FROM traffic_daily
+  );
+  `,
+  `
   -- 面板的节点名:这块面板上没单独设节点名的线路,订阅里用它;空 = 用面板(3x-ui)生成的名字
   ALTER TABLE panels ADD COLUMN node_name TEXT NOT NULL DEFAULT '';
   `,
@@ -359,4 +373,15 @@ export function getMeta(db: DB, key: string): string | undefined {
 
 export function setMeta(db: DB, key: string, value: string): void {
   db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value);
+}
+
+/**
+ * 新客户 / 新面板的 id:比现在的和以前用过的都大。SQLite 不带 AUTOINCREMENT 的表会复用删掉的最大 id,
+ * 而收款、流量统计、操作日志、拉取记录按 id 留着删掉的客户 / 面板的记录,复用了就会串到新的头上
+ */
+export function nextId(db: DB, table: 'customers' | 'panels'): number {
+  const key = `${table}_max_id`;
+  const max = Math.max(Number(getMeta(db, key)) || 0, (db.prepare(`SELECT COALESCE(MAX(id), 0) AS m FROM ${table}`).get() as { m: number }).m);
+  setMeta(db, key, String(max + 1));
+  return max + 1;
 }

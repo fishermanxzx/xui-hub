@@ -1,7 +1,7 @@
 // 客户与线路的存取。线路 = 客户在某块面板上的一个 client,直出或走 SOCKS 出口(exit_kind = socks;旧版本留下的 exit_kind = panel 照常生效)。
 
 import { randomBytes } from 'node:crypto';
-import type { DB } from '../db';
+import { nextId, type DB } from '../db';
 import { InputError, validCost } from '../panels/repo';
 import { customLinksByCustomer, setCustomLinks } from '../subscription/customLinks';
 import { validTemplate } from '../subscription/templates';
@@ -289,10 +289,10 @@ const newSubToken = () => randomBytes(18).toString('base64url');
 
 export function createCustomer(db: DB, input: CustomerInput, now = Date.now()): number {
   return db.transaction(() => {
-    const info = db
-      .prepare('INSERT INTO customers (name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_template, limit_devices, monthly_fee, traffic_ratio, sub_token, upstream_mode, upstream_userinfo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, validTemplate(input.sub_template), validLimitDevices(input.limit_devices), validCost(input.monthly_fee, '月费'), validRatio(input.traffic_ratio), newSubToken(), validUpstreamMode(input.upstream_mode), input.upstream_userinfo === true ? 1 : 0, now, now);
-    const id = Number(info.lastInsertRowid);
+    const values = [validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, validTemplate(input.sub_template), validLimitDevices(input.limit_devices), validCost(input.monthly_fee, '月费'), validRatio(input.traffic_ratio), newSubToken(), validUpstreamMode(input.upstream_mode), input.upstream_userinfo === true ? 1 : 0, now, now];
+    // 先校验完再取 id,写错的不会白占一个号
+    const id = nextId(db, 'customers');
+    db.prepare('INSERT INTO customers (id, name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_template, limit_devices, monthly_fee, traffic_ratio, sub_token, upstream_mode, upstream_userinfo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, ...values);
     if (input.sub_links !== undefined) setCustomLinks(db, id, input.sub_links);
     if (input.upstreams !== undefined) setUpstreams(db, id, input.upstreams);
     return id;
@@ -442,11 +442,6 @@ export function lineByEmail(db: DB, panelId: number, email: string): Line | unde
   return row ? toLine(row) : undefined;
 }
 
-/** 出口是这个 SOCKS 的线路 */
-export function linesViaSocks(db: DB, socksId: number): Line[] {
-  return (db.prepare(`${LINE_SQL} WHERE l.exit_socks_id = ? ORDER BY l.id`).all(socksId) as any[]).map(toLine);
-}
-
 export function deleteCustomer(db: DB, id: number): void {
   if (!db.prepare('DELETE FROM customers WHERE id = ?').run(id).changes) throw new InputError('客户不存在');
 }
@@ -485,7 +480,6 @@ export function clearLineNames(db: DB, panelId: number): number {
   return db.prepare("UPDATE lines SET node_name = '' WHERE panel_id = ? AND node_name != ''").run(panelId).changes;
 }
 
-/** 改线路的自定义节点名(只改这里的记录,面板上不动) */
 /** 线路的出口规则(已经写到面板上之后再存) */
 export function setLineRules(db: DB, id: number, rules: LineRule[]): void {
   db.prepare('UPDATE lines SET rules = ? WHERE id = ?').run(JSON.stringify(rules), id);
@@ -518,6 +512,7 @@ export function setLineExit(db: DB, id: number, exit: { socks_id: number; label:
   );
 }
 
+/** 改线路的自定义节点名(只改这里的记录,面板上不动) */
 export function setLineName(db: DB, id: number, name: string): void {
   if (!db.prepare('UPDATE lines SET node_name = ? WHERE id = ?').run(name, id).changes) throw new InputError('线路不存在');
 }

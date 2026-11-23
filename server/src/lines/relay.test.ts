@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createSocks } from '../socks/repo';
 import { memoryDb } from '../testUtil';
-import { applyRoutes, ensureOutbound, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, setUserRules, unrouteUser } from './relay';
+import { editXray, ensureOutbound, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, setUserRules, unrouteUser } from './relay';
 
 const socksOut = (tag: string, address: string, port: number, user?: string, pass?: string) => ({
   tag,
@@ -88,7 +88,13 @@ test('没人用的出站才删:别的规则、负载均衡、链式出站还在�
   assert.deepEqual(xray.outbounds.map((o: any) => o.tag), ['direct', 'my-proxy', 'socks-2.2.2.2-1080', 'socks-3.3.3.3-1080', 'socks-4.4.4.4-1080', 'chained']);
 });
 
-test('applyRoutes / removeRoutes:读配置、改路由、按原 testUrl 写回并重启;没有变化就不写不重启', async () => {
+test('editXray / removeRoutes:读配置、改路由、按原 testUrl 写回并重启;没有变化就不写不重启', async () => {
+  // 和开线路、换出口一样:读到的配置没有出站就不往上写
+  const applyRoutes = (admin: Parameters<typeof editXray>[0], routes: { inboundTag: string; email: string; server: { address: string; port: number; user: string; pass: string } }[]) =>
+    editXray(admin, (xray) => {
+      if (!Array.isArray(xray.outbounds) || !xray.outbounds.length) throw new Error('读到的 Xray 配置不完整(没有出站)');
+      for (const r of routes) routeUserToExit(xray, r.inboundTag, r.email, r.server);
+    });
   const calls: string[] = [];
   let saved: any = { outbounds: [{ tag: 'direct', protocol: 'freedom' }], routing: { rules: [] } };
   const admin = {

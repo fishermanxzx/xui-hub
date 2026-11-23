@@ -52,7 +52,7 @@ export const env = {
   tls: tlsFiles(),
   /** 订阅链接的地址前缀,如 https://sub.example.com;空 = 前端用打开后台的地址拼 */
   subBaseUrl: (process.env.SUB_BASE_URL?.trim() || '').replace(/\/+$/, ''),
-  /** Clash 输出套用 Mihomo 基础模板的范围:all / 逗号分隔的客户名(灰度)/ 空 = 关闭 */
+  /** Clash 输出套用 Mihomo 基础模板的范围:空或 all = 全部客户,off = 关闭,也可以填逗号分隔的客户名(灰度) */
   mihomoTemplate: process.env.MIHOMO_TEMPLATE ?? '',
   /** 内部 subconverter 地址(转 Clash / Surge 用);空 = 这两种格式不可用 */
   subconverterUrl: process.env.SUBCONVERTER_URL?.trim() || '',

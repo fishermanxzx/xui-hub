@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addLine, createCustomer, getCustomer, getLine, updateLineStats, zeroLineTraffic } from '../customers/repo';
+import { addLine, createCustomer, getCustomer, getLine, markLineAuto, updateLineStats, zeroLineTraffic } from '../customers/repo';
+import { normalizeClients } from '../xui/normalize';
 import { createSocks } from '../socks/repo';
 import { addPanel, memoryDb, vlessInbound } from '../testUtil';
 import { XUIError, resolveHostIp } from '../xui/client';
-import { checkAllPanels, checkPanel, type PanelProbe } from './check';
+import { checkAllPanels, checkPanel, syncLines, type PanelProbe } from './check';
 import { getPanel, updatePanel } from './repo';
 
 const status = (over: Partial<{ panelVersion: string; xrayVersion: string; xrayState: string }> = {}) => ({ panelVersion: '3.0.0', xrayVersion: '25.1.1', xrayState: 'running', xrayError: '', ...over });
@@ -180,4 +181,55 @@ test('同步线路:面板上的计数变小了(在面板上清零、删了重建
   await sync(1, 2, 50);
   assert.deepEqual([getLine(db, l.id)!.up, getLine(db, l.id)!.down], [1, 2]);
   assert.deepEqual(usage().slice(2), [100, 1000]);
+});
+
+test('同一块面板的两次检查排队跑:先发起的读得慢,也不会用旧计数盖掉后来的新计数(不会当成面板上清零而翻倍)', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  const cid = createCustomer(db, { name: 'c' });
+  const line = addLine(db, { customer_id: cid, kind: 'direct', panel_id: a.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'c' });
+  let counter = 100;
+  const reads: number[] = [];
+  // 每次读到的是读的那一刻的计数;第一次读得慢(读完之前客户又用了 50)
+  const probe = (delay: number) =>
+    fakeProbe([], {
+      listClients: async () => {
+        const n = counter;
+        reads.push(n);
+        await new Promise((r) => setTimeout(r, delay));
+        return [client('c', { traffic: { up: 0, down: n } })];
+      },
+    });
+  const first = checkPanel(db, a, probe(40));
+  // 第一次已经读到 100、还没读完时,客户又用了 50,接着来了第二次检查(比如点了立即同步)
+  while (!reads.length) await new Promise((r) => setTimeout(r, 1));
+  counter = 150;
+  const second = checkPanel(db, a, probe(0));
+  await Promise.all([first, second]);
+  // 排队:第二次等第一次写完才读,读到的是更新的计数
+  assert.deepEqual(reads, [100, 150]);
+  const c = getCustomer(db, cid)!;
+  assert.deepEqual([getLine(db, line.id)!.down, c.carried_down, c.actual_used], [150, 0, 150]);
+});
+
+test('同步线路:读数比已经写过的那次早(旧读数)就不写;面板这次没给流量记录的客户端计数不动;客户端没了的不再算本系统停掉的', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  const cid = createCustomer(db, { name: 'c' });
+  const l1 = addLine(db, { customer_id: cid, kind: 'direct', panel_id: a.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'c1' });
+  const l2 = addLine(db, { customer_id: cid, kind: 'direct', panel_id: a.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'c2' });
+  updateLineStats(db, l1.id, { up: 0, down: 100, enable: true, last_online: 7 }, 2000);
+  updateLineStats(db, l2.id, { up: 0, down: 100, enable: true, last_online: 0 }, 2000);
+  markLineAuto(db, l2.id, true, false);
+  // 1000 时开始读的旧读数(计数 40):不写,也不结转
+  syncLines(db, a.id, normalizeClients([client('c1', { traffic: { up: 0, down: 40 } })]), 1000);
+  assert.deepEqual([getLine(db, l1.id)!.down, getCustomer(db, cid)!.carried_down], [100, 0]);
+  // 面板没给 c1 的流量记录:计数、最后在线不动,启用状态照写;c2 在面板上没了:停用、不再算本系统停掉的
+  syncLines(db, a.id, normalizeClients([{ email: 'c1', enable: false, inboundIds: [1] }]), 3000);
+  const [x, y] = [getLine(db, l1.id)!, getLine(db, l2.id)!];
+  assert.deepEqual([x.down, x.last_online, x.enable, getCustomer(db, cid)!.carried_down], [100, 7, false, 0]);
+  assert.deepEqual([y.enable, y.auto_disabled], [false, false]);
+  // 流量记录回来了:接着算,不重复
+  syncLines(db, a.id, normalizeClients([client('c1', { traffic: { up: 0, down: 120 } })]), 4000);
+  assert.deepEqual([getLine(db, l1.id)!.down, getCustomer(db, cid)!.carried_down], [120, 0]);
 });

@@ -2,19 +2,20 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createCustomer, deleteCustomer, getCustomer, updateCustomer } from '../customers/repo';
 import { memoryDb } from '../testUtil';
-import { cachedUpstream, parseUserinfo, refreshUpstreams, sumUserinfo, validUpstreamUrls, type UpstreamFetcher } from './upstream';
+import { cachedUpstream, parseUserinfo, refreshUpstreams, sumUserinfo, validUpstreams, type UpstreamFetcher } from './upstream';
 
 const A = 'https://sub.example.com/api/v1/client/subscribe?token=aaa';
 const B = 'https://sub2.example.com/s/bbb';
 const LINK = 'vless://u@203.0.113.10:443?security=reality&pbk=K&sid=1#a';
+const urls = (raw: unknown) => validUpstreams(raw).map((u) => u.url);
 
 test('地址校验:按行或数组、去重、只认 http(s)、最多 10 个', () => {
-  assert.deepEqual(validUpstreamUrls(`${A}\n\n ${B} \n${A}`), [A, B]);
-  assert.deepEqual(validUpstreamUrls([A]), [A]);
-  assert.deepEqual(validUpstreamUrls(''), []);
-  assert.throws(() => validUpstreamUrls(['sub.example.com/x']), /http:\/\/ 或 https:\/\//);
-  assert.throws(() => validUpstreamUrls(['ftp://sub.example.com/x']), /http:\/\/ 或 https:\/\//);
-  assert.throws(() => validUpstreamUrls(Array.from({ length: 11 }, (_, i) => `https://s.example.com/${i}`)), /最多 10 个/);
+  assert.deepEqual(urls(`${A}\n\n ${B} \n${A}`), [A, B]);
+  assert.deepEqual(urls([A]), [A]);
+  assert.deepEqual(urls(''), []);
+  assert.throws(() => urls(['sub.example.com/x']), /http:\/\/ 或 https:\/\//);
+  assert.throws(() => urls(['ftp://sub.example.com/x']), /http:\/\/ 或 https:\/\//);
+  assert.throws(() => urls(Array.from({ length: 11 }, (_, i) => `https://s.example.com/${i}`)), /最多 10 个/);
 });
 
 test('subscription-userinfo:解析、几个加起来(不限的总量算不限,到期取最早)', () => {

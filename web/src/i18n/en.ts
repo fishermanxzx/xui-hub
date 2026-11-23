@@ -741,7 +741,6 @@ const en: Messages = {
     batchDone: 'Opened {n} lines',
     batchFailed: '{n} failed',
     batchStopped: '{n} not opened (stopped)',
-    nodeNameOptional: 'Node name (optional)',
     nodeNamePlaceholder: 'Blank = the name the panel generates',
     followPanelName: 'Blank = the panel\'s "{name}"',
     nodeNameFromPanel: 'Follows the panel\'s node name (no name set on this line)',

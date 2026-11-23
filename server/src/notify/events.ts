@@ -90,14 +90,15 @@ export function panelEvents(db: DB, before: Panel[], panels: Panel[], downAfter:
   return out;
 }
 
-/** 这轮停用 / 恢复了谁:按客户汇总 */
+/** 这轮停用 / 恢复了谁:按客户(id,名字可以重)汇总 */
 export function enforceEvents(ops: EnforceResult[], customers: CustomerView[], now: number): Message[] {
   const out: Message[] = [];
   for (const action of ['disable', 'enable'] as const) {
-    const byCustomer = new Map<string, EnforceResult[]>();
-    for (const o of ops.filter((o) => o.ok && o.action === action)) byCustomer.set(o.customer, [...(byCustomer.get(o.customer) ?? []), o]);
-    for (const [name, list] of byCustomer) {
-      const c = customers.find((x) => x.name === name);
+    const byCustomer = new Map<number, EnforceResult[]>();
+    for (const o of ops.filter((o) => o.ok && o.action === action)) byCustomer.set(o.customer_id, [...(byCustomer.get(o.customer_id) ?? []), o]);
+    for (const [id, list] of byCustomer) {
+      const c = customers.find((x) => x.id === id);
+      const name = c?.name ?? list[0].customer;
       const where = list.map((o) => `${o.panel} 上的 ${o.email}`).join('、');
       if (action === 'disable') {
         const why = c ? STATE[c.state] ?? '' : '';
@@ -135,11 +136,12 @@ export function thresholdEvents(db: DB, s: Settings['notify'], now: number, cust
   return out;
 }
 
-export function resetEvent(c: CustomerView, failed: number, now: number): Message {
+/** used:清零前的计费用量 */
+export function resetEvent(c: CustomerView, used: number, failed: number, now: number): Message {
   return {
     event: 'monthly_reset',
     title: `客户「${c.name}」已按月清零流量`,
-    text: `${c.expire_at ? '跟着到期日每月重置' : `每月 ${c.reset_day} 号重置`},本期之前已用 ${gb(c.used)}` + (failed ? `;${failed} 个客户端没清成,下轮再试` : ''),
+    text: `${c.expire_at ? '跟着到期日每月重置' : `每月 ${c.reset_day} 号重置`},上一期用了 ${gb(used)}` + (failed ? `;${failed} 个客户端在面板上没清成(面板连不上等),本期照样从 0 算,面板上的计数下次清零时再清` : ''),
     at: now,
   };
 }

@@ -43,9 +43,9 @@ export const api = {
   checkPanel: (id: number) => call<Panel>('POST', `/api/panels/${id}/check`),
   panelInbounds: (id: number) => call<PanelDetail>('GET', `/api/panels/${id}/inbounds`),
   panelVersions: (id: number) => call<PanelVersions>('GET', `/api/panels/${id}/versions`),
-  /** 切换 Xray 内核版本,面板会重启 Xray */
   /** 重启面板和 Xray 内核,等两个都恢复才返回 */
   restartPanel: (id: number) => call<Panel>('POST', `/api/panels/${id}/restart`),
+  /** 切换 Xray 内核版本,面板会重启 Xray */
   installXray: (id: number, version: string) => call<Panel>('POST', `/api/panels/${id}/xray/${encodeURIComponent(version)}`),
   /** 让面板升级自己;之后轮询 updateStatus */
   upgradePanel: (id: number) => call<{ run_id: string }>('POST', `/api/panels/${id}/update`),
@@ -101,10 +101,11 @@ export const api = {
   refreshUpstreams: (id: number) => call<Customer>('POST', `/api/customers/${id}/upstreams/refresh`),
   /** force:面板上删不掉(连不上、已经不在了)也把这里的线路记录删掉 */
   deleteLine: (id: number, lineId: number, force = false) => call('DELETE', `/api/customers/${id}/lines/${lineId}${force ? '?force=1' : ''}`),
-  /** 批量删线路:面板上删成了的删记录;force = 面板上删没删成都删记录 */
+  /** 线路原地换出口(UUID 不变);批量:line_ids 或 customer_id */
   changeLineExit: (customerId: number, lineId: number, exit: LineExitTarget) => call<Line>('PUT', `/api/customers/${customerId}/lines/${lineId}/exit`, { exit }),
   batchLineExit: (body: { customer_id?: number; line_ids?: number[]; exit: LineExitTarget }) =>
     call<{ changed: number[]; lines: Line[]; failed: { id: number; line: string; error: string }[] }>('POST', '/api/lines/batch-exit', body),
+  /** 批量删线路:面板上删成了的删记录;force = 面板上删没删成都删记录 */
   deleteLines: (lineIds: number[], force = false) => call<{ deleted: number[]; failed: { id: number; line: string; error: string }[] }>('POST', '/api/lines/batch-delete', { line_ids: lineIds, force }),
   /** 把面板上已有的客户端归到客户名下(成为直连线路),面板上不改 */
   importClients: (id: number, panelId: number, emails: string[]) => call<ImportResult>('POST', `/api/customers/${id}/lines/import`, { panel_id: panelId, emails }),

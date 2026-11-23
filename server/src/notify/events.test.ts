@@ -91,14 +91,35 @@ test('停用 / 恢复按客户汇总;快到期和流量预警各只提醒一次,
   updateLineStats(db, l.id, { up: 9 * GB, down: 0.5 * GB, enable: true, last_online: 0 });
 
   const ops = [
-    { customer: 'zhu', panel: 'a', email: 'zhu', action: 'disable' as const, ok: true },
-    { customer: 'zhu', panel: 'a', email: 'zhu-2', action: 'disable' as const, ok: true },
-    { customer: 'zhu', panel: 'b', email: 'zhu', action: 'disable' as const, ok: false, error: 'x' },
+    { customer_id: cid, customer: 'zhu', panel: 'a', email: 'zhu', action: 'disable' as const, ok: true },
+    { customer_id: cid, customer: 'zhu', panel: 'a', email: 'zhu-2', action: 'disable' as const, ok: true },
+    { customer_id: cid, customer: 'zhu', panel: 'b', email: 'zhu', action: 'disable' as const, ok: false, error: 'x' },
   ];
   const ev = enforceEvents(ops, listCustomers(db), now);
   assert.equal(ev.length, 1);
   assert.equal(ev[0].title, '客户「zhu」已停用 2 个客户端');
   assert.match(ev[0].text, /已用 9\.5 GB \/ 10 GB/);
+
+  // 重名的两位客户分开发,原因各是各的
+  const expired = createCustomer(db, { name: '张三', expire_at: now - 1000 });
+  const over = createCustomer(db, { name: '张三', quota_bytes: 1 });
+  const ol = addLine(db, { customer_id: over, kind: 'direct', panel_id: p.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'z3b' });
+  updateLineStats(db, ol.id, { up: 5, down: 5, enable: true, last_online: 0 });
+  const twins = enforceEvents(
+    [
+      { customer_id: expired, customer: '张三', panel: 'a', email: 'z3a', action: 'disable', ok: true },
+      { customer_id: over, customer: '张三', panel: 'a', email: 'z3b', action: 'disable', ok: true },
+    ],
+    listCustomers(db),
+    now,
+  );
+  assert.deepEqual(
+    twins.map((m) => [m.title.includes('已到期'), m.title.includes('已超额'), m.text.split('\n').pop()]),
+    [
+      [true, false, 'a 上的 z3a'],
+      [false, true, 'a 上的 z3b'],
+    ],
+  );
 
   const first = thresholdEvents(db, DEFAULT_SETTINGS.notify, now);
   assert.deepEqual(first.map((m) => [m.event, m.title]), [['customer_expiring', '客户「zhu」2 天后到期'], ['customer_quota', '客户「zhu」流量已用 95%']]);

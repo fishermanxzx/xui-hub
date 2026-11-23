@@ -38,13 +38,6 @@ export function serial<R>(key: string, fn: () => Promise<R>): Promise<R> {
   return run;
 }
 
-/** 同时占住多个 key:去重、排序后依次获取,两个任务不会互相等 */
-export function serialAll<R>(keys: string[], fn: () => Promise<R>): Promise<R> {
-  return [...new Set(keys)]
-    .sort()
-    .reduceRight<() => Promise<R>>((inner, key) => () => serial(key, inner), fn)();
-}
-
 /** 面板的 Xray 模板、入站、client 都是整份读出再写回,对同一块面板的改动要排队 */
 export const panelKey = (panelId: number) => `panel:${panelId}`;
 
