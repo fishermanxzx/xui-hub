@@ -1,5 +1,6 @@
-// 客户自助页:浏览器打开订阅链接看到的页面。只给这位客户自己的信息:剩余流量、到期日、订阅链接、二维码、一键导入各客户端,
-// 以及订阅里的线路(节点名 + 浏览器直连测的延迟)。不出现面板后台地址、API、其他客户,也不露后台是什么程序。
+// 客户自助页:浏览器打开订阅链接看到的页面。只给这位客户自己的信息:剩余流量、到期日、最近 30 天每天的用量、订阅链接、二维码、
+// 一键导入各客户端,以及订阅里的线路(节点名 + 浏览器直连测的延迟)。不出现面板后台地址、API、其他客户,也不露后台是什么程序。
+// 用量都是按倍率算过的(和订阅里的已用一致),看不到实际流量和倍率。
 
 import qrcode from 'qrcode-generator';
 import type { CustomerView } from '../customers/repo';
@@ -15,6 +16,7 @@ const fmtBytes = (n: number) => {
   if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(0)} MB`;
   return `${Math.round(n / 1024)} KB`;
 };
+const MB = 1024 ** 2;
 const fmtDate = (ms: number) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -102,6 +104,44 @@ export interface SubPageData {
   removed?: boolean;
   /** 配了外部订阅:那边的节点数;replace = 只给那边的节点;userinfo = 流量和到期用那边给的 */
   upstream?: { nodes: number; replace: boolean; userinfo: Userinfo | null };
+  /** 最近每天的用量(已经乘了倍率),days 是 YYYY-MM-DD,和 bytes 一一对应 */
+  daily?: { days: string[]; bytes: number[] };
+}
+
+/** 纵轴顶上的刻度:比最大值大一点的整数(1 / 1.5 / 2 / 2.5 / 3 / 4 / 5 / 6 / 8 × 10 的幂),单位跟着量级走 */
+function axisTop(max: number): { bytes: number; label: (f: number) => string } {
+  const [unit, name] = max >= GB ? [GB, 'GB'] : max >= MB ? [MB, 'MB'] : [1024, 'KB'];
+  const v = max / unit;
+  const p = 10 ** Math.floor(Math.log10(v));
+  const step = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find((f) => f * p >= v)! * p;
+  return { bytes: step * unit, label: (f) => `${+(step * f).toPrecision(3)} ${name}` };
+}
+
+/** 最近每天用量的柱状图(纯 HTML,点 / 指柱子在下面显示那天用了多少);整段时间都没用量就不画 */
+export function trendHtml(daily: { days: string[]; bytes: number[] } | undefined): string {
+  if (!daily || daily.days.length < 2) return '';
+  const total = daily.bytes.reduce((a, b) => a + b, 0);
+  if (total <= 0) return '';
+  const peak = daily.bytes.reduce((best, v, i) => (v > daily.bytes[best] ? i : best), 0);
+  const top = axisTop(daily.bytes[peak]);
+  const md = (day: string) => day.slice(5);
+  const bars = daily.days
+    .map((d, i) => {
+      const v = fmtBytes(daily.bytes[i]);
+      const h = daily.bytes[i] > 0 ? Math.max(1.5, (daily.bytes[i] / top.bytes) * 100) : 0;
+      return `<b data-d="${md(d)}" data-v="${v}" title="${md(d)} · ${v}"><i style="height:${h.toFixed(1)}%"></i></b>`;
+    })
+    .join('');
+  const n = daily.days.length;
+  const caption = `日均 ${fmtBytes(Math.round(total / n))} · 最多 ${md(daily.days[peak])} 用了 ${fmtBytes(daily.bytes[peak])}`;
+  return `<div class="trend">
+  <div class="row"><h2>最近 ${n} 天每天用量</h2><span class="muted" id="tday">${caption}</span></div>
+  <div class="tchart">
+    <div class="tyax"><span style="top:0">${top.label(1)}</span><span style="top:50%">${top.label(0.5)}</span><span style="top:100%">0</span></div>
+    <div class="tplot"><div class="tbars">${bars}</div></div>
+    <div class="txax"><span>${md(daily.days[0])}</span><span>${md(daily.days[Math.floor((n - 1) / 2)])}</span><span>${md(daily.days[n - 1])}</span></div>
+  </div>
+</div>`;
 }
 
 /** UA 里的客户端名和版本,如 "clash-verge/v2.4.2 (…)" → "clash-verge v2.4.2" */
@@ -120,7 +160,7 @@ const fmtAgo = (ms: number, now: number) => {
 
 const STATE: Record<string, { label: string; cls: string }> = { active: { label: '正常', cls: 'ok' }, expired: { label: '已到期', cls: 'bad' }, over_quota: { label: '流量已用完', cls: 'bad' } };
 
-export function renderSubPage({ customer: c, url, devices = [], removed = false, upstream }: SubPageData, now = Date.now()): string {
+export function renderSubPage({ customer: c, url, devices = [], removed = false, upstream, daily }: SubPageData, now = Date.now()): string {
   const st = STATE[c.state] ?? STATE.active;
   // 流量和到期用外部订阅给的(和订阅里的 subscription-userinfo 一致);状态和停用照旧按客户自己的
   const theirs = upstream?.userinfo;
@@ -184,6 +224,13 @@ ul.lines{list-style:none;margin:8px 0 0;padding:0}ul.lines li{display:flex;gap:1
 .h2row{display:flex;justify-content:space-between;align-items:center;gap:12px}.small{font-size:13px;padding:5px 10px}
 .notice{background:var(--bad-bg);color:var(--bad);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:14px}
 h2{font-size:15px;margin:0 0 4px}
+.trend{margin-top:14px;padding-top:12px;border-top:1px solid var(--rule)}.trend .row{align-items:baseline}#tday{font-variant-numeric:tabular-nums}
+.tchart{display:grid;grid-template-columns:46px 1fr;gap:4px 8px;margin-top:10px}
+.tyax{position:relative;height:110px;font-size:11px;color:var(--soft);font-variant-numeric:tabular-nums}.tyax span{position:absolute;right:0;transform:translateY(-50%);line-height:1;white-space:nowrap}
+.tplot{position:relative;height:110px;border-bottom:1px solid var(--rule);background:linear-gradient(var(--rule),var(--rule)) 0 0/100% 1px no-repeat,linear-gradient(var(--rule),var(--rule)) 0 50%/100% 1px no-repeat}
+.tbars{position:absolute;inset:0;display:flex;align-items:flex-end;gap:2px}.tbars b{flex:1;min-width:0;height:100%;display:flex;align-items:flex-end;cursor:pointer}
+.tbars i{display:block;width:100%;background:var(--accent);opacity:.8;border-radius:2px 2px 0 0}.tbars b:hover i,.tbars b.on i{opacity:1;background:var(--warn)}
+.txax{grid-column:2;display:flex;justify-content:space-between;font-size:11px;color:var(--soft);font-variant-numeric:tabular-nums}
 .devices form{margin-left:auto}.del{font-size:13px;padding:5px 10px;color:var(--bad)}.okmsg{background:var(--ok-bg);color:var(--ok);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:14px}
 </style>
 </head>
@@ -196,6 +243,7 @@ h2{font-size:15px;margin:0 0 4px}
   ${quota ? `<div class="bar"><i class="${pct >= 100 ? 'bad' : pct >= 90 ? 'warn' : ''}" style="width:${pct}%"></i></div>` : ''}
   <div class="row"><span class="muted">到期:${esc(expire)}</span>${!theirs && c.next_reset_at ? `<span class="muted">流量每月重置,下次 ${esc(fmtDate(c.next_reset_at))}</span>` : ''}</div>
   ${c.state !== 'active' ? `<div class="notice">${c.state === 'expired' ? '套餐已到期,线路已停用。' : '流量已用完,线路已停用。'}请联系你的服务提供方。</div>` : ''}
+  ${theirs ? '' : trendHtml(daily)}
 </div>
 
 <div class="card">
@@ -225,6 +273,9 @@ h2{font-size:15px;margin:0 0 4px}
 ${deviceCard}
 </div>
 <script>
+(function(){var t=document.getElementById('tday');if(!t)return;var d=t.textContent,on=null;
+document.querySelectorAll('.tbars b').forEach(function(b){var s=function(){if(on)on.className='';on=b;b.className='on';t.textContent=b.getAttribute('data-d')+' 用了 '+b.getAttribute('data-v')};
+b.addEventListener('mouseenter',s);b.addEventListener('click',s);b.addEventListener('mouseleave',function(){b.className='';on=null;t.textContent=d})})})();
 function copy(){var i=document.getElementById('u');i.select();var done=function(){var b=document.querySelector('.sub button');b.textContent='已复制';setTimeout(function(){b.textContent='复制'},1500)};
 if(navigator.clipboard){navigator.clipboard.writeText(i.value).then(done,function(){document.execCommand('copy');done()})}else{document.execCommand('copy');done()}}
 var NODES=[],busy=false,box=document.getElementById('nodes'),again=document.getElementById('reping');

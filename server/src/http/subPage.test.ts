@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { addLine, createCustomer, deleteLine, getCustomer, updateLineStats } from '../customers/repo';
 import { addPanel, memoryDb } from '../testUtil';
-import { importLinks, pageNodes, qrSvg, renderSubPage } from './subPage';
+import { importLinks, pageNodes, qrSvg, renderSubPage, trendHtml } from './subPage';
 
 test('自助页:剩余流量、到期、线路、一键导入链接;HTML 转义;停用状态有提示', () => {
   const db = memoryDb();
@@ -72,4 +72,21 @@ test('自助页的线路:节点名和订阅里一样(重名加序号),地址给�
       { name: 'S', host: '4.4.4.4', port: 1080, udp: false },
     ],
   );
+});
+
+test('自助页的每天用量:柱子和日期一一对应,纵轴取整,写日均和最多的一天;没数据 / 全是 0 不画', () => {
+  const GB = 1024 ** 3;
+  const days = Array.from({ length: 30 }, (_, i) => `2026-11-${String(i + 1).padStart(2, '0')}`);
+  const bytes = days.map((_, i) => (i === 21 ? 1.86 * GB : i % 3 ? 0.5 * GB : 0));
+  const html = trendHtml({ days, bytes });
+  assert.equal(html.match(/<b data-d=/g)?.length, 30);
+  for (const s of ['最近 30 天每天用量', '>2 GB<', '>1 GB<', 'data-d="11-22" data-v="1.86 GB"', '最多 11-22 用了 1.86 GB', '>11-01<', '>11-15<', '>11-30<']) assert.ok(html.includes(s), s);
+  assert.match(html, /日均 [\d.]+ MB/);
+  // 没用的那天没有柱子,最多的那天顶到 93%
+  assert.ok(html.includes('data-d="11-01" data-v="0 KB" title="11-01 · 0 KB"><i style="height:0.0%">'));
+  assert.ok(html.includes('style="height:93.0%"'));
+  // 小流量:单位跟着变
+  assert.ok(trendHtml({ days: days.slice(0, 7), bytes: [0, 0, 330 * 1024 ** 2, 0, 0, 0, 0] }).includes('>400 MB<'));
+  assert.equal(trendHtml(undefined), '');
+  assert.equal(trendHtml({ days, bytes: days.map(() => 0) }), '');
 });
