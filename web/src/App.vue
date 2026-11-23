@@ -12,9 +12,10 @@ import SettingsView from './views/Settings.vue';
 import SocksView from './views/Socks.vue';
 import Traffic from './views/Traffic.vue';
 import OpLogView from './views/OpLog.vue';
+import LedgerView from './views/Ledger.vue';
 
-type Tab = 'customers' | 'panels' | 'traffic' | 'socks' | 'log' | 'settings';
-const TABS: Tab[] = ['customers', 'panels', 'traffic', 'socks', 'log', 'settings'];
+type Tab = 'customers' | 'panels' | 'traffic' | 'ledger' | 'socks' | 'log' | 'settings';
+const TABS: Tab[] = ['customers', 'panels', 'traffic', 'ledger', 'socks', 'log', 'settings'];
 function tabFromHash(): Tab {
   const id = location.hash.slice(1);
   // 默认打开客户页(日常最常用)
@@ -66,6 +67,7 @@ onMounted(checkSession);
         <Customers v-if="tab === 'customers'" />
         <Panels v-else-if="tab === 'panels'" />
         <Traffic v-else-if="tab === 'traffic'" />
+        <LedgerView v-else-if="tab === 'ledger'" />
         <OpLogView v-else-if="tab === 'log'" />
         <SocksView v-else-if="tab === 'socks'" />
         <SettingsView v-else />
