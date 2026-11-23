@@ -306,7 +306,8 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
       const lines = b.lines ?? [];
       const owners = new Set(lines.map((l) => l.customer_id));
       const names = lines.slice(0, 5).map((l) => `「${getCustomer(db, l.customer_id)?.name ?? `#${l.customer_id}`}」${lineName(l)}`);
-      return S(`批量删除 ${lines.length} 条线路${body.force === true ? '(连不上的只删记录)' : ''}:${names.join('、')}${lines.length > 5 ? ' 等' : ''}`, owners.size === 1 ? [...owners][0] : null);
+      const missing = Array.isArray(result?.missing) && result.missing.length ? `;${result.missing.length} 条已经不在了,跳过` : '';
+      return S(`批量删除 ${lines.length} 条线路${body.force === true ? '(连不上的只删记录)' : ''}:${names.join('、')}${lines.length > 5 ? ' 等' : ''}${missing}`, owners.size === 1 ? [...owners][0] : null);
     }
     case 'POST /customers/:id/lines/import': {
       const panel = getPanel(db, Number(body.panel_id));

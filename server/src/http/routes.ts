@@ -46,6 +46,7 @@ import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, 
 import { trafficReport } from '../traffic/daily';
 import { ACTOR_HEADER, addOpLog, decodeActor, listOpLog } from '../oplog/log';
 import { describe as describeOp, MUTATING, snapshot } from '../oplog/describe';
+import { replayGuard } from './replay';
 import { clientIp } from '../subscription/fetchLog';
 import type { Updater } from '../update';
 import { errorText, mapLimit, panelKey, serial, using } from '../util';
@@ -192,16 +193,18 @@ export function apiRouter(deps: RouteDeps): Router {
     res.status(401).json({ error: '未登录' });
   });
 
+  // 同一个改东西的请求(同一个 Idempotency-Key)只做一次,重发的拿第一次的结果;放在操作日志前面,重发的不再记日志
+  r.use(replayGuard(MUTATING));
   // 操作日志:改东西的请求,处理前记下要动的对象,响应完写一条(谁、做了什么、成没成);查看类的不记,见 oplog/describe.ts
   r.use((req, res, next) => {
     if (!MUTATING.has(req.method)) return next();
     const before = snapshot(db, req.path, req.body);
-    const json = res.json.bind(res);
-    res.json = (body: unknown) => {
-      res.locals.body = body;
-      return json(body);
-    };
-    res.on('finish', () => {
+    let logged = false;
+    /** 连接在处理完之前断了(浏览器 / 代理 / CDN 那侧先断):处理照样做完,做完时补记一条 */
+    let dropped = false;
+    const log = () => {
+      if (logged) return;
+      logged = true;
       const route = (req.route as { path?: unknown } | undefined)?.path;
       if (typeof route !== 'string') return;
       const ok = res.statusCode < 400;
@@ -209,10 +212,25 @@ export function apiRouter(deps: RouteDeps): Router {
         const d = describeOp(db, `${req.method} ${route}`, before, req, res.locals.body, ok);
         if (!d) return;
         const error = ok ? '' : String((res.locals.body as { error?: unknown } | undefined)?.error ?? `HTTP ${res.statusCode}`);
-        addOpLog(db, { at: Date.now(), actor: String(res.locals.actor ?? '后台'), ip: String(res.locals.ip ?? ''), action: `${req.method} ${route}`, summary: d.summary, ok, error, customer_id: d.customer_id });
+        const summary = dropped ? `${d.summary}(连接中途断开,页面没收到结果)` : d.summary;
+        addOpLog(db, { at: Date.now(), actor: String(res.locals.actor ?? '后台'), ip: String(res.locals.ip ?? ''), action: `${req.method} ${route}`, summary, ok, error, customer_id: d.customer_id });
       } catch (e) {
         console.error('记操作日志失败:', e);
       }
+    };
+    const json = res.json.bind(res);
+    res.json = (body: unknown) => {
+      res.locals.body = body;
+      // 连接已经断了:响应发不出去,'finish' 不会再来,这里就记
+      if (dropped) log();
+      return json(body);
+    };
+    res.on('finish', log);
+    res.on('close', () => {
+      if (res.writableFinished) return;
+      dropped = true;
+      // 结果已经出来、正发着的时候断的:现在就记
+      if (res.headersSent) log();
     });
     next();
   });
@@ -697,11 +715,11 @@ export function apiRouter(deps: RouteDeps): Router {
       const raw = req.body?.line_ids;
       if (!Array.isArray(raw) || !raw.length || raw.length > 1000) throw new InputError('line_ids 要是 1 到 1000 个线路 id 的数组');
       const ids = [...new Set(raw.map(Number))];
-      const lines = ids.map((id) => {
-        const line = Number.isInteger(id) && id > 0 ? getLine(db, id) : undefined;
-        if (!line) throw new InputError(`线路 ${raw.find((x: unknown) => Number(x) === id)} 不存在`);
-        return line;
-      });
+      const bad = ids.find((id) => !Number.isInteger(id) || id <= 0);
+      if (bad !== undefined) throw new InputError(`线路 id 不对:${raw.find((x: unknown) => Number(x) === bad)}`);
+      // 已经不在的(别处删掉了,或页面没刷新)跳过,不连累同一批的其它线路;放在 missing 里返回
+      const lines = ids.flatMap((id) => getLine(db, id) ?? []);
+      const missing = ids.filter((id) => !lines.some((l) => l.id === id));
       const force = req.body?.force === true;
       const failed = await removeLines(db, lines, deps.clientFor);
       const failedIds = new Set(force ? [] : failed.map((f) => f.line.id));
@@ -711,7 +729,7 @@ export function apiRouter(deps: RouteDeps): Router {
         deleteLine(db, line.id);
         deleted.push(line.id);
       }
-      return { deleted, failed: force ? [] : failed.map(({ line, error }) => ({ id: line.id, line: lineLabel(line), error: errorText(error) })) };
+      return { deleted, missing, failed: force ? [] : failed.map(({ line, error }) => ({ id: line.id, line: lineLabel(line), error: errorText(error) })) };
     }),
   );
   // 线路原地换出口:exit = { kind: 'socks', socks_id } 或 { kind: 'direct' }。不删线路、UUID 不变,客户不用更新订阅;

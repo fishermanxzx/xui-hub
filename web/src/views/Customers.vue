@@ -2,7 +2,7 @@
 // 客户页:每位客户一张卡片,列出线路(直连 / 中转 → 出口);新建客户后开线路,线路可看链接、删除。
 import { t, te } from '../i18n';
 import { computed, onMounted, ref, watch } from 'vue';
-import { api } from '../api';
+import { api, isLost } from '../api';
 import ClientLinks from '../components/ClientLinks.vue';
 import TopologyGraph from '../components/TopologyGraph.vue';
 import GeoField from '../components/GeoField.vue';
@@ -487,6 +487,8 @@ async function open() {
   f.results = Object.fromEntries(targets.map((p) => [p.id, { state: 'wait', text: '' } as BatchResult]));
   const done: OpenedLine[] = [];
   const created: string[] = [];
+  /** 这位客户已有的线路:连接断了核对时,多出来的才算这次开的 */
+  const known = new Set(c.lines.map((l) => l.id));
   for (const p of targets) {
     f.results[p.id] = { state: 'doing', text: '' };
     const row = rowOf(p.id);
@@ -496,10 +498,12 @@ async function open() {
     try {
       const r = await api.openLine(c.id, body);
       done.push(r);
+      known.add(r.line.id);
       if (r.created.inbound) created.push(targets.length > 1 ? `${p.name}「${r.created.inbound}」` : r.created.inbound);
       f.results[p.id] = { state: 'ok', text: r.line.email };
     } catch (e) {
-      f.results[p.id] = { state: 'err', text: e instanceof Error ? e.message : String(e) };
+      f.results[p.id] = await lostOpen(e, c.id, p.id, known, (r) => (f.results[p.id] = r));
+      if (f.results[p.id].state === 'ok') known.add(f.results[p.id].lineId!);
     }
   }
   // 开成了的不再勾、节点名清掉(再开一条时不会重开、不会重名);没开成的留着,回去改一改再开
@@ -517,10 +521,12 @@ async function open() {
   lineFor.value = customers.value.find((x) => x.id === c.id) ?? c;
   if (done.length) opened.value = done;
   const failed = openFailed.value.length;
+  // 连接断了、核对后确认开好的也算开成
+  const okCount = targets.filter((p) => f.results[p.id]?.state === 'ok').length;
   const notes = [created.length ? t('customers.openedInbound', { name: created.join(t('customers.nameSep')) }) : '', failed ? t('customers.linesFailed', { n: failed }) : ''].filter(Boolean);
-  if (!done.length) toast(t('customers.linesNoneOpened'), 'err');
+  if (!okCount) toast(t('customers.linesNoneOpened'), 'err');
   else if (targets.length === 1) toast(notes.length ? t('customers.lineOpenedNote', { note: notes.join('; ') }) : t('customers.lineOpened'));
-  else toast(t('customers.batchDone', { n: done.length }) + (notes.length ? `;${notes.join('; ')}` : ''), failed ? 'err' : 'ok');
+  else toast(t('customers.batchDone', { n: okCount }) + (notes.length ? `;${notes.join('; ')}` : ''), failed ? 'err' : 'ok');
 }
 /** 结果页回到表单:没开成的还勾着 */
 function openAnother() {
@@ -529,9 +535,33 @@ function openAnother() {
 }
 
 // ---------- 批量开线路:同一块面板、同样的入站和出口,给勾上的客户各开一条(一条一条开,开完一条显示一条) ----------
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/**
+ * 开线路报错时用:后台给的错误(没开成)原样显示;连接中途断了 / 代理回了错误页(没拿到结果)时,后台可能照样开好了,
+ * 隔一会儿读一次这位客户(前后等 20 秒左右),这块面板上多出一条不在 known 里的线路就算开好了。
+ * progress:核对时先把这一行显示成「核对中」
+ */
+async function lostOpen(e: unknown, customerId: number, panelId: number, known: Set<number>, progress: (r: BatchResult) => void): Promise<BatchResult> {
+  const text = e instanceof Error ? e.message : String(e);
+  if (!isLost(e)) return { state: 'err', text };
+  progress({ state: 'doing', text: t('customers.lostChecking') });
+  for (const wait of [1500, 3000, 5000, 10000]) {
+    await sleep(wait);
+    try {
+      const line = (await api.customers()).find((x) => x.id === customerId)?.lines.find((l) => l.panel_id === panelId && !known.has(l.id));
+      if (line) return { state: 'ok', text: t('customers.lostOpened', { email: line.email }), lineId: line.id };
+    } catch {
+      /* 还连不上,下一轮再读 */
+    }
+  }
+  return { state: 'err', text: t('customers.lostNotFound', { error: text }) };
+}
+
 interface BatchResult {
   state: 'wait' | 'doing' | 'ok' | 'err' | 'skip';
   text: string;
+  /** 连接断了、核对后找到的线路 */
+  lineId?: number;
 }
 /**
  * exits:单独改过出口的客户 → 'direct' / 'socks:<id>' / 'copy:<线路 id>'(照抄他这条现有线路的出口和出口规则);
@@ -605,7 +635,7 @@ function planFor(c: Customer): { socks: number | null; rules: LineRule[] } {
   return { socks: v.startsWith('socks:') ? Number(v.slice(6)) : null, rules: [] };
 }
 const batchText = (r: BatchResult) =>
-  r.state === 'wait' ? t('customers.batchWait') : r.state === 'doing' ? t('customers.batchDoing') : r.state === 'ok' ? t('customers.batchOk', { email: r.text }) : r.state === 'skip' ? t('customers.batchSkipped') : t('customers.batchErr', { error: r.text });
+  r.state === 'wait' ? t('customers.batchWait') : r.state === 'doing' ? r.text || t('customers.batchDoing') : r.state === 'ok' ? t('customers.batchOk', { email: r.text }) : r.state === 'skip' ? t('customers.batchSkipped') : t('customers.batchErr', { error: r.text });
 async function runBatch() {
   const b = batch.value;
   if (!b || b.running) return;
@@ -639,7 +669,8 @@ async function runBatch() {
       b.results[c.id] = { state: 'ok', text: r.line.email };
       ok++;
     } catch (e) {
-      b.results[c.id] = { state: 'err', text: e instanceof Error ? e.message : String(e) };
+      b.results[c.id] = await lostOpen(e, c.id, f.panel_id, new Set(c.lines.map((l) => l.id)), (r) => (b.results[c.id] = r));
+      if (b.results[c.id].state === 'ok') ok++;
     }
   }
   // 点了停止:还没轮到的标成「没开」
@@ -700,7 +731,7 @@ function delToggle(id: number) {
 function delAll() {
   for (const c of delList.value) if (linesOnPanelOf(c, del.value!.panel_id).length) del.value!.ids.add(c.id);
 }
-const delText = (r: BatchResult) => (r.state === 'doing' ? t('customers.bdRunning') : r.state === 'ok' ? r.text : t('customers.bdErr', { error: r.text }));
+const delText = (r: BatchResult) => (r.state === 'doing' ? r.text || t('customers.bdRunning') : r.state === 'ok' ? r.text : t('customers.bdErr', { error: r.text }));
 const delTargets = computed(() => (del.value ? customers.value.filter((c) => del.value!.ids.has(c.id) && linesOnPanelOf(c, del.value!.panel_id).length) : []));
 const delLineCount = computed(() => delTargets.value.reduce((n, c) => n + linesOnPanelOf(c, del.value!.panel_id).length, 0));
 async function runDel(force = false) {
@@ -724,7 +755,7 @@ async function runDel(force = false) {
     for (const c of targets) {
       const mine = linesOnPanelOf(c, d.panel_id).filter((l) => lineIds.includes(l.id));
       const errors = mine.map((l) => bad.get(l.id)).filter(Boolean);
-      const gone = mine.filter((l) => r.deleted.includes(l.id)).length;
+      const gone = mine.filter((l) => r.deleted.includes(l.id) || r.missing?.includes(l.id)).length;
       d.results[c.id] = errors.length ? { state: 'err', text: errors[0]! } : { state: 'ok', text: force ? t('customers.bdForced') : t('customers.bdOk', { n: gone }) };
     }
     d.failed = r.failed.map((f) => f.id);
@@ -732,8 +763,29 @@ async function runDel(force = false) {
     await load();
     toast(t('customers.bdDone', { n: r.deleted.length }) + (r.failed.length ? `;${t('customers.bdFailed', { n: new Set(targets.filter((c) => d.results[c.id]?.state === 'err').map((c) => c.id)).size })}` : ''), r.failed.length ? 'err' : 'ok');
   } catch (e) {
-    for (const c of targets) d.results[c.id] = { state: 'err', text: e instanceof Error ? e.message : String(e) };
-    toastError(e);
+    if (isLost(e)) {
+      // 没拿到结果:后台可能照样删了。等一会儿重新读,线路都不在了的算删成
+      const mine = new Map(targets.map((c) => [c.id, linesOnPanelOf(c, d.panel_id).filter((l) => lineIds.includes(l.id)).map((l) => l.id)]));
+      for (const c of targets) d.results[c.id] = { state: 'doing', text: t('customers.lostChecking') };
+      await sleep(3000);
+      try {
+        await load();
+        const left = new Set(customers.value.flatMap((c) => c.lines.map((l) => l.id)));
+        for (const c of targets) {
+          const ids = mine.get(c.id) ?? [];
+          const still = ids.filter((id) => left.has(id)).length;
+          d.results[c.id] = still ? { state: 'err', text: t('customers.lostNotDeleted', { n: still }) } : { state: 'ok', text: t('customers.lostDeleted', { n: ids.length }) };
+        }
+        d.ids = new Set(targets.filter((c) => d.results[c.id]?.state === 'err').map((c) => c.id));
+        toast(t('customers.lostDeleteChecked'), d.ids.size ? 'err' : 'ok');
+      } catch (e2) {
+        for (const c of targets) d.results[c.id] = { state: 'err', text: e instanceof Error ? e.message : String(e) };
+        toastError(e2);
+      }
+    } else {
+      for (const c of targets) d.results[c.id] = { state: 'err', text: e instanceof Error ? e.message : String(e) };
+      toastError(e);
+    }
   } finally {
     d.running = false;
     d.done = true;

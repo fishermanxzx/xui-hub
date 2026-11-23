@@ -4,7 +4,8 @@ import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { getCustomer } from '../customers/repo';
 import type { DB } from '../db';
-import { getPanel } from '../panels/repo';
+import { listOpLog } from '../oplog/log';
+import { getPanel, type Panel } from '../panels/repo';
 import { getSocks } from '../socks/repo';
 import { recordTraffic } from '../traffic/daily';
 import type { UpstreamFetcher } from '../subscription/upstream';
@@ -28,7 +29,7 @@ async function serve(db: DB, data: Record<string, FakePanel> = {}, adminPassword
     const setCookie = res.headers.get('set-cookie') ?? '';
     return { status: res.status, body: (await res.json()) as any, setCookie, cookie: setCookie.split(';')[0] };
   };
-  return { call, close: () => new Promise((r) => server.close(r)) };
+  return { call, base, close: () => new Promise((r) => server.close(r)) };
 }
 
 const panel = (over: Partial<FakePanel> = {}): FakePanel => ({ inbounds: [vlessInbound(7, 443)], clients: [], xray: {}, restarts: 0, ...over });
@@ -724,7 +725,7 @@ test('批量删线路:同一块面板只重启一次 Xray,删成了的删记录�
 
     // 删 li、zhao:Xray 只重启一次,li 的规则去掉、wang 的留着
     const r = (await call('POST', '/lines/batch-delete', { line_ids: [lines[0], lines[2]] })).body;
-    assert.deepEqual(r, { deleted: [lines[0], lines[2]], failed: [] });
+    assert.deepEqual(r, { deleted: [lines[0], lines[2]], missing: [], failed: [] });
     assert.equal(data.a.restarts, restarts + 1);
     assert.deepEqual(emails(data.a), ['wang']);
     assert.deepEqual(data.a.xray.routing.rules.filter((x: any) => x.user).map((x: any) => x.user[0]), ['wang']);
@@ -736,11 +737,19 @@ test('批量删线路:同一块面板只重启一次 Xray,删成了的删记录�
     const bad = (await call('POST', '/lines/batch-delete', { line_ids: [lines[1]] })).body;
     assert.deepEqual([bad.deleted, bad.failed.map((f: any) => [f.id, f.error])], [[], [[lines[1], '连接失败:超时']]]);
     assert.equal(getCustomer(db, ids[1])!.lines.length, 1);
-    assert.deepEqual((await call('POST', '/lines/batch-delete', { line_ids: [lines[1]], force: true })).body, { deleted: [lines[1]], failed: [] });
+    assert.deepEqual((await call('POST', '/lines/batch-delete', { line_ids: [lines[1]], force: true })).body, { deleted: [lines[1]], missing: [], failed: [] });
     assert.equal(getCustomer(db, ids[1])!.lines.length, 0);
 
+    // 已经不在的跳过(放在 missing 里),不连累同一批的其它线路
+    data.a.fail = {};
+    const more = (await call('POST', `/customers/${ids[1]}/lines`, { panel_id: a.id, inbound: { id: 5 } })).body.line.id;
+    assert.ok(more > lines[2], '线路 id 不复用');
+    assert.deepEqual((await call('POST', '/lines/batch-delete', { line_ids: [lines[1], more, lines[0]] })).body, { deleted: [more], missing: [lines[1], lines[0]], failed: [] });
+    assert.match(listOpLog(db).rows[0].summary, /2 条已经不在了,跳过$/);
+    assert.deepEqual((await call('POST', '/lines/batch-delete', { line_ids: [more] })).body, { deleted: [], missing: [more], failed: [] });
+
     // 参数不对
-    for (const body of [{}, { line_ids: [] }, { line_ids: [lines[1]] }, { line_ids: ['x'] }]) assert.equal((await call('POST', '/lines/batch-delete', body)).status, 400, JSON.stringify(body));
+    for (const body of [{}, { line_ids: [] }, { line_ids: ['x'] }, { line_ids: [0] }]) assert.equal((await call('POST', '/lines/batch-delete', body)).status, 400, JSON.stringify(body));
   } finally {
     await close();
   }
@@ -894,6 +903,100 @@ test('面板的节点名:改面板节点名不动线路记录;一键改名把这
     assert.equal((await call('PATCH', `/panels/${a.id}`, { node_name: 'a\nb' })).status, 400);
     // 清空:回到面板生成的名字
     assert.equal((await call('PATCH', `/panels/${a.id}`, { node_name: '' })).body.node_name, '');
+  } finally {
+    await close();
+  }
+});
+
+test('连接中途断开(浏览器 / 代理那侧先断):线路照样开好,做完时补记一条操作日志并注明', async () => {
+  const db = memoryDb();
+  const data = { a: panel() };
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let begin!: () => void;
+  const begun = new Promise<void>((r) => (begin = r));
+  const fake = fakePanels(data);
+  // 往面板加客户端时卡住,等测试先把连接断掉
+  const clientFor = (p: Panel) => {
+    const c = fake(p);
+    return {
+      ...c,
+      addClient: async (...args: Parameters<typeof c.addClient>) => {
+        begin();
+        await gate;
+        return c.addClient(...args);
+      },
+    };
+  };
+  const { call, base, close } = await serve(db, data, '', '', undefined, clientFor);
+  const wait = async (ok: () => boolean) => {
+    for (let i = 0; i < 100 && !ok(); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(ok());
+  };
+  try {
+    const pid = (await call('POST', '/panels', { name: 'a', base_url: 'https://a.example.com', token: 't' })).body.id;
+    const c = (await call('POST', '/customers', { name: 'li' })).body;
+    const before = listOpLog(db).rows.length;
+    const ac = new AbortController();
+    const open = (signal?: AbortSignal) =>
+      fetch(`${base}/customers/${c.id}/lines`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'drop-1' }, body: JSON.stringify({ panel_id: pid, inbound: { id: 7 } }), signal });
+    const req = open(ac.signal).catch((e) => e);
+    // 浏览器在连接断了之后自己重发同一个请求:不再开一条,等第一次做完拿它的结果
+    const retry = (async () => {
+      await begun;
+      await new Promise((r) => setTimeout(r, 30));
+      const r = await open();
+      return [r.status, await r.json()] as const;
+    })();
+    await begun;
+    ac.abort();
+    assert.equal((await req).name, 'AbortError');
+    await new Promise((r) => setTimeout(r, 50));
+    release();
+    await wait(() => listOpLog(db).rows.length > before);
+    const row = listOpLog(db).rows[0];
+    assert.deepEqual([row.ok, row.customer_id], [true, c.id]);
+    assert.ok(row.summary.startsWith('给「li」开线路:') && row.summary.endsWith('(连接中途断开,页面没收到结果)'), row.summary);
+    assert.equal(getCustomer(db, c.id)!.lines.length, 1);
+    assert.deepEqual(emails(data.a), ['li']);
+    const [status, body] = await retry;
+    assert.deepEqual([status, body.line.id, body.line.email], [200, getCustomer(db, c.id)!.lines[0].id, 'li']);
+    assert.equal(listOpLog(db).rows.filter((r) => r.summary.startsWith('给「li」开线路')).length, 1);
+
+    // 正常的请求不带这句
+    await call('PATCH', `/customers/${c.id}`, { remark: 'x' });
+    assert.ok(!listOpLog(db).rows[0].summary.includes('连接中途断开'));
+  } finally {
+    await close();
+  }
+});
+
+test('同一个请求重发(同一个 Idempotency-Key)只做一次:同时来的和之后来的都拿第一次的结果;换个 key 照常做', async () => {
+  const db = memoryDb();
+  const data = { a: panel() };
+  const { call, base, close } = await serve(db, data);
+  try {
+    const pid = (await call('POST', '/panels', { name: 'a', base_url: 'https://a.example.com', token: 't' })).body.id;
+    const c = (await call('POST', '/customers', { name: 'li' })).body;
+    const send = async (key: string, path = `/customers/${c.id}/lines`, body: unknown = { panel_id: pid, inbound: { id: 7 } }) => {
+      const r = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify(body) });
+      return [r.status, await r.json()] as const;
+    };
+    const [a, b] = await Promise.all([send('k1'), send('k1')]);
+    assert.equal(a[0], 200);
+    assert.deepEqual(b, a);
+    assert.deepEqual(await send('k1'), a);
+    assert.equal(getCustomer(db, c.id)!.lines.length, 1);
+    assert.equal(listOpLog(db).rows.filter((r) => r.summary.startsWith('给「li」开线路')).length, 1);
+    assert.equal((await send('k2'))[0], 200);
+    assert.equal(getCustomer(db, c.id)!.lines.length, 2);
+    // 没成的也一样:重发拿同一个错误,不再试
+    const bad = await send('k3', `/customers/${c.id}/lines`, { panel_id: pid, inbound: { id: 99 } });
+    assert.equal(bad[0], 400);
+    assert.deepEqual(await send('k3', `/customers/${c.id}/lines`, { panel_id: pid, inbound: { id: 99 } }), bad);
+    // 续费重发不会记两笔收款
+    await Promise.all([send('r1', `/customers/${c.id}/renew`, { months: 1, amount: 30 }), send('r1', `/customers/${c.id}/renew`, { months: 1, amount: 30 })]);
+    assert.equal((await call('GET', `/customers/${c.id}/payments`)).body.length, 1);
   } finally {
     await close();
   }
