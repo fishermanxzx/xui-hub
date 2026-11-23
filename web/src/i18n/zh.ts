@@ -13,6 +13,7 @@ export default {
     refresh: '刷新',
     loading: '读取中…',
     language: '语言',
+    noMatch: '没有匹配的',
   },
   nav: {
     label: '页面',
@@ -106,6 +107,12 @@ export default {
     excludeOne: '排除 {name}',
     excludeN: '排除 {n} 块面板',
     excludedNote: '没算 {list} 上的流量:合计、每天的走势、按客户(客户在这些面板上的线路)、按面板都不算。只是统计时跳过,记录照常保留,取消排除就回来。排除哪些记在这个浏览器里。',
+    onlyLabel: '只看哪些客户',
+    onlyOne: '只看 {name}',
+    onlyN: '只看 {n} 位客户',
+    onlySearch: '搜索客户',
+    onlyNote: '只算 {list} 的流量:合计、每天的走势和按面板(每块面板上他们用了多少)都只算这些。',
+    andMore: '{list} 等 {n} 位',
   },
   customerTraffic: {
     peak: '峰值',

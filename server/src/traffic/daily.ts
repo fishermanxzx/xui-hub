@@ -80,22 +80,24 @@ function lastDays(days: number, now: number): string[] {
 /**
  * 不给 id:每位客户 / 每块面板一行。给了 id:这位客户 / 这块面板名下每个客户端一行(按客户时 id 为 0 = 没归入客户的)。
  * exclude:这些面板上的流量不算(总量、按面板、按客户都不算;按客户时就是客户在这些面板上的线路不算)。只是算的时候跳过,记录不动。
+ * customers:只算这些客户的流量(0 = 没归入客户的客户端);按面板时就是每块面板上这几位客户用的。不给或空 = 全部。
  * 行按用量从大到小排。
  */
-export function trafficReport(db: DB, opts: { by: TrafficBy; days: number; id?: number | null; exclude?: number[] }, now = Date.now()): TrafficReport {
+export function trafficReport(db: DB, opts: { by: TrafficBy; days: number; id?: number | null; exclude?: number[]; customers?: number[] }, now = Date.now()): TrafficReport {
   const { by } = opts;
   const id = opts.id ?? null;
   const days = lastDays(Math.min(Math.max(Math.trunc(opts.days) || 30, 1), TRAFFIC_KEEP_DAYS), now);
   const index = new Map(days.map((d, i) => [d, i]));
   const where = id == null ? '' : by === 'panel' ? 'AND t.panel_id = @id' : id === 0 ? 'AND t.customer_id IS NULL' : 'AND t.customer_id = @id';
   const exclude = opts.exclude?.length ? 'AND t.panel_id NOT IN (SELECT value FROM json_each(@exclude))' : '';
+  const only = opts.customers?.length ? 'AND COALESCE(t.customer_id, 0) IN (SELECT value FROM json_each(@customers))' : '';
   const data = db
     .prepare(
       `SELECT t.day, t.panel_id, t.email, t.customer_id, t.up, t.down, p.name AS panel_name, c.name AS customer_name
        FROM traffic_daily t LEFT JOIN panels p ON p.id = t.panel_id LEFT JOIN customers c ON c.id = t.customer_id
-       WHERE t.day >= @from ${where} ${exclude}`,
+       WHERE t.day >= @from ${where} ${exclude} ${only}`,
     )
-    .all({ from: days[0], id, exclude: JSON.stringify(opts.exclude ?? []) }) as { day: string; panel_id: number; email: string; customer_id: number | null; up: number; down: number; panel_name: string | null; customer_name: string | null }[];
+    .all({ from: days[0], id, exclude: JSON.stringify(opts.exclude ?? []), customers: JSON.stringify(opts.customers ?? []) }) as { day: string; panel_id: number; email: string; customer_id: number | null; up: number; down: number; panel_name: string | null; customer_name: string | null }[];
 
   const total = { up: days.map(() => 0), down: days.map(() => 0) };
   const rows = new Map<string, TrafficRow>();
