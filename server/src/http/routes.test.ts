@@ -666,7 +666,7 @@ test('客户已用:倍率算进额度;删线路后它的流量留在已用里;�
   }
 });
 
-test('流量统计接口:exclude=面板 id 逗号分隔,这些面板的流量不算;写错报 400', async () => {
+test('流量统计接口:exclude=面板 id 逗号分隔,这些面板的流量不算;customers=只算这些客户的;写错报 400', async () => {
   const db = memoryDb();
   const p1 = addPanel(db, 'p1');
   const p2 = addPanel(db, 'p2');
@@ -683,6 +683,10 @@ test('流量统计接口:exclude=面板 id 逗号分隔,这些面板的流量不
     assert.deepEqual(await names(`&exclude=${p1.id},${p2.id}`), []);
     assert.deepEqual((await call('GET', `/traffic?by=customer&days=1&exclude=${p2.id}`)).body.total, { up: [1], down: [2] });
     for (const bad of ['abc', '1,x', '-1', '1.5']) assert.equal((await call('GET', `/traffic?exclude=${bad}`)).status, 400, bad);
+    // customers=:只算这些客户的,0 = 没归入客户的
+    assert.deepEqual((await call('GET', '/traffic?by=panel&days=1&customers=0')).body.total, { up: [11], down: [22] });
+    assert.deepEqual((await call('GET', '/traffic?by=panel&days=1&customers=999')).body.rows, []);
+    for (const bad of ['abc', '1,x', '-1', '1.5']) assert.equal((await call('GET', `/traffic?customers=${bad}`)).status, 400, bad);
   } finally {
     await close();
   }

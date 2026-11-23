@@ -105,8 +105,8 @@ export const api = {
   importClients: (id: number, panelId: number, emails: string[]) => call<ImportResult>('POST', `/api/customers/${id}/lines/import`, { panel_id: panelId, emails }),
 
   /** 流量统计;id 给了就展开这位客户 / 这块面板名下的各个客户端 */
-  traffic: (by: TrafficBy, days: number, id?: number, exclude: number[] = []) =>
-    call<TrafficReport>('GET', `/api/traffic?by=${by}&days=${days}${id === undefined ? '' : `&id=${id}`}${exclude.length ? `&exclude=${exclude.join(',')}` : ''}`),
+  traffic: (by: TrafficBy, days: number, id?: number, exclude: number[] = [], customers: number[] = []) =>
+    call<TrafficReport>('GET', `/api/traffic?by=${by}&days=${days}${id === undefined ? '' : `&id=${id}`}${exclude.length ? `&exclude=${exclude.join(',')}` : ''}${customers.length ? `&customers=${customers.join(',')}` : ''}`),
 
   /** xui-hub 自己的版本和能不能更新;refresh 重新问一次 GitHub */
   systemVersion: (refresh = false) => call<UpdateInfo>('GET', `/api/system/version${refresh ? '?refresh=1' : ''}`),

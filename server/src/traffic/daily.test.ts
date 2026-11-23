@@ -84,3 +84,32 @@ test('流量统计:排除面板 = 总量、按面板、按客户都不算它上�
   // 记录还在
   assert.deepEqual(trafficReport(db, { by: 'panel', days: 1, exclude: [] }, T + 2).rows.map((r) => r.name).sort(), ['p1', 'p2', 'p3']);
 });
+
+test('流量统计:只看某几位客户 = 总量、按客户、按面板都只算他们的(0 = 没归入客户的);和排除面板一起用', () => {
+  const db = memoryDb();
+  const p1 = addPanel(db, 'p1');
+  const p2 = addPanel(db, 'p2');
+  const a = createCustomer(db, { name: '小李' });
+  const b = createCustomer(db, { name: '小张' });
+  addLine(db, { customer_id: a, kind: 'direct', panel_id: p1.id, inbound_id: 1, inbound_remark: '', protocol: 'vless', email: 'a1' });
+  addLine(db, { customer_id: a, kind: 'direct', panel_id: p2.id, inbound_id: 1, inbound_remark: '', protocol: 'vless', email: 'a2' });
+  addLine(db, { customer_id: b, kind: 'direct', panel_id: p1.id, inbound_id: 1, inbound_remark: '', protocol: 'vless', email: 'b1' });
+  // 每次同步给的是这块面板上全部客户端
+  const use = [[p1, { a1: 100, b1: 1000 }], [p2, { a2: 200, x: 5 }]] as const;
+  for (const [p, m] of use) recordTraffic(db, p.id, Object.keys(m).map((email) => ({ email, up: 0, down: 0 })), T);
+  for (const [p, m] of use) recordTraffic(db, p.id, Object.entries(m).map(([email, n]) => ({ email, up: 0, down: n })), T + 1);
+
+  const sum = (r: { rows: { name: string; up: number; down: number }[] }) => r.rows.map((x) => [x.name, x.up + x.down]);
+  assert.deepEqual(sum(trafficReport(db, { by: 'customer', days: 1, customers: [a] }, T + 2)), [['小李', 300]]);
+  assert.deepEqual(trafficReport(db, { by: 'customer', days: 1, customers: [a] }, T + 2).total, { up: [0], down: [300] });
+  assert.deepEqual(sum(trafficReport(db, { by: 'customer', days: 1, customers: [a, 0] }, T + 2)), [['小李', 300], ['没归入客户的客户端', 5]]);
+  // 按面板:每块面板上只算这几位的
+  assert.deepEqual(sum(trafficReport(db, { by: 'panel', days: 1, customers: [a] }, T + 2)), [['p2', 200], ['p1', 100]]);
+  assert.deepEqual(sum(trafficReport(db, { by: 'panel', days: 1, customers: [b, 0] }, T + 2)), [['p1', 1000], ['p2', 5]]);
+  // 展开面板:只列这几位的客户端
+  assert.deepEqual(sum(trafficReport(db, { by: 'panel', days: 1, id: p1.id, customers: [a] }, T + 2)), [['a1 · 小李', 100]]);
+  // 和排除面板一起
+  assert.deepEqual(sum(trafficReport(db, { by: 'panel', days: 1, customers: [a], exclude: [p2.id] }, T + 2)), [['p1', 100]]);
+  // 空 = 全部
+  assert.equal(trafficReport(db, { by: 'customer', days: 1, customers: [] }, T + 2).rows.length, 3);
+});
