@@ -45,6 +45,16 @@ const date = (ms: number) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 const gb = (n: number) => (n ? `${+(n / GB).toFixed(2)} GB` : '不限');
+/** 用量(0 就是 0,不是不限) */
+const used = (n: number) => `${+(n / GB).toFixed(2)} GB`;
+/** 到期改了:日子一样、时刻不一样时带上时刻,不然看着是「12-23 → 12-23」 */
+function expireChange(a: number, b: number): string {
+  const at = (ms: number) => {
+    const d = new Date(ms);
+    return `${date(ms)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  return a && b && date(a) === date(b) ? `到期 ${at(a)} → ${at(b)}` : `到期 ${date(a)} → ${date(b)}`;
+}
 const money = (n: number | null) => (n == null ? '没填' : String(n));
 const onOff = (v: unknown) => (v ? '开' : '关');
 const lineName = (l: Line) => `${l.panel_name} · ${l.email}`;
@@ -111,7 +121,7 @@ function customerDiff(a: CustomerView, b: CustomerView): string[] {
   ch('名字', a.name, b.name);
   if (a.remark !== b.remark) out.push(b.remark ? `备注改成「${b.remark}」` : '清空了备注');
   ch('额度', a.quota_bytes, b.quota_bytes, gb);
-  ch('到期', a.expire_at, b.expire_at, date);
+  if (a.expire_at !== b.expire_at) out.push(expireChange(a.expire_at, b.expire_at));
   if (!a.reset_day !== !b.reset_day) out.push(`每月重置流量 ${onOff(a.reset_day)} → ${onOff(b.reset_day)}`);
   else if (a.reset_day !== b.reset_day && !b.expire_at) out.push(`每月重置日 ${a.reset_day} 号 → ${b.reset_day} 号`);
   ch('设备数上限', a.limit_devices, b.limit_devices, (n) => (n ? String(n) : '不限'));
@@ -129,7 +139,7 @@ function customerDiff(a: CustomerView, b: CustomerView): string[] {
 function costDiff(a: { name: string; monthly_cost: number | null; expire_at: number }, b: typeof a, out: string[]): string[] {
   if (a.name !== b.name) out.unshift(`名字 ${a.name} → ${b.name}`);
   if (a.monthly_cost !== b.monthly_cost) out.push(`月成本 ${money(a.monthly_cost)} → ${money(b.monthly_cost)}`);
-  if (a.expire_at !== b.expire_at) out.push(`到期 ${date(a.expire_at)} → ${date(b.expire_at)}`);
+  if (a.expire_at !== b.expire_at) out.push(expireChange(a.expire_at, b.expire_at));
   return out;
 }
 
@@ -247,7 +257,7 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
       return S(`删除「${p.customer_name}」${date(p.paid_at)} 的一笔记录(${what.join(',')};到期日不变)`, p.customer_id);
     }
     case 'POST /customers/:id/reset-usage':
-      return S(`清零${cname}的流量${c ? `(清零前已用 ${gb(c.used)})` : ''}`);
+      return S(`清零${cname}的流量${c ? `(清零前已用 ${used(c.used)})` : ''}`);
     case 'POST /customers/:id/adjust-usage': {
       const n = (Number(body.up) || 0) + (Number(body.down) || 0);
       return S(`调整${cname}本期已用 ${n >= 0 ? '+' : ''}${+(n / GB).toFixed(2)} GB(实际流量)`);
@@ -315,7 +325,8 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
     case 'POST /panels/:id/update':
       return S(`更新面板${pname}的 3x-ui`, null);
     case 'POST /panels/:id/clients':
-      return S(`在面板${pname}上新建客户端${body.email ? ` ${body.email}` : ''}`, null);
+      // 返回里的 email 是面板上实际的名字(重名会加后缀);没成时用请求里的名字
+      return S(`在面板${pname}上新建客户端${result?.email || body.name ? ` ${result?.email || body.name}` : ''}`, null);
     case 'DELETE /panels/:id/clients/:email':
       return S(`删除面板${pname}上的客户端 ${b.segs[3] ?? ''}${c ? `(${cname}的线路,记录一起删)` : ''}`);
 

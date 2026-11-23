@@ -67,5 +67,3 @@ export function validRules(db: DB, raw: unknown): LineRule[] {
   });
 }
 
-/** 规则里用到的 SOCKS */
-export const rulesSocks = (rules: LineRule[]) => [...new Set(rules.flatMap((r) => (r.to.kind === 'socks' ? [r.to.socks_id] : [])))];

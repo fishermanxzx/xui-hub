@@ -10,6 +10,8 @@ export interface ClientSnapshot {
   up: number;
   down: number;
   lastOnline: number;
+  /** 面板给了这个客户端的流量记录;没给时 up / down / lastOnline 是 0,不能当成真的计数(不然会被当成面板上清零过) */
+  hasTraffic: boolean;
 }
 
 function num(value: unknown): number {
@@ -51,7 +53,8 @@ export function normalizeClients(clients: any[], inbounds: any[] = []): ClientSn
     const email = text(c?.email);
     if (!email || seen.has(email)) continue;
     seen.add(email);
-    const traffic = c.traffic && typeof c.traffic === 'object' ? c.traffic : stats.get(email) ?? {};
+    const row = c.traffic && typeof c.traffic === 'object' ? c.traffic : stats.get(email);
+    const traffic = row ?? {};
     out.push({
       email,
       comment: String(c.comment ?? ''),
@@ -63,6 +66,7 @@ export function normalizeClients(clients: any[], inbounds: any[] = []): ClientSn
       up: num(traffic.up),
       down: num(traffic.down),
       lastOnline: ms(traffic.lastOnline),
+      hasTraffic: row != null,
     });
   }
   return out;

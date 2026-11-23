@@ -112,6 +112,17 @@ test('没有入站时新建:照其他面板的 reality 入站复制并换密钥,
   await assert.rejects(createClient(d, adminFor(d), { name: 'w' }, { otherPanels: [d], adminFor, probe: async () => false }), /连不上/);
   assert.equal(data.d.inbounds.length, 0);
   assert.equal(data.d.clients.length, 0);
+
+  // 入站建好了,客户端加完读回不对:加了一半的客户端和新建的入站都撤掉
+  const e = addPanel(db, 'e');
+  data.e = { inbounds: [], clients: [] };
+  const deleted: string[] = [];
+  const bad: ClientAdmin & { deleteClient(email: string): Promise<void> } = { ...adminFor(e), clientLinks: async () => [], listClients: async () => structuredClone(data.e.clients).map((x: any) => ({ ...x, inboundIds: [] })), deleteClient: async (email) => void deleted.push(email) };
+  await assert.rejects(createClient(e, bad, { name: 'w' }, { otherPanels: [e], adminFor }), /读回没找到/);
+  assert.deepEqual([data.e.inbounds.length, deleted], [0, ['w']]);
+  // 挂到已有入站上失败:已有的入站不删
+  await assert.rejects(createClient(b, { ...adminFor(b), addClient: async () => Promise.reject(new Error('面板报错')) }, { name: 'x' }, { otherPanels: [b], adminFor }), /面板报错/);
+  assert.equal(data.b.inbounds.length, 1);
 });
 
 test('hy2:照其他面板的 hy2 入站建,证书换成本面板的、混淆密码重新生成;没模板用内置的;没证书报错', async () => {

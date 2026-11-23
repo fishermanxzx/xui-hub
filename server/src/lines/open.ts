@@ -12,8 +12,7 @@ import { errorText, panelKey, serial, using } from '../util';
 import { allSocks, getSocks, type SocksEndpoint } from '../socks/repo';
 import { renameLinks, validNodeName } from '../subscription/nodeName';
 import { XUIError } from '../xui/client';
-import { editXray, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, sameServer, setUserRules, socksServer, unrouteUserExit, userExit, type ExitServer, type ResolvedRule, type RouteAdmin, type UserRoute } from './relay';
-import { xrayConfig } from '../xui/json';
+import { editXray, editXrayChecked, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, sameServer, setUserRules, socksServer, unrouteUserExit, userExit, type ExitServer, type ResolvedRule, type RouteAdmin, type UserRoute } from './relay';
 import { routesForClient } from './routes';
 import { checkRulesGeo, type GeoValidator } from './geodata';
 import { validRules, type LineRule } from './rules';
@@ -233,21 +232,26 @@ export async function changeLineExits(db: DB, lines: Line[], target: ExitTarget,
     const tags = new Map((await admin.listInbounds()).map((ib) => [Number(ib.id), String(ib.tag ?? '')]));
     const lost = group.filter((l) => !tags.get(l.inbound_id));
     if (lost.length) throw new InputError(`面板上找不到这些线路的入站(或入站没有 tag):${lost.map((l) => l.email).join('、')}`);
-    await editXray(admin, (xray) => {
-      // 要加出站时读到的配置得完整,不然写回去会把面板原有的出站冲掉;换直出只是去掉规则,没有规则就什么都不写
-      if (exit && (!Array.isArray(xray.outbounds) || !xray.outbounds.length)) throw new Error('读到的 Xray 配置不完整(没有出站)');
-      for (const l of group) {
-        if (exit) routeUserToExit(xray, tags.get(l.inbound_id)!, l.email, exit.server);
-        else unrouteUserExit(xray, tags.get(l.inbound_id)!, l.email);
-      }
-    });
-    // 读回来核对:每个客户端的规则确实指到了新出口(直出 = 没有他自己的出口规则)
-    const back = xrayConfig(await admin.xraySettings());
-    const wrong = group.filter((l) => {
-      const now = userExit(back, tags.get(l.inbound_id)!, l.email);
-      return exit ? !now?.server || !sameServer(now.server, exit.server) : now != null;
-    });
-    if (wrong.length) throw new XUIError(`改完读回来,这些客户端的出口不对:${wrong.map((l) => l.email).join('、')}`);
+    // 改完读回来核对:每个客户端的规则确实指到了新出口(直出 = 没有他自己的出口规则);
+    // 重启失败或核对不过就把面板改回原来的配置(editXrayChecked),记录也不动
+    const back = await editXrayChecked(
+      admin,
+      (xray) => {
+        // 要加出站时读到的配置得完整,不然写回去会把面板原有的出站冲掉;换直出只是去掉规则,没有规则就什么都不写
+        if (exit && (!Array.isArray(xray.outbounds) || !xray.outbounds.length)) throw new Error('读到的 Xray 配置不完整(没有出站)');
+        for (const l of group) {
+          if (exit) routeUserToExit(xray, tags.get(l.inbound_id)!, l.email, exit.server);
+          else unrouteUserExit(xray, tags.get(l.inbound_id)!, l.email);
+        }
+      },
+      (cfg) => {
+        const wrong = group.filter((l) => {
+          const now = userExit(cfg, tags.get(l.inbound_id)!, l.email);
+          return exit ? !now?.server || !sameServer(now.server, exit.server) : now != null;
+        });
+        if (wrong.length) throw new XUIError(`改完读回来,这些客户端的出口不对:${wrong.map((l) => l.email).join('、')}`);
+      },
+    );
     const known = allSocks(db).map((s) => ({ id: s.id, host: s.host, port: s.port }));
     for (const l of group) {
       setLineExit(db, l.id, exit ? { socks_id: exit.socks_id, label: exit.label } : null);

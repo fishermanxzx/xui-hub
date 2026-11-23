@@ -372,6 +372,7 @@ export interface BackupInfo {
 }
 
 export interface EnforceOp {
+  customer_id: number;
   customer: string;
   panel: string;
   email: string;

@@ -675,7 +675,6 @@ export default {
     rename: '改名',
     renameTitle: '改节点名:{panel} · {email}',
     nodeName: '节点名',
-    nodeNameOptional: '节点名(可选)',
     batchButton: '批量开线路',
     batchHint: '在一块面板上给多位客户各开一条线路',
     batchTitle: '批量开线路',

@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { MIGRATIONS, getMeta, openDb, setMeta } from './db';
+import { createCustomer, deleteCustomer } from './customers/repo';
+import { createPanel, deletePanel } from './panels/repo';
 
 /** 一个测完就删的临时库文件(放在还不存在的子目录里) */
 function tempFile(t: TestContext): string {
@@ -84,5 +86,31 @@ test('meta:没存过返回 undefined,重复写是覆盖', () => {
   setMeta(db, 'k', 'a');
   setMeta(db, 'k', 'b');
   assert.equal(getMeta(db, 'k'), 'b');
-  assert.equal((db.prepare('SELECT COUNT(*) AS n FROM meta').get() as { n: number }).n, 1);
+  assert.equal((db.prepare("SELECT COUNT(*) AS n FROM meta WHERE key = 'k'").get() as { n: number }).n, 1);
+});
+
+test('客户 / 面板的 id 不复用:删掉最新的再建,拿新号;升级时把只剩记录的旧 id 也算上', () => {
+  const db = openDb(':memory:');
+  const a = createCustomer(db, { name: 'a' });
+  const b = createCustomer(db, { name: 'b' });
+  deleteCustomer(db, b);
+  const c = createCustomer(db, { name: 'c' });
+  assert.deepEqual([a, b, c], [1, 2, 3]);
+  // 写错的不占号
+  assert.throws(() => createCustomer(db, { name: '' }));
+  assert.equal(createCustomer(db, { name: 'd' }), 4);
+  const p1 = createPanel(db, { name: 'p1', base_url: 'https://p1.example:2053/x', token: 't' });
+  deletePanel(db, p1.id);
+  assert.equal(createPanel(db, { name: 'p2', base_url: 'https://p2.example:2053/x', token: 't' }).id, p1.id + 1);
+
+  // 从迁移 24 升上来:客户 7 已经删了、只剩收款记录,新客户不能再是 7
+  const old = new Database(':memory:');
+  for (let i = 0; i < 24; i++) old.exec(MIGRATIONS[i]);
+  old.pragma('user_version = 24');
+  old.prepare("INSERT INTO customers (id, name, sub_token, created_at, updated_at) VALUES (6, 'x', 'tok6', 0, 0)").run();
+  old.prepare("INSERT INTO payments (customer_id, customer_name, amount, paid_at, created_at) VALUES (7, 'gone', 9, 0, 0)").run();
+  old.prepare("INSERT INTO traffic_daily (day, panel_id, email, customer_id, up, down) VALUES ('2026-11-01', 5, 'e', 6, 1, 1)").run();
+  for (let i = 24; i < MIGRATIONS.length; i++) old.exec(MIGRATIONS[i]);
+  assert.equal(createCustomer(old as any, { name: 'new' }), 8);
+  assert.equal(createPanel(old as any, { name: 'p', base_url: 'https://p.example:2053/x', token: 't' }).id, 6);
 });

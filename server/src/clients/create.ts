@@ -204,8 +204,17 @@ export async function addClientTo(admin: ClientAdmin, inbound: any, email: strin
 export function createClient(panel: Panel, admin: ClientAdmin, input: CreateClientInput, opts: CreateOptions = {}): Promise<CreatedClient> {
   return using(admin, async () => {
     const { inbound, created, protocol } = await ensureInbound(panel, admin, input, opts);
-    const email = await freeEmail(admin, input.name, opts.taken);
-    const links = await addClientTo(admin, inbound, email);
-    return { email, protocol: protocol as ClientProtocol, inbound: { id: Number(inbound.id), remark: String(inbound.remark ?? ''), port: Number(inbound.port), created }, links };
+    let email = '';
+    try {
+      email = await freeEmail(admin, input.name, opts.taken);
+      const links = await addClientTo(admin, inbound, email);
+      return { email, protocol: protocol as ClientProtocol, inbound: { id: Number(inbound.id), remark: String(inbound.remark ?? ''), port: Number(inbound.port), created }, links };
+    } catch (e) {
+      // 和开线路一样:加了一半的客户端、这次新建的入站撤掉(撤不掉的不管),面板上不留一个开着端口的空入站
+      const del = (admin as { deleteClient?: (email: string) => Promise<void> }).deleteClient;
+      if (email && del) await del.call(admin, email).catch(() => {});
+      if (created) await admin.deleteInbound(Number(inbound.id)).catch(() => {});
+      throw e;
+    }
   });
 }

@@ -17,8 +17,11 @@ export function dayKey(ms: number): string {
 /** 累计值比上次小说明面板上清零过(或删了重建),这时新值就是这段时间用的 */
 const grown = (now: number, before: number) => (now >= before ? now - before : now);
 
-/** 一块面板同步完后调:clients 是面板上全部客户端当前的累计流量 */
-export function recordTraffic(db: DB, panelId: number, clients: { email: string; up: number; down: number }[], now = Date.now()): void {
+/**
+ * 一块面板同步完后调:clients 是面板上全部客户端当前的累计流量。
+ * hasTraffic 为 false 的(面板这次没给它的流量记录)跳过,起点留着,下次有了再接着算
+ */
+export function recordTraffic(db: DB, panelId: number, clients: { email: string; up: number; down: number; hasTraffic?: boolean }[], now = Date.now()): void {
   const day = dayKey(now);
   db.transaction(() => {
     const seen = new Map((db.prepare('SELECT email, up, down FROM traffic_seen WHERE panel_id = ?').all(panelId) as { email: string; up: number; down: number }[]).map((r) => [r.email, r]));
@@ -31,6 +34,7 @@ export function recordTraffic(db: DB, panelId: number, clients: { email: string;
     for (const c of clients) {
       const before = seen.get(c.email);
       seen.delete(c.email);
+      if (c.hasTraffic === false) continue;
       if (before && before.up === c.up && before.down === c.down) continue;
       remember.run(panelId, c.email, c.up, c.down);
       if (!before) continue;

@@ -5,6 +5,8 @@ import { alreadyNotified, markNotified } from '../notify/events';
 import type { Panel } from '../panels/repo';
 import { addPanel, memoryDb } from '../testUtil';
 import { resetCustomerUsage, runMonthlyResets } from './reset';
+import { syncLines } from '../panels/check';
+import { normalizeClients } from '../xui/normalize';
 
 const day = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime();
 
@@ -40,8 +42,15 @@ test('按月清零:到了日子清一次,清过这期不再清;服务停了几�
   assert.deepEqual(calls, ['a:c', 'b:c']);
   assert.deepEqual(r.failed, [{ line: 'b 上的 c', error: 'boom' }]);
   const c = getCustomer(db, cid)!;
-  assert.deepEqual([c.used, c.last_reset_at], [100, day(2026, 3, 10)]); // a 清了,b 没清成保留
+  // a 清了;b 在面板上没清成,本期照样从 0 算(上期的计数从结转里减掉);通知里写清零前的用量
+  assert.deepEqual([c.used, c.last_reset_at, r.used], [0, day(2026, 3, 10), 300]);
   assert.equal(alreadyNotified(db, `quota:${cid}:0:0`), false);
+  // b 接着用了 20:本期算 20
+  updateLineStats(db, l2.id, { up: 60, down: 60, enable: true, last_online: 0 });
+  assert.equal(getCustomer(db, cid)!.used, 20);
+  // 后来在面板上被清零了(计数变小,同步时旧计数结转回来):本期还是只算清零之后用的
+  syncLines(db, b.id, normalizeClients([{ email: 'c', traffic: { up: 3, down: 2 } }]), Date.now() + 1000);
+  assert.equal(getCustomer(db, cid)!.used, 25);
   // 同一期再跑:不清
   calls.length = 0;
   assert.deepEqual(await runMonthlyResets(db, adminFor, day(2026, 3, 25)), []);
