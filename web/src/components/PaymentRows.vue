@@ -77,11 +77,14 @@ const renewed = (p: Payment) => p.months > 0 || p.days > 0;
 @media (max-width: 520px) {
   .pay-rows th,
   .pay-rows td {
-    padding-left: 6px;
-    padding-right: 6px;
+    padding-left: 4px;
+    padding-right: 4px;
   }
   .pay-rows .date {
     font-size: 12px;
+  }
+  .what {
+    min-width: 6em;
   }
 }
 .sr-only {
