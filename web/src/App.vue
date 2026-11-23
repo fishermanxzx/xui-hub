@@ -11,9 +11,10 @@ import Panels from './views/Panels.vue';
 import SettingsView from './views/Settings.vue';
 import SocksView from './views/Socks.vue';
 import Traffic from './views/Traffic.vue';
+import OpLogView from './views/OpLog.vue';
 
-type Tab = 'customers' | 'panels' | 'traffic' | 'socks' | 'settings';
-const TABS: Tab[] = ['customers', 'panels', 'traffic', 'socks', 'settings'];
+type Tab = 'customers' | 'panels' | 'traffic' | 'socks' | 'log' | 'settings';
+const TABS: Tab[] = ['customers', 'panels', 'traffic', 'socks', 'log', 'settings'];
 function tabFromHash(): Tab {
   const id = location.hash.slice(1);
   // 默认打开客户页(日常最常用)
@@ -65,6 +66,7 @@ onMounted(checkSession);
         <Customers v-if="tab === 'customers'" />
         <Panels v-else-if="tab === 'panels'" />
         <Traffic v-else-if="tab === 'traffic'" />
+        <OpLogView v-else-if="tab === 'log'" />
         <SocksView v-else-if="tab === 'socks'" />
         <SettingsView v-else />
       </main>
@@ -115,8 +117,17 @@ nav {
   display: flex;
   gap: 4px;
   align-items: center;
+  /* 窄屏放不下就横着滑,不把字挤成竖排 */
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+nav::-webkit-scrollbar {
+  display: none;
 }
 nav a {
+  flex: none;
+  white-space: nowrap;
   padding: 6px 12px;
   border-radius: 8px;
   color: var(--ink-soft);

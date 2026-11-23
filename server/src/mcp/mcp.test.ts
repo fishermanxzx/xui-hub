@@ -10,17 +10,18 @@ import { addPanel, fakePanels, memoryDb, vlessInbound, type FakePanel } from '..
 import { listGrants, oauthRouter, pkceMatches, redirectAllowed, revokeGrant, validRedirectUri, type DocFetcher } from './oauth';
 import { mcpRouter } from './server';
 import type { ApiCall } from './tools';
+import { ACTOR_HEADER, listOpLog } from '../oplog/log';
 
 async function serve(db: DB, data: Record<string, FakePanel> = {}, adminPassword = 'pw', fetchClientDoc?: DocFetcher) {
   const app = express();
   let base = '';
-  const api: ApiCall = async (method, path, body) => {
-    const res = await fetch(`${base}/internal/api${path}`, { method, headers: body === undefined ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const api: ApiCall = async (method, path, body, actor) => {
+    const res = await fetch(`${base}/internal/api${path}`, { method, headers: { ...(actor ? { [ACTOR_HEADER]: actor } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, body: body === undefined ? undefined : JSON.stringify(body) });
     return { status: res.status, body: await res.json().catch(() => null) };
   };
   app.use(oauthRouter({ db, adminPassword, fetchClientDoc }));
   app.use(mcpRouter({ db, adminPassword, api, version: '1.2.3' }));
-  app.use('/internal/api', express.json(), apiRouter({ db, adminPassword: '', clientFor: fakePanels(data), subBaseUrl: '', subLogDays: 7 }));
+  app.use('/internal/api', express.json(), apiRouter({ db, adminPassword: '', clientFor: fakePanels(data), subBaseUrl: '', subLogDays: 7, trustActorHeader: true }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -92,6 +93,10 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
     assert.deepEqual([ledger.total, ledger.payments.map((p: any) => p.amount)], [30, [30, null]]);
     assert.equal(toolJson(await call('list_payments', { customer_id: c.id })).payments.length, 2);
     assert.equal((await call('renew_customer', { customer_id: c.id })).body.result.isError, true);
+    // 操作日志:记成「MCP · 令牌「名字」」,IP 是调 MCP 的那台
+    const logs = listOpLog(db).rows;
+    assert.ok(logs.some((l) => l.actor === 'MCP · 令牌「mcp」' && l.summary.startsWith('新建客户「小王」') && l.ip === '127.0.0.1'), JSON.stringify(logs.slice(0, 3)));
+    assert.ok(logs.some((l) => l.summary.startsWith('给「小王」续费 1 个月') && l.summary.includes('收款 30')));
     assert.equal(toolJson(await call('update_customer', { customer_id: c.id, limit_devices: 2, expire_at: '' })).expire_at, null);
     assert.deepEqual(toolJson(await call('list_devices', { customer_id: c.id })), { devices: [], recent_fetches: [] });
 

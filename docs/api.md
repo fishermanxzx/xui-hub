@@ -12,7 +12,8 @@ Authorization: Bearer xh_……
 
 - 请求和响应都是 JSON,地址前缀是 `https://<后台地址>/api`。
 - 出错时状态码是 4xx / 5xx,响应体 `{"error": "原因"}`。400 是参数不对,401 是令牌无效,502 是面板连不上或面板报错。
-- 令牌不能调 `/settings`、`/backup`、`/restore`、`/tokens`、`/system`(返回 403),这些只能在后台登录后操作。
+- 令牌不能调 `/settings`、`/backup`、`/restore`、`/tokens`、`/system`、`/oplog`(返回 403),这些只能在后台登录后操作。
+- 用令牌改了东西,操作日志里记成「令牌「令牌名」」;经 MCP 改的记成「MCP · 令牌名 / 客户端名」。
 - 同一个 IP 连续带错令牌 10 次,10 分钟内会被拒绝(429)。
 
 ## 客户
@@ -150,6 +151,14 @@ Authorization: Bearer xh_……
 | POST | `/sync` | 立即同步全部面板的流量并执行额度 / 到期 |
 | GET | `/system/version` | xui-hub 自己的版本:`current`、`latest`(GitHub 上最新的发布版本,缓存 6 小时,`?refresh=1` 重查)、`update_available`、`method`(`auto` 能在后台里直接更新 / `docker` / `manual`) |
 | GET | `/traffic` | 流量统计。查询参数:`by`(`customer` 按客户,默认;`panel` 按面板),`days`(最近几天,含今天,默认 30,最多 365),`id`(可选:展开这位客户 / 这块面板名下各个客户端;按客户时 `0` 是没归入客户的客户端),`exclude`(可选:逗号分隔的面板 id,这些面板上的流量不算,按客户时就是客户在这些面板上的线路不算;只是统计时跳过,记录不动)。返回 `days`(日期)、`total`(每天的上行 / 下行)、`rows`(每行的 `up`、`down` 和每天的合计 `daily`,按用量从大到小) |
+
+## 操作日志
+
+后台、API 令牌和 MCP 每次改东西(新建 / 修改 / 删除 / 续费 / 开线路 / 改设置 / 登录……)都记一条,查看、检查连通性、测试通知、立即同步不记;保存了但什么都没改的也不记。修改类的只写改了什么、改之前和之后(如「额度 100 GB → 200 GB」);密码、令牌、密钥、面板地址、SOCKS 账号只写「改了」,不记内容。保留一年。只能在后台登录后看,令牌不能调。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/oplog` | 新的在前,一次最多 200 条(`limit`,默认 50)。`before`(上一页最后一条的 `id`,翻页)、`customer_id`(只看涉及这位客户的)、`q`(在「做了什么」「谁」「IP」里搜)、`failed=1`(只看没成的)。返回 `rows`(每条 `id`、`at`、`actor`、`ip`、`action`(方法 + 路由)、`summary`、`ok`、`error`、`customer_id`)和 `more`(还有没有更早的) |
 
 面板和 SOCKS 都带 `monthly_cost`(月成本,`null` = 没填)和 `expire_at`(到期时间,毫秒,`0` = 没填),只用来记账和提醒续费,在后台的面板页 / SOCKS 页填写。
 

@@ -12,6 +12,7 @@ import { tcpOpen } from './clients/create';
 import { listCustomers } from './customers/repo';
 import { pruneDevices } from './subscription/devices';
 import { pruneTraffic } from './traffic/daily';
+import { ACTOR_HEADER, pruneOpLog } from './oplog/log';
 import { createUpdater } from './update';
 import { openDb } from './db';
 import { env, isLoopbackHost, PROJECT_ROOT } from './env';
@@ -84,10 +85,10 @@ app.use('/api', apiRouter(apiDeps));
 
 // MCP:/mcp 端点 + OAuth 授权。工具经内部监听调同一套 /api(凭随机密钥,只在本机 / 容器内网可达),逻辑和后台页面完全一致
 const internalApiBase = `http://${isLoopbackHost(env.internalHost) || env.internalHost === '0.0.0.0' || env.internalHost === '::' ? '127.0.0.1' : env.internalHost}:${env.internalPort}/internal/api`;
-const internalApi: ApiCall = async (method, path, body) => {
+const internalApi: ApiCall = async (method, path, body, actor) => {
   const res = await fetch(internalApiBase + path, {
     method,
-    headers: { 'x-internal-key': internalSecret, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+    headers: { 'x-internal-key': internalSecret, ...(actor ? { [ACTOR_HEADER]: actor } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { status: res.status, body: await res.json().catch(() => null) };
@@ -116,7 +117,7 @@ internalApp.use(
   '/internal/api',
   (req, res, next) => (internalSecret && req.get('x-internal-key') === internalSecret ? next() : res.status(404).end()),
   express.json({ limit: '1mb' }),
-  apiRouter({ ...apiDeps, adminPassword: '', dataDir: undefined, onRestore: undefined }),
+  apiRouter({ ...apiDeps, adminPassword: '', dataDir: undefined, onRestore: undefined, trustActorHeader: true }),
 );
 const internalServer = createHttpServer(internalApp);
 internalServer.listen(env.internalPort, env.internalHost);
@@ -190,6 +191,7 @@ const check = noOverlap(async () => {
     pruneDevices(db, now);
     pruneNotified(db, now);
     pruneTraffic(db, now);
+    pruneOpLog(db, now);
   } catch (e) {
     console.error('同步失败', e);
   }

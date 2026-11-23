@@ -47,5 +47,9 @@ export function verifyToken(db: DB, header: string | undefined, now = Date.now()
   return row.id;
 }
 
-/** 令牌碰不了的接口:设置(里面有 Telegram token)、备份恢复(整库)、令牌管理 */
-export const TOKEN_BLOCKED = /^\/(settings|backup|restore|tokens|oauth-grants|system)(\/|$)/;
+/** 令牌碰不了的接口:设置(里面有 Telegram token)、备份恢复(整库)、令牌管理、操作日志 */
+export const TOKEN_BLOCKED = /^\/(settings|backup|restore|tokens|oauth-grants|system|oplog)(\/|$)/;
+
+export function tokenName(db: DB, id: number): string {
+  return (db.prepare('SELECT name FROM api_tokens WHERE id = ?').get(id) as { name: string } | undefined)?.name ?? `#${id}`;
+}
