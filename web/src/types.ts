@@ -233,6 +233,8 @@ export interface Customer {
   sub_ips_day: number;
   /** 拉过订阅的设备数 */
   sub_devices: number;
+  /** 最近一笔收款(金额大于 0 的);没有为 null */
+  last_payment: { amount: number; paid_at: number } | null;
   created_at: number;
   updated_at: number;
   lines: Line[];
@@ -464,4 +466,32 @@ export interface GeoIssue {
   reason: string;
   file?: string;
   code?: string;
+}
+
+/** 续费 / 收款记录 */
+export interface Payment {
+  id: number;
+  customer_id: number;
+  /** 客户现在的名字;客户删了是记的时候的名字 */
+  customer_name: string;
+  customer_deleted: boolean;
+  /** 收了多少(负数 = 退款);null = 只续期没记钱 */
+  amount: number | null;
+  paid_at: number;
+  /** 这笔续了几个月 / 几天;都是 0 = 只记收款 */
+  months: number;
+  days: number;
+  expire_before: number;
+  expire_after: number;
+  note: string;
+  created_at: number;
+}
+
+export interface RenewInput {
+  months?: number;
+  days?: number;
+  amount?: number | null;
+  paid_at?: number;
+  note?: string;
+  reset_usage?: boolean;
 }

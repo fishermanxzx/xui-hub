@@ -51,7 +51,8 @@ claude mcp add --transport http xui-hub https://hub.example.com:8788/mcp --heade
 | `create_customer` | 新建客户 |
 | `update_customer` | 改名称、额度、到期、清零日、设备数上限、月费、流量倍率、订阅模板、自定义订阅链接、外部订阅 |
 | `refresh_upstreams` | 外部订阅马上重新取一遍 |
-| `renew_customer` | 续期若干天,可顺带清零流量 |
+| `renew_customer` | 续费若干个月或若干天,收了钱填金额记成一笔收款,可顺带清零流量 |
+| `list_payments` | 续费 / 收款记录(全部或某位客户的),带合计 |
 | `reset_customer_usage` | 清零已用流量 |
 | `adjust_customer_usage` | 调整本期已用(加减实际流量 GB,倍率另乘;迁移旧用量、纠错) |
 | `reset_subscription_link` | 重置订阅链接,旧链接失效 |
