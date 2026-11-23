@@ -69,7 +69,10 @@ function openForm(panel: Panel | null) {
 }
 
 async function submit() {
-  const body: PanelInput = { name: form.value.name, base_url: form.value.base_url, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: dateInputToMs(form.value.expire) };
+  // 到期日没动就原样发回(表单里只有日期,重算会把到期时刻改成当天 23:59)
+  const was = editing.value;
+  const expireAt = was && form.value.expire === msToDateInput(was.expire_at) ? was.expire_at : dateInputToMs(form.value.expire);
+  const body: PanelInput = { name: form.value.name, base_url: form.value.base_url, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: expireAt };
   if (form.value.token) body.token = form.value.token;
   saving.value = true;
   try {

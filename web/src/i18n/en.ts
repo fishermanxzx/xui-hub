@@ -732,7 +732,6 @@ const en: Messages = {
     batchDone: 'Opened {n} lines',
     batchFailed: '{n} failed',
     batchStopped: '{n} not opened (stopped)',
-    nodeNameOptional: 'Node name (optional)',
     nodeNamePlaceholder: 'Blank = the name the panel generates',
     nodeNameTitle: 'Custom node name shown in the subscription',
     nodeNameHint: 'The node name the customer sees in the subscription. Only changed here; the inbound remark and client on the panel stay as they are. Takes effect the next time the customer updates the subscription. Leave blank to use the panel-generated name.',

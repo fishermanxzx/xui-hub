@@ -94,9 +94,6 @@ export function validUpstreams(raw: unknown): UpstreamInput[] {
   return out;
 }
 
-/** 只要地址(校验用) */
-export const validUpstreamUrls = (raw: unknown): string[] => validUpstreams(raw).map((u) => u.url);
-
 /** 整组替换;地址没变的保留上次取到的结果,没给节点名的保留原来的节点名 */
 export function setUpstreams(db: DB, customerId: number, raw: unknown): void {
   const list = validUpstreams(raw);
@@ -121,8 +118,24 @@ function storedLinks(json: string): string[] {
   }
 }
 
-/** 存着的节点链接按这个外部订阅的节点名改好 */
-const renamedLinks = (r: { links: string; node_name: string }) => renameByTemplate(storedLinks(r.links), r.node_name);
+/**
+ * 存着的节点链接按这个外部订阅的节点名改好。结果按库缓存:读客户(每轮检查、每个修改请求)要列名字,拉订阅要用链接,
+ * 一个外部订阅最多 5 MB,不必每次都整个重新解析、改名。内容变了(重新取到、换了节点名)键就变了
+ */
+const renamedCache = new WeakMap<DB, Map<string, string[]>>();
+function renamedLinks(db: DB, r: { id: number; ok_at: number; links: string; node_name: string }): string[] {
+  let cache = renamedCache.get(db);
+  if (!cache) renamedCache.set(db, (cache = new Map()));
+  const key = `${r.id}|${r.ok_at}|${r.node_name}|${r.links.length}|${r.links.slice(0, 200)}|${r.links.slice(-200)}`;
+  let links = cache.get(key);
+  if (!links) {
+    links = renameByTemplate(storedLinks(r.links), r.node_name);
+    cache.set(key, links);
+    // 只留最近用到的一些
+    if (cache.size > 200) cache.delete(cache.keys().next().value!);
+  }
+  return links;
+}
 
 export function parseUserinfo(header: string | null | undefined): Userinfo | null {
   if (!header) return null;
@@ -153,11 +166,11 @@ export function sumUserinfo(list: (Userinfo | null)[]): Userinfo | null {
 
 export const userinfoText = (u: Userinfo) => `upload=${u.upload}; download=${u.download}; total=${u.total}; expire=${u.expire}`;
 
-const toView = (r: any): UpstreamView => ({
+const toView = (db: DB, r: any): UpstreamView => ({
   id: r.id,
   url: r.url,
   node_name: r.node_name,
-  names: renamedLinks(r).slice(0, 100).map(linkName),
+  names: renamedLinks(db, r).slice(0, 100).map(linkName),
   nodes: r.nodes,
   skipped: r.skipped,
   userinfo: parseUserinfo(r.userinfo),
@@ -172,14 +185,14 @@ export function upstreamsByCustomer(db: DB, customerId?: number): Map<number, Up
     ? db.prepare(`SELECT ${cols} FROM upstream_subs ORDER BY customer_id, position, id`).all()
     : db.prepare(`SELECT ${cols} FROM upstream_subs WHERE customer_id = ? ORDER BY position, id`).all(customerId)) as any[];
   const out = new Map<number, UpstreamView[]>();
-  for (const r of rows) out.set(r.customer_id, [...(out.get(r.customer_id) ?? []), toView(r)]);
+  for (const r of rows) out.set(r.customer_id, [...(out.get(r.customer_id) ?? []), toView(db, r)]);
   return out;
 }
 
 /** 存着的结果:节点链接(按顺序、改好名字)、一次都没取到过的个数、流量 */
 export function cachedUpstream(db: DB, customerId: number): { links: string[]; total: number; failed: number; userinfo: Userinfo | null } {
-  const rows = db.prepare('SELECT links, node_name, userinfo FROM upstream_subs WHERE customer_id = ? ORDER BY position, id').all(customerId) as { links: string; node_name: string; userinfo: string }[];
-  const lists = rows.map(renamedLinks);
+  const rows = db.prepare('SELECT id, ok_at, links, node_name, userinfo FROM upstream_subs WHERE customer_id = ? ORDER BY position, id').all(customerId) as { id: number; ok_at: number; links: string; node_name: string; userinfo: string }[];
+  const lists = rows.map((r) => renamedLinks(db, r));
   return { links: lists.flat(), total: rows.length, failed: lists.filter((l) => !l.length).length, userinfo: sumUserinfo(rows.map((r) => parseUserinfo(r.userinfo))) };
 }
 

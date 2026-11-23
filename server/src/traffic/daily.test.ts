@@ -113,3 +113,12 @@ test('流量统计:只看某几位客户 = 总量、按客户、按面板都只�
   // 空 = 全部
   assert.equal(trafficReport(db, { by: 'customer', days: 1, customers: [] }, T + 2).rows.length, 3);
 });
+
+test('流量统计:面板这次没给某个客户端的流量记录就跳过、起点留着,下次有了接着算,不会把整段累计值记成一天', () => {
+  const db = memoryDb();
+  const p = addPanel(db, 'p1');
+  recordTraffic(db, p.id, [{ email: 'a', up: 1000, down: 1000 }], T);
+  recordTraffic(db, p.id, [{ email: 'a', up: 0, down: 0, hasTraffic: false }], T + 1);
+  recordTraffic(db, p.id, [{ email: 'a', up: 1010, down: 1020 }], T + 2);
+  assert.deepEqual(trafficReport(db, { by: 'panel', days: 1 }, T + 3).total, { up: [10], down: [20] });
+});

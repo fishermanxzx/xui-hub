@@ -12,6 +12,7 @@ export interface EnforceAdmin {
 }
 
 export interface EnforceResult {
+  customer_id: number;
   customer: string;
   panel: string;
   email: string;
@@ -50,11 +51,11 @@ export async function enforceCustomers(db: DB, adminFor: (panel: Panel) => Enfor
           await admin.setClientsEnabled(batch.map((o) => o.line.email), action === 'enable');
           for (const o of batch) {
             markLineAuto(db, o.line.id, action === 'disable', action === 'enable');
-            results.push({ customer: o.customer.name, panel: panel.name, email: o.line.email, action, ok: true });
+            results.push({ customer_id: o.customer.id, customer: o.customer.name, panel: panel.name, email: o.line.email, action, ok: true });
           }
         } catch (e) {
           const error = errorText(e);
-          for (const o of batch) results.push({ customer: o.customer.name, panel: panel.name, email: o.line.email, action, ok: false, error });
+          for (const o of batch) results.push({ customer_id: o.customer.id, customer: o.customer.name, panel: panel.name, email: o.line.email, action, ok: false, error });
         }
       }
     });

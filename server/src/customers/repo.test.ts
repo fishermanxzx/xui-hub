@@ -16,7 +16,7 @@ import {
   getLine,
   lineByEmail,
   linesOnPanel,
-  linesViaSocks,
+  linesUsingSocks,
   listCustomers,
   markLineAuto,
   resetSubToken,
@@ -132,8 +132,8 @@ test('线路:用量按客户汇总,列表按名称排(不分大小写)且各归�
   assert.deepEqual(linesOnPanel(db, a.id).map((l) => l.id), [l1.id, l3.id]);
   assert.deepEqual(linesOnPanel(db, 999), []);
   assert.deepEqual([lineByEmail(db, a.id, 'alice')?.id, lineByEmail(db, b.id, 'alice')?.id, lineByEmail(db, b.id, 'bob')], [l1.id, l2.id, undefined]);
-  assert.deepEqual(linesViaSocks(db, socks).map((l) => l.id), [l2.id]);
-  assert.deepEqual(linesViaSocks(db, 999), []);
+  assert.deepEqual(linesUsingSocks(db, socks).map((l) => l.id), [l2.id]);
+  assert.deepEqual(linesUsingSocks(db, 999), []);
 
   // 额度和到期跟着用量算状态
   const state = (patch: object) => {

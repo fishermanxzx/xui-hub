@@ -62,7 +62,10 @@ function openForm(s: Socks | null) {
 }
 
 async function submit() {
-  const body: SocksInput = { name: form.value.name, remark: form.value.remark, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: dateInputToMs(form.value.expire) };
+  // 到期日没动就原样发回(表单里只有日期,重算会把到期时刻改成当天 23:59)
+  const was = editing.value;
+  const expireAt = was && form.value.expire === msToDateInput(was.expire_at) ? was.expire_at : dateInputToMs(form.value.expire);
+  const body: SocksInput = { name: form.value.name, remark: form.value.remark, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: expireAt };
   if (form.value.address.trim()) body.address = form.value.address.trim();
   const used = editing.value?.used_by ?? 0;
   if (body.address && used && !confirm(t('socks.confirmAddress', { n: used }))) return;
@@ -100,7 +103,7 @@ async function remove(s: Socks) {
 <template>
   <div class="toolbar">
     <div>
-      <h2>SOCKS</h2>
+      <h2>{{ t('socks.title') }}</h2>
       <p class="muted small">{{ t('socks.intro') }}</p>
       <p v-if="list.length" class="small summary">
         <span>{{ t('cost.total', { total: fmtCost(summary.total) }) }}</span>

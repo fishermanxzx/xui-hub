@@ -1,6 +1,6 @@
 // 面板的增删改查。token 只在服务端使用,对外视图不含 token。
 
-import type { DB } from '../db';
+import { nextId, type DB } from '../db';
 
 export interface Panel {
   id: number;
@@ -96,10 +96,13 @@ export function createPanel(db: DB, input: PanelInput, now = Date.now()): Panel 
   const token = input.token?.trim();
   if (!token) throw new InputError('缺少 API token');
   if (db.prepare('SELECT 1 FROM panels WHERE name = ?').get(name)) throw new InputError(`面板名称已存在:${name}`);
-  const info = db
-    .prepare('INSERT INTO panels (name, base_url, token, monthly_cost, expire_at, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(name, normalizeBaseUrl(input.base_url), token, validCost(input.monthly_cost), validExpire(input.expire_at), now);
-  return getPanel(db, Number(info.lastInsertRowid))!;
+  const values = [name, normalizeBaseUrl(input.base_url), token, validCost(input.monthly_cost), validExpire(input.expire_at), now] as const;
+  const id = db.transaction(() => {
+    const id = nextId(db, 'panels');
+    db.prepare('INSERT INTO panels (id, name, base_url, token, monthly_cost, expire_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, ...values);
+    return id;
+  })();
+  return getPanel(db, id)!;
 }
 
 export function updatePanel(db: DB, id: number, patch: PanelInput): Panel {

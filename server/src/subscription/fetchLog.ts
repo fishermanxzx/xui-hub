@@ -1,6 +1,7 @@
 // 订阅拉取记录:每次带有效 token 拉订阅记一条(哪个客户、客户端 UA、来源 IP、给的格式、结果),保留几天后删掉。
 
 import type { Request } from 'express';
+import { BlockList, isIP } from 'node:net';
 import type { DB } from '../db';
 
 const DAY_MS = 86_400_000;
@@ -15,9 +16,39 @@ export interface SubFetch {
   ip: string;
 }
 
-/** 客户端真实 IP:经 Cloudflare 隧道回源时取 CF-Connecting-IP(由 Cloudflare 填写,客户端改不了) */
+/** 本机、内网(Cloudflare 隧道的 cloudflared、本机的反向代理从这里连进来) */
+const LOCAL = new BlockList();
+for (const [net, bits] of [['127.0.0.0', 8], ['10.0.0.0', 8], ['172.16.0.0', 12], ['192.168.0.0', 16]] as const) LOCAL.addSubnet(net, bits, 'ipv4');
+for (const [net, bits] of [['::1', 128], ['fc00::', 7]] as const) LOCAL.addSubnet(net, bits, 'ipv6');
+
+/** Cloudflare 回源用的地址段(https://www.cloudflare.com/ips/) */
+const CLOUDFLARE = new BlockList();
+for (const c of ['173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22', '141.101.64.0/18', '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20', '197.234.240.0/22', '198.41.128.0/17', '162.158.0.0/15', '104.16.0.0/13', '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22']) {
+  const [net, bits] = c.split('/');
+  CLOUDFLARE.addSubnet(net, Number(bits), 'ipv4');
+}
+for (const c of ['2400:cb00::/32', '2606:4700::/32', '2803:f800::/32', '2405:b500::/32', '2405:8100::/32', '2a06:98c0::/29', '2c0f:f248::/32']) {
+  const [net, bits] = c.split('/');
+  CLOUDFLARE.addSubnet(net, Number(bits), 'ipv6');
+}
+
+/** ::ffff:1.2.3.4 这种 IPv4 映射地址还原成 1.2.3.4 */
+const plain = (ip: string) => (ip.startsWith('::ffff:') && isIP(ip.slice(7)) === 4 ? ip.slice(7) : ip);
+const inList = (list: BlockList, ip: string) => {
+  const v = isIP(ip);
+  return v === 4 ? list.check(ip, 'ipv4') : v === 6 ? list.check(ip, 'ipv6') : false;
+};
+
+/**
+ * 客户端真实 IP。CF-Connecting-IP 只在请求确实是经 Cloudflare 来的时候才认:直接连过来的是本机 / 内网(Cloudflare 隧道的 cloudflared、
+ * 本机反向代理)或 Cloudflare 的回源地址。公网直连的(一键脚本、Docker 默认就是)这个头谁都能填,不认,用连接的地址
+ */
 export function clientIp(req: Request): string {
-  return req.get('cf-connecting-ip') || req.ip || '';
+  const peer = plain(req.socket?.remoteAddress ?? '');
+  const ip = plain(req.ip || peer);
+  const cf = req.get('cf-connecting-ip')?.trim();
+  if (cf && isIP(cf) && (inList(LOCAL, peer) || inList(CLOUDFLARE, peer) || inList(CLOUDFLARE, ip))) return cf;
+  return ip;
 }
 
 export function recordSubFetch(db: DB, f: SubFetch): void {

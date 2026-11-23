@@ -249,17 +249,40 @@ export async function editXray(admin: RouteAdmin, edit: (xray: any) => void): Pr
   return true;
 }
 
+/**
+ * 和 editXray 一样改 Xray 配置,改完读回来交给 check 核对(不对就抛错);写回之后重启失败或核对不过,
+ * 就把改之前的配置写回去再重启一次(尽力而为),再把原来的错误抛出去,免得面板上是新配置、记录还是旧的。
+ * 返回读回来的配置(没改动就是读到的那份)
+ */
+export async function editXrayChecked(admin: RouteAdmin, edit: (xray: any) => void, check: (back: any) => void): Promise<any> {
+  const raw = await admin.xraySettings();
+  const xray = xrayConfig(raw);
+  const original = structuredClone(xray);
+  const before = JSON.stringify(xray);
+  edit(xray);
+  if (JSON.stringify(xray) === before) {
+    check(xray);
+    return xray;
+  }
+  const testUrl = decodeJson(raw)?.outboundTestUrl || DEFAULT_TEST_URL;
+  await admin.updateXray(xray, testUrl);
+  try {
+    await admin.restartXray();
+    const back = xrayConfig(await admin.xraySettings());
+    check(back);
+    return back;
+  } catch (e) {
+    await admin
+      .updateXray(original, testUrl)
+      .then(() => admin.restartXray())
+      .catch(() => {});
+    throw e;
+  }
+}
+
 export interface UserRoute {
   inboundTag: string;
   email: string;
-}
-
-/** 给这些客户端加(或换)出口规则:一次写回、一次重启 */
-export function applyRoutes(admin: RouteAdmin, routes: (UserRoute & { server: ExitServer })[]): Promise<boolean> {
-  return editXray(admin, (xray) => {
-    if (!Array.isArray(xray.outbounds) || !xray.outbounds.length) throw new Error('读到的 Xray 配置不完整(没有出站)');
-    for (const r of routes) routeUserToExit(xray, r.inboundTag, r.email, r.server);
-  });
 }
 
 /** 去掉这些客户端的出口规则:一次写回、一次重启;一条都没有就不动 */

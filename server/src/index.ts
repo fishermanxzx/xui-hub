@@ -176,7 +176,7 @@ const check = noOverlap(async () => {
     else forgetNotified(db, 'panel_down:');
     for (const r of await runMonthlyResets(db, clientFor, now)) {
       console.log(`按月清零 ${r.customer.name}${r.failed.length ? `,${r.failed.length} 个客户端没清成` : ''}`);
-      if (settings.monthly_reset) messages.push(resetEvent(r.customer, r.failed.length, now));
+      if (settings.monthly_reset) messages.push(resetEvent(r.customer, r.used, r.failed.length, now));
     }
     const ops = await enforceCustomers(db, clientFor);
     for (const o of ops) console.log(`${o.action === 'disable' ? '停用' : '启用'} ${o.customer} 在 ${o.panel} 上的 ${o.email}:${o.ok ? '成功' : o.error}`);

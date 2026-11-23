@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { errorText, mapLimit, noOverlap, panelKey, serial, serialAll, using } from './util';
+import { errorText, mapLimit, noOverlap, panelKey, serial, using } from './util';
 
 const tick = (ms = 1) => new Promise((r) => setTimeout(r, ms));
 
@@ -45,19 +45,6 @@ test('serial:同一个 key 排队,前一个失败不影响后一个;不同 key �
   await c;
   assert.deepEqual(log.filter((l) => l[0] !== 'c'), ['a+', 'a-', 'b+', 'b-']);
   assert.ok(log.indexOf('c+') < log.indexOf('a-'), '别的 key 不用等');
-});
-
-test('serialAll:占住全部 key,顺序相反的两个任务也不会互相卡住', async () => {
-  const log: string[] = [];
-  const job = (name: string) => async () => {
-    log.push(`${name}+`);
-    await tick(2);
-    log.push(`${name}-`);
-  };
-  await Promise.all([serialAll(['x', 'y'], job('1')), serialAll(['y', 'x', 'y'], job('2')), serial('y', job('3'))]);
-  // 三个任务都要 y:谁先谁后不定,但一个跑完下一个才开始
-  assert.equal(log.length, 6);
-  for (let i = 0; i < 6; i += 2) assert.equal(log[i + 1], log[i].replace('+', '-'));
 });
 
 test('noOverlap:上一次没跑完就跳过', async () => {
