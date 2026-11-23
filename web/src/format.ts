@@ -40,6 +40,20 @@ export function dateInputToMs(value: string): number {
   const [y, m, d] = value.split('-').map(Number);
   return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
 }
+/** 加 n 个自然月,日子不变;那个月没有这一天就取月底(和服务端续费一样算,预览用) */
+export function addMonths(ms: number, n: number): number {
+  const d = new Date(ms);
+  const day = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + n);
+  d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+  return d.getTime();
+}
+/** 当月 1 号 0 点(本地时区),往前 / 往后 n 个月 */
+export function monthStart(ms: number, n = 0): number {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth() + n, 1).getTime();
+}
 export function msToDateInput(ms: number): string {
   if (!ms) return '';
   const d = new Date(ms);

@@ -89,6 +89,55 @@ test('续期接口:在到期日上加天数,过期的从现在起算,可以顺�
   }
 });
 
+test('续费记录:按月续 + 记收款,单独记收款,列出 / 删除;客户卡片带最近一笔收款;写错报 400', async () => {
+  const db = memoryDb();
+  const { call, close } = await serve(db);
+  try {
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    end.setDate(end.getDate() + 5);
+    const c = (await call('POST', '/customers', { name: '张三', expire_at: end.getTime(), monthly_fee: 30 })).body;
+    assert.equal(c.last_payment, null);
+
+    const r = (await call('POST', `/customers/${c.id}/renew`, { months: 1, amount: 30, note: '支付宝', paid_at: 1_700_000_000_000 })).body;
+    const next = new Date(end);
+    next.setMonth(next.getMonth() + 1);
+    if (next.getDate() !== end.getDate()) next.setDate(0);
+    assert.equal(r.expire_at, next.getTime());
+    assert.deepEqual([r.payment.amount, r.payment.months, r.payment.days, r.payment.expire_before, r.payment.expire_after, r.payment.note, r.payment.paid_at], [30, 1, 0, c.expire_at, r.expire_at, '支付宝', 1_700_000_000_000]);
+    assert.deepEqual(r.last_payment, { amount: 30, paid_at: 1_700_000_000_000 });
+
+    // 只续期不记钱:也留一条记录,amount 为 null;最近一笔收款不变
+    const r2 = (await call('POST', `/customers/${c.id}/renew`, { days: 7 })).body;
+    assert.deepEqual([r2.payment.amount, r2.payment.days, r2.expire_at], [null, 7, r.expire_at + 7 * 86_400_000]);
+    assert.deepEqual(r2.last_payment, r.last_payment);
+
+    // 单独记收款(退款是负数):不改到期日
+    const p = (await call('POST', `/customers/${c.id}/payments`, { amount: -10, note: '退一部分' })).body;
+    assert.deepEqual([p.amount, p.months, p.days, p.expire_before, p.expire_after], [-10, 0, 0, r2.expire_at, r2.expire_at]);
+    assert.equal((await call('POST', `/customers/${c.id}/payments`, {})).status, 400);
+    assert.equal((await call('GET', '/customers')).body[0].expire_at, r2.expire_at);
+
+    const list = (await call('GET', `/customers/${c.id}/payments`)).body;
+    assert.deepEqual(list.map((x: any) => x.amount), [-10, null, 30]);
+    assert.deepEqual((await call('GET', '/payments?from=1600000000000&to=1750000000000')).body.map((x: any) => x.id), [r.payment.id]);
+    assert.equal((await call('GET', '/payments')).body.length, 3);
+
+    // 删一笔:到期日不变
+    assert.equal((await call('DELETE', `/payments/${r.payment.id}`)).status, 200);
+    assert.equal((await call('DELETE', `/payments/${r.payment.id}`)).status, 400);
+    assert.equal((await call('GET', `/customers/${c.id}/payments`)).body.length, 2);
+    assert.equal((await call('GET', '/customers')).body[0].expire_at, r2.expire_at);
+
+    for (const bad of [{ months: 1, days: 1 }, {}, { months: 0 }, { months: 1, amount: 'x' }, { months: 1, note: 'x'.repeat(201) }, { months: 1, paid_at: -5 }])
+      assert.equal((await call('POST', `/customers/${c.id}/renew`, bad)).status, 400, JSON.stringify(bad));
+    assert.equal((await call('GET', '/payments?from=abc')).status, 400);
+    assert.equal((await call('POST', '/customers/999/renew', { months: 1 })).status, 400);
+  } finally {
+    await close();
+  }
+});
+
 test('自定义模板:保存前试拉,取不到 / 不是模板 / 内网地址都不让存;没改就不再拉', async () => {
   const INI = '[custom]\nruleset=DIRECT,[]GEOIP,CN\ncustom_proxy_group=节点`select`.*\n';
   await checkCustomTemplate('https://x.example/a.ini', async () => ({ status: 200, body: INI }));

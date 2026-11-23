@@ -35,6 +35,23 @@ async function call(ctx: ToolContext, method: string, path: string, body?: unkno
   return res.body;
 }
 
+/** 给模型看的续费 / 收款记录 */
+function paymentView(p: any) {
+  return {
+    id: p.id,
+    customer_id: p.customer_id,
+    customer_name: p.customer_name,
+    customer_deleted: p.customer_deleted || undefined,
+    amount: p.amount,
+    paid_at: iso(p.paid_at),
+    months: p.months,
+    days: p.days,
+    expire_before: iso(p.expire_before),
+    expire_after: iso(p.expire_after),
+    note: p.note || undefined,
+  };
+}
+
 /** 给模型看的客户:字节换成 GB、时间换成 ISO,带上订阅链接;线路只留要紧的字段 */
 function customerView(c: any, ctx: ToolContext) {
   return {
@@ -52,6 +69,8 @@ function customerView(c: any, ctx: ToolContext) {
     next_reset_at: c.next_reset_at ? new Date(c.next_reset_at).toISOString() : null,
     limit_devices: c.limit_devices || null,
     monthly_fee: c.monthly_fee ?? null,
+    // 最近一笔收款(金额大于 0 的)
+    last_payment: c.last_payment ? { amount: c.last_payment.amount, paid_at: iso(c.last_payment.paid_at) } : null,
     devices: c.sub_devices,
     sub_template: c.sub_template || 'ACL4SSR_Online_Mini',
     sub_url: c.sub_url || `${ctx.baseUrl}/sub/${c.sub_token}`,
@@ -184,11 +203,38 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'renew_customer',
-    title: '续期',
-    description: '给客户续期:在现在的到期日上加 days 天(已到期或没设到期日的从现在起算)。reset_usage 为 true 时顺带把已用流量清零。',
-    inputSchema: obj({ customer_id: customerId, days: int('加多少天', { minimum: 1, maximum: 3650 }), reset_usage: { type: 'boolean', description: '是否同时把已用流量清零' } }, ['customer_id', 'days']),
+    title: '续费',
+    description:
+      '给客户续费:在现在的到期日上加 months 个月(日子不变)或 days 天,两个给一个;已到期或没设到期日的从现在起算。每次续费都记一条续费记录;收了钱就填 amount(按月续时通常是月费 × 月数),会记成一笔收款。reset_usage 为 true 时顺带把已用流量清零。',
+    inputSchema: obj(
+      {
+        customer_id: customerId,
+        months: int('加几个月', { minimum: 1, maximum: 120 }),
+        days: int('加多少天', { minimum: 1, maximum: 3650 }),
+        amount: { type: 'number', description: '这次收了多少钱(不填 = 只续期不记钱)' },
+        note: str('备注(如付款方式),最多 200 字'),
+        reset_usage: { type: 'boolean', description: '是否同时把已用流量清零' },
+      },
+      ['customer_id'],
+    ),
     annotations: { destructiveHint: false },
-    run: async (a, ctx) => customerView(await call(ctx, 'POST', `/customers/${Number(a.customer_id)}/renew`, { days: a.days, reset_usage: a.reset_usage === true }), ctx),
+    run: async (a, ctx) => {
+      const r = await call(ctx, 'POST', `/customers/${Number(a.customer_id)}/renew`, { months: a.months, days: a.days, amount: a.amount, note: a.note, reset_usage: a.reset_usage === true });
+      return { ...customerView(r, ctx), payment: paymentView(r.payment) };
+    },
+  },
+  {
+    name: 'list_payments',
+    title: '续费 / 收款记录',
+    description: '续费和收款记录(新的在前):amount 是收了多少(null = 只续期没记钱,负数 = 退款),months / days 是这笔续了多久(都是 0 = 只记收款),expire_before / expire_after 是续之前 / 之后的到期时间。给 customer_id 只看这位客户的;days 只看最近多少天的(默认 365)。',
+    inputSchema: obj({ customer_id: customerId, days: int('最近多少天', { minimum: 1, maximum: 3650 }) }),
+    annotations: { readOnlyHint: true },
+    run: async (a, ctx) => {
+      const from = Date.now() - (Number(a.days) || 365) * 86_400_000;
+      const rows = a.customer_id ? await call(ctx, 'GET', `/customers/${Number(a.customer_id)}/payments`) : await call(ctx, 'GET', `/payments?from=${from}`);
+      const list = (rows as any[]).filter((p) => p.paid_at >= from).map(paymentView);
+      return { total: Math.round(list.reduce((sum, p) => sum + (p.amount ?? 0), 0) * 100) / 100, payments: list };
+    },
   },
   {
     name: 'reset_customer_usage',
@@ -413,4 +459,4 @@ export async function runTool(tool: ToolDef, args: unknown, ctx: ToolContext): P
 
 export const INSTRUCTIONS =
   'xui-hub 把多台 3x-ui 面板接到一个后台,按「客户」管理线路。一位客户有若干线路(每条是某块面板上的一个客户端)、一个总流量额度、一个到期时间和一条订阅链接。' +
-  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer。删除类操作(delete_customer、delete_line、reset_subscription_link)执行前先向用户确认。';
+  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer(收了钱填 amount,会记成一笔收款),查收款用 list_payments。删除类操作(delete_customer、delete_line、reset_subscription_link)执行前先向用户确认。';

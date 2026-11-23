@@ -8,12 +8,14 @@ import TopologyGraph from '../components/TopologyGraph.vue';
 import GeoField from '../components/GeoField.vue';
 import Modal from '../components/Modal.vue';
 import CustomerTraffic from '../components/CustomerTraffic.vue';
+import CustomerRenew from '../components/CustomerRenew.vue';
+import PaymentLedger from '../components/PaymentLedger.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import MultiSelect from '../components/MultiSelect.vue';
 import { CUSTOMER_SORTS, CUSTOMER_STATES, matchState, queryCustomers, usesPanel, type CustomerQuery, type CustomerSort } from '../customerQuery';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
-import { bytesToGb, dateInputToMs, dueLevel, feeSummary, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
+import { bytesToGb, dateInputToMs, dueLevel, feeSummary, monthStart, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
 import { toast, toastError } from '../toast';
 import type { ClientProtocol, Customer, EnforceOp, Line, LineRule, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
 
@@ -23,6 +25,17 @@ const socksList = ref<Socks[]>([]);
 
 /** 月费合计和结余(面板 + SOCKS 的月成本) */
 const fees = computed(() => feeSummary(customers.value, [...panels.value, ...socksList.value]));
+/** 本月已收:这个月记了钱的续费和单独记的收款(退款算负数) */
+const monthPaid = ref({ total: 0, count: 0 });
+/** 有收款记录或填了月费才在顶上显示「本月已收 / 收款记录」 */
+const showPaid = computed(() => fees.value.show || monthPaid.value.count > 0 || customers.value.some((c) => c.last_payment));
+const renewFor = ref<Customer | null>(null);
+const showLedger = ref(false);
+/** 续费 / 删记录后:重新读客户(到期日、最近收款)和本月已收,续费弹窗跟着换成新的客户数据 */
+async function onPaid() {
+  await load();
+  if (renewFor.value) renewFor.value = customers.value.find((c) => c.id === renewFor.value!.id) ?? null;
+}
 
 // ---------- 搜索 / 过滤 / 排序 ----------
 /** 排序记在浏览器里;搜索和过滤每次打开都从「全部」开始,免得以为客户少了 */
@@ -119,7 +132,10 @@ const sortDir = computed(() => t(`customers.sortDir.${query.value.sort}${query.v
 const templateDefault = ref('');
 async function load() {
   try {
-    [customers.value, panels.value, socksList.value] = await Promise.all([api.customers(), api.panels(), api.socks()]);
+    let paid;
+    [customers.value, panels.value, socksList.value, paid] = await Promise.all([api.customers(), api.panels(), api.socks(), api.payments(monthStart(Date.now()))]);
+    const money = paid.filter((p) => p.amount != null);
+    monthPaid.value = { total: money.reduce((sum, p) => sum + Math.round(p.amount! * 100), 0) / 100, count: money.length };
   } catch (e) {
     toastError(e);
   }
@@ -849,14 +865,18 @@ function exitText(l: Line): string {
     <div>
       <h2>{{ t('customers.title') }}</h2>
       <p class="muted small">{{ t('customers.intro') }}</p>
-      <p v-if="fees.show" class="small summary" :title="t('customers.feeSummaryHint')">
-        <span>{{ t('customers.feeTotal', { total: fmtCost(fees.income), n: fees.payers }) }}</span>
-        <span v-if="fees.unset" class="muted">{{ t('customers.feeUnset', { n: fees.unset }) }}</span>
-        <span v-if="fees.expired" class="muted">{{ t('customers.feeExpired', { n: fees.expired }) }}</span>
-        <template v-if="fees.hasCost">
-          <span class="muted">{{ t('customers.feeCost', { total: fmtCost(fees.cost) }) }}</span>
-          <span :class="{ 'text-err': fees.balance < 0 }">{{ t('customers.feeBalance', { v: fmtCost(fees.balance) }) }}</span>
+      <p v-if="showPaid" class="small summary">
+        <template v-if="fees.show">
+          <span :title="t('customers.feeSummaryHint')">{{ t('customers.feeTotal', { total: fmtCost(fees.income), n: fees.payers }) }}</span>
+          <span v-if="fees.unset" class="muted">{{ t('customers.feeUnset', { n: fees.unset }) }}</span>
+          <span v-if="fees.expired" class="muted">{{ t('customers.feeExpired', { n: fees.expired }) }}</span>
+          <template v-if="fees.hasCost">
+            <span class="muted">{{ t('customers.feeCost', { total: fmtCost(fees.cost) }) }}</span>
+            <span :class="{ 'text-err': fees.balance < 0 }">{{ t('customers.feeBalance', { v: fmtCost(fees.balance) }) }}</span>
+          </template>
         </template>
+        <span :title="t('customers.monthPaidHint')">{{ t('customers.monthPaid', { v: fmtCost(monthPaid.total), n: monthPaid.count }) }}</span>
+        <button type="button" class="link" @click="showLedger = true">{{ t('customers.ledger') }}</button>
       </p>
     </div>
     <div class="row">
@@ -898,12 +918,14 @@ function exitText(l: Line): string {
           <span v-if="c.traffic_ratio !== 1" class="small ratio" :title="t('customers.ratioHint')">{{ t('customers.ratioValue', { v: c.traffic_ratio }) }}<span class="muted"> · {{ t('customers.actualUsed', { v: fmtBytes(c.actual_used) }) }}</span></span>
           <span v-if="c.carried_up || c.carried_down" class="muted small" :title="t('customers.carriedHint')">{{ t('customers.carried', { v: fmtSignedBytes(c.carried_up + c.carried_down) }) }}</span>
           <span v-if="c.monthly_fee != null" class="muted small">{{ t('customers.feeValue', { v: fmtCost(c.monthly_fee) }) }}</span>
+          <span v-if="c.last_payment" class="muted small">{{ t('customers.lastPaid', { date: fmtDate(c.last_payment.paid_at), v: fmtCost(c.last_payment.amount) }) }}</span>
           <span v-if="c.sub_template" class="muted small" :title="c.sub_template">{{ t('customers.template', { name: templateName(c.sub_template) }) }}</span>
           <span v-if="c.limit_devices" class="small" :class="c.sub_devices >= c.limit_devices ? 'text-warn' : 'muted'" :title="t('customers.devicesHint')">{{ t('customers.devices', { n: c.sub_devices, max: c.limit_devices }) }}</span>
           <span v-if="c.next_reset_at" class="muted small" :title="c.expire_at ? t('customers.resetFollows') : t('customers.resetEveryDay', { day: c.reset_day })">{{ t('customers.nextReset', { date: fmtDate(c.next_reset_at) }) }}</span>
         </div>
         <div class="ops">
           <button class="primary small-btn" :disabled="!panels.length" @click="openLineFor(c)">{{ t('customers.openLine') }}</button>
+          <button class="link" @click="renewFor = c">{{ t('customers.renewButton') }}</button>
           <button class="link" :disabled="!c.lines.length" @click="topoFor = c">{{ t('customers.topology') }}</button>
           <button class="link" @click="trafficFor = c">{{ t('customers.trafficTrend') }}</button>
           <button class="link" :disabled="!c.lines.length" @click="resetUsage(c)">{{ t('customers.resetUsage') }}</button>
@@ -1012,6 +1034,7 @@ function exitText(l: Line): string {
         <button type="button" class="link" @click="extend(180)">{{ t('customers.plusDays', { n: 180 }) }}</button>
         <button type="button" class="link" @click="extend(365)">{{ t('customers.plusYear') }}</button>
         <span class="muted small">{{ t('customers.renewHint') }}</span>
+        <span v-if="editing" class="muted small">{{ t('customers.renewUseButton') }}</span>
       </div>
       <label class="field">
         {{ t('customers.subTemplate') }}
@@ -1280,6 +1303,14 @@ function exitText(l: Line): string {
       </table>
     </div>
     <p class="muted small">{{ t('customers.fetchesNote') }}</p>
+  </Modal>
+
+  <Modal v-if="renewFor" :title="t('payments.title', { name: renewFor.name })" wide @close="renewFor = null">
+    <CustomerRenew :customer="renewFor" @changed="onPaid" />
+  </Modal>
+
+  <Modal v-if="showLedger" :title="t('payments.ledgerTitle')" wide @close="showLedger = false">
+    <PaymentLedger @changed="onPaid" />
   </Modal>
 
   <Modal v-if="trafficFor" :title="t('customers.trafficTrendTitle', { name: trafficFor.name })" wide @close="trafficFor = null">
