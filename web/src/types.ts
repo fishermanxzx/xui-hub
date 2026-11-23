@@ -495,3 +495,18 @@ export interface RenewInput {
   note?: string;
   reset_usage?: boolean;
 }
+
+/** 操作日志的一条 */
+export interface OpLog {
+  id: number;
+  at: number;
+  /** 后台 / 令牌「名字」/ MCP · 客户端 */
+  actor: string;
+  ip: string;
+  /** 方法 + 路由 */
+  action: string;
+  summary: string;
+  ok: boolean;
+  error: string;
+  customer_id: number | null;
+}

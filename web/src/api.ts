@@ -1,4 +1,4 @@
-import type { Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind } from './types';
+import type { OpLog, Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind } from './types';
 import { locale } from './i18n';
 
 let onUnauthorized: (() => void) | null = null;
@@ -65,6 +65,14 @@ export const api = {
   addPayment: (id: number, body: { amount: number; paid_at?: number; note?: string }) => call<Payment>('POST', `/api/customers/${id}/payments`, body),
   payments: (from?: number, to?: number) => call<Payment[]>('GET', `/api/payments?${from != null ? `from=${from}` : ''}${to != null ? `&to=${to}` : ''}`),
   deletePayment: (id: number) => call<{ ok: true }>('DELETE', `/api/payments/${id}`),
+  oplog: (q: { before?: number; customer_id?: number; q?: string; failed?: boolean }) => {
+    const p = new URLSearchParams();
+    if (q.before) p.set('before', String(q.before));
+    if (q.customer_id) p.set('customer_id', String(q.customer_id));
+    if (q.q) p.set('q', q.q);
+    if (q.failed) p.set('failed', '1');
+    return call<{ rows: OpLog[]; more: boolean }>('GET', `/api/oplog?${p}`);
+  },
   resetUsage: (id: number) => call<Customer & { failed: { line: string; error: string }[]; ops: EnforceOp[] }>('POST', `/api/customers/${id}/reset-usage`),
   /** 重置订阅链接(换 token,旧链接立即失效) */
   resetSubToken: (id: number) => call<Customer>('POST', `/api/customers/${id}/sub-token`),
