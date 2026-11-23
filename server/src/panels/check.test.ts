@@ -183,6 +183,25 @@ test('同步线路:面板上的计数变小了(在面板上清零、删了重建
   assert.deepEqual(usage().slice(2), [100, 1000]);
 });
 
+test('同步线路:面板上计数变小时结转的计费用量按这块面板当时的倍率折;线路现算的计费用量按现在的倍率', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  updatePanel(db, a.id, { traffic_ratio: 2 });
+  const cid = createCustomer(db, { name: 'zhu' });
+  addLine(db, { customer_id: cid, kind: 'direct', panel_id: a.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'zhu' });
+  const sync = (up: number, down: number, at: number) => checkPanel(db, a, fakeProbe([client('zhu', { traffic: { up, down } })]), at);
+  await sync(100, 1000, 10);
+  let c = getCustomer(db, cid)!;
+  assert.deepEqual([c.actual_used, c.used, c.lines[0].used_down], [1100, 2200, 2000]);
+  // 面板上清零了:旧的 100 / 1000 结转,计费的按 2 折成 200 / 2000
+  await sync(3, 7, 20);
+  c = getCustomer(db, cid)!;
+  assert.deepEqual([c.carried_up, c.carried_down, c.carried_used_up, c.carried_used_down, c.used], [100, 1000, 200, 2000, 2220]);
+  // 之后倍率改回 1:线路上的 10 按 1 算,结转的 2200 不变
+  updatePanel(db, a.id, { traffic_ratio: 1 });
+  assert.deepEqual([getCustomer(db, cid)!.used, getCustomer(db, cid)!.actual_used], [2210, 1110]);
+});
+
 test('同一块面板的两次检查排队跑:先发起的读得慢,也不会用旧计数盖掉后来的新计数(不会当成面板上清零而翻倍)', async () => {
   const db = memoryDb();
   const a = addPanel(db, 'a');

@@ -352,6 +352,16 @@ export const MIGRATIONS: string[] = [
   -- 线路的 id 也不再复用(删了最新的线路再开,新线路不会顶上旧 id;停在旧页面上的操作不会落到别的线路上)
   INSERT OR REPLACE INTO meta (key, value) SELECT 'lines_max_id', CAST(COALESCE(MAX(id), 0) AS TEXT) FROM lines;
   `,
+  `
+  -- 流量倍率改成按面板设(贵的面板上的流量按 1.2 之类计费):线路的计费用量 = 实际流量 × 所在面板的倍率,默认 1。
+  -- 客户表的 traffic_ratio 列不再用(留着不删,新版本不读不写),原来设了的客户之后按各面板的倍率算
+  ALTER TABLE panels ADD COLUMN traffic_ratio REAL NOT NULL DEFAULT 1;
+  -- 结转的计费用量:结转(删线路、面板上计数变小、手动调整)时按当时那块面板的倍率折好存下,之后改面板倍率不重算它;
+  -- carried_up / carried_down 还是实际流量。老数据按客户当时的倍率折一次
+  ALTER TABLE customers ADD COLUMN carried_used_up INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE customers ADD COLUMN carried_used_down INTEGER NOT NULL DEFAULT 0;
+  UPDATE customers SET carried_used_up = CAST(ROUND(carried_up * traffic_ratio) AS INTEGER), carried_used_down = CAST(ROUND(carried_down * traffic_ratio) AS INTEGER);
+  `,
 ];
 
 export function openDb(file: string): DB {

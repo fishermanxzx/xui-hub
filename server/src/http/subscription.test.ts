@@ -609,7 +609,7 @@ test('自助页的线路列表:节点名和地址,不带 UUID / 密码;不算拉
   }
 });
 
-test('自助页的每天用量:按倍率算(和已用一致),看不到实际流量;没用量不显示;流量和到期用外部订阅的时候不显示', async () => {
+test('自助页的每天用量:按面板倍率算(和已用一致),看不到实际流量;没用量不显示;流量和到期用外部订阅的时候不显示', async () => {
   const { db, id, token } = setup();
   const MB = 1024 ** 2;
   const panel = getCustomer(db, id)!.lines[0].panel_id;
@@ -620,7 +620,7 @@ test('自助页的每天用量:按倍率算(和已用一致),看不到实际流�
     assert.ok(!(await page()).includes('每天用量'));
 
     recordTraffic(db, panel, [{ email: 'zhu', up: 10 * MB, down: 90 * MB }], Date.now() - 1);
-    updateCustomer(db, id, { traffic_ratio: 2 });
+    updatePanel(db, panel, { traffic_ratio: 2 });
     let html = await page();
     assert.ok(html.includes('最近 30 天每天用量'));
     assert.match(html, /用了 200 MB/);

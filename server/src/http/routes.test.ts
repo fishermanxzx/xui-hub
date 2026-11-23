@@ -642,37 +642,58 @@ test('geo 库:按面板的库浏览分类、条目和核对写法;写错的分�
   }
 });
 
-test('客户已用:倍率算进额度;删线路后它的流量留在已用里;调整已用超了额度马上停用', async () => {
+test('客户已用:面板倍率算进额度;删线路后它的流量留在已用里;调整已用超了额度马上停用;改面板倍率前能预览谁会超额', async () => {
   const db = memoryDb();
   const hk = addPanel(db, 'hk', 'https://1.1.1.1:2053/p');
   const data = { hk: panel() };
   const { call, close } = await serve(db, data);
   try {
-    const c = (await call('POST', '/customers', { name: '王五', quota_bytes: 3000, traffic_ratio: 2 })).body;
-    assert.equal(c.traffic_ratio, 2);
+    assert.equal((await call('PATCH', `/panels/${hk.id}`, { traffic_ratio: 2 })).body.traffic_ratio, 2);
+    assert.equal((await call('GET', '/panels')).body[0].traffic_ratio, 2);
+    const c = (await call('POST', '/customers', { name: '王五', quota_bytes: 3000, traffic_ratio: 5 })).body;
+    // 客户上没有倍率了,传了也不认
+    assert.equal(c.traffic_ratio, undefined);
     const first = (await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: hk.id, inbound: { id: 7 } })).body.line.id;
     data.hk.clients[0].traffic = { up: 100, down: 900 };
     await call('POST', '/sync');
     let v = (await call('GET', '/customers')).body[0];
-    assert.deepEqual([v.actual_used, v.used, v.state], [1000, 2000, 'active']);
+    assert.deepEqual([v.actual_used, v.used, v.lines[0].panel_ratio, v.lines[0].used_down, v.state], [1000, 2000, 2, 1800, 'active']);
 
-    // 删线路:流量留在已用里
+    // 预览:改成 3 会超额(3000 ≥ 3000),改成 1.5 不会;只算不改
+    const preview = (await call('GET', `/panels/${hk.id}/ratio-preview?ratio=3`)).body;
+    assert.deepEqual(preview, { ratio_before: 2, ratio: 3, over_after: 1, customers: [{ id: c.id, name: '王五', quota_bytes: 3000, used_before: 2000, used_after: 3000, over_before: false, over_after: true }] });
+    assert.equal((await call('GET', `/panels/${hk.id}/ratio-preview?ratio=1.5`)).body.over_after, 0);
+    assert.match((await call('GET', `/panels/${hk.id}/ratio-preview?ratio=0`)).body.error, /流量倍率/);
+    assert.equal((await call('GET', '/customers')).body[0].used, 2000);
+    // 真改成 3:当场超额,线路马上停用;改回 2 马上恢复
+    const up = (await call('PATCH', `/panels/${hk.id}`, { traffic_ratio: 3 })).body;
+    assert.deepEqual([up.traffic_ratio, up.ops.map((o: any) => [o.action, o.ok])], [3, [['disable', true]]]);
+    assert.deepEqual([(await call('GET', '/customers')).body[0].used, (await call('GET', '/customers')).body[0].state], [3000, 'over_quota']);
+    const down = (await call('PATCH', `/panels/${hk.id}`, { traffic_ratio: 2 })).body;
+    assert.deepEqual([down.ops.map((o: any) => o.action), (await call('GET', '/customers')).body[0].state], [['enable'], 'active']);
+    // 没改倍率的修改不去动客户端
+    assert.deepEqual((await call('PATCH', `/panels/${hk.id}`, { tags: ['x'] })).body.ops, []);
+
+    // 删线路:流量留在已用里,计费的按删时的倍率 2 折好
     assert.deepEqual((await call('DELETE', `/customers/${c.id}/lines/${first}`)).body, { ok: true });
     v = (await call('GET', '/customers')).body[0];
-    assert.deepEqual([v.lines.length, v.actual_used, v.used, v.carried_down], [0, 1000, 2000, 900]);
+    assert.deepEqual([v.lines.length, v.actual_used, v.used, v.carried_down, v.carried_used_down], [0, 1000, 2000, 900, 1800]);
 
-    // 再开一条,调整已用:加 300 实际 = 计费 600,超了 3000 额度 → 新线路马上停用
+    // 再开一条,调整已用:加 600 计费(不乘倍率),到 2600;再加 400 到 3000 超了额度 → 新线路马上停用
     await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: hk.id, inbound: { id: 7 } });
-    const adj = (await call('POST', `/customers/${c.id}/adjust-usage`, { down: 300 })).body;
-    assert.deepEqual([adj.actual_used, adj.used, adj.state, adj.ops.map((o: any) => o.action)], [1300, 2600, 'active', []]);
-    const over = (await call('POST', `/customers/${c.id}/adjust-usage`, { down: 200 })).body;
+    const adj = (await call('POST', `/customers/${c.id}/adjust-usage`, { down: 600 })).body;
+    assert.deepEqual([adj.actual_used, adj.used, adj.state, adj.ops.map((o: any) => o.action)], [1600, 2600, 'active', []]);
+    const over = (await call('POST', `/customers/${c.id}/adjust-usage`, { down: 400 })).body;
     assert.deepEqual([over.used, over.state, over.ops.map((o: any) => [o.action, o.ok])], [3000, 'over_quota', [['disable', true]]]);
     assert.equal((await call('POST', `/customers/${c.id}/adjust-usage`, { down: -99999 })).status, 400);
 
-    // 倍率调回 1:计费用量跟着变,马上恢复
-    const back = (await call('PATCH', `/customers/${c.id}`, { traffic_ratio: 1 })).body;
-    assert.deepEqual([back.used, back.state, back.ops.map((o: any) => o.action)], [1500, 'active', ['enable']]);
-    assert.match((await call('PATCH', `/customers/${c.id}`, { traffic_ratio: 0 })).body.error, /流量倍率/);
+    // 面板倍率调回 1:已经结转的不变(1800 + 1000),新线路上没流量,还是超额;调整减掉 500 才恢复
+    const back = (await call('PATCH', `/panels/${hk.id}`, { traffic_ratio: 1 })).body;
+    assert.equal(back.traffic_ratio, 1);
+    assert.deepEqual([(await call('GET', '/customers')).body[0].used, (await call('GET', '/customers')).body[0].state], [3000, 'over_quota']);
+    const fixed = (await call('POST', `/customers/${c.id}/adjust-usage`, { down: -500 })).body;
+    assert.deepEqual([fixed.used, fixed.state, fixed.ops.map((o: any) => o.action)], [2500, 'active', ['enable']]);
+    assert.match((await call('PATCH', `/panels/${hk.id}`, { traffic_ratio: 0 })).body.error, /流量倍率/);
   } finally {
     await close();
   }

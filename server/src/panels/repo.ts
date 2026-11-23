@@ -32,6 +32,8 @@ export interface Panel {
   node_name: string;
   /** 标签(面板页 / 客户页按标签筛) */
   tags: string[];
+  /** 流量倍率:这块面板上线路的计费用量 = 实际流量 × 倍率,默认 1 */
+  traffic_ratio: number;
 }
 
 /** line_count:挂在这块面板上的客户线路数;exit_line_count:旧版本留下的、以它为出口的线路数 */
@@ -46,6 +48,8 @@ export interface PanelInput {
   node_name?: unknown;
   /** 字符串数组,或用逗号 / 空格分开的一串 */
   tags?: unknown;
+  /** 流量倍率:空 = 1 */
+  traffic_ratio?: unknown;
 }
 
 export class InputError extends Error {}
@@ -76,7 +80,15 @@ function parseTags(v: unknown): string[] {
     return [];
   }
 }
-const toPanel = (row: any): Panel => ({ ...row, tags: parseTags(row.tags) });
+const toPanel = (row: any): Panel => ({ ...row, tags: parseTags(row.tags), traffic_ratio: row.traffic_ratio ?? 1 });
+
+/** 流量倍率:0.01 到 100,保留两位小数;空 = 1 */
+export function validRatio(value: unknown): number {
+  if (value == null || value === '') return 1;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0.01 || n > 100) throw new InputError('流量倍率要是 0.01 到 100 之间的数,留空 = 1');
+  return Math.round(n * 100) / 100;
+}
 
 /** 月成本 / 月费:空 = 没填(null);否则 0 到 1 亿之间,保留两位小数 */
 export function validCost(value: unknown, label = '月成本'): number | null {
@@ -133,10 +145,10 @@ export function createPanel(db: DB, input: PanelInput, now = Date.now()): Panel 
   const token = input.token?.trim();
   if (!token) throw new InputError('缺少 API token');
   if (db.prepare('SELECT 1 FROM panels WHERE name = ?').get(name)) throw new InputError(`面板名称已存在:${name}`);
-  const values = [name, normalizeBaseUrl(input.base_url), token, validCost(input.monthly_cost), validExpire(input.expire_at), validNodeName(input.node_name), JSON.stringify(validTags(input.tags)), now] as const;
+  const values = [name, normalizeBaseUrl(input.base_url), token, validCost(input.monthly_cost), validExpire(input.expire_at), validNodeName(input.node_name), JSON.stringify(validTags(input.tags)), validRatio(input.traffic_ratio), now] as const;
   const id = db.transaction(() => {
     const id = nextId(db, 'panels');
-    db.prepare('INSERT INTO panels (id, name, base_url, token, monthly_cost, expire_at, node_name, tags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, ...values);
+    db.prepare('INSERT INTO panels (id, name, base_url, token, monthly_cost, expire_at, node_name, tags, traffic_ratio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, ...values);
     return id;
   })();
   return getPanel(db, id)!;
@@ -152,7 +164,8 @@ export function updatePanel(db: DB, id: number, patch: PanelInput): Panel {
   // 地址换了主机,旧 IP 不算数,下次检查再解析
   const hostChanged = new URL(baseUrl).hostname !== new URL(current.base_url).hostname;
   // 改节点名只改面板这一项:单独设过节点名的线路不跟着变(要统一用「线路都用这个节点名」)
-  db.prepare(`UPDATE panels SET name = ?, base_url = ?, token = ?, monthly_cost = ?, expire_at = ?, node_name = ?, tags = ?${hostChanged ? ', ip = NULL' : ''} WHERE id = ?`).run(
+  // 改倍率:这块面板上的线路本期已用当场按新倍率算(计费用量现算),已经结转的部分不动
+  db.prepare(`UPDATE panels SET name = ?, base_url = ?, token = ?, monthly_cost = ?, expire_at = ?, node_name = ?, tags = ?, traffic_ratio = ?${hostChanged ? ', ip = NULL' : ''} WHERE id = ?`).run(
     name,
     baseUrl,
     patch.token?.trim() || current.token, // 留空表示不修改 token
@@ -160,6 +173,7 @@ export function updatePanel(db: DB, id: number, patch: PanelInput): Panel {
     patch.expire_at !== undefined ? validExpire(patch.expire_at) : current.expire_at,
     patch.node_name !== undefined ? validNodeName(patch.node_name) : current.node_name,
     JSON.stringify(patch.tags !== undefined ? validTags(patch.tags) : current.tags),
+    patch.traffic_ratio !== undefined ? validRatio(patch.traffic_ratio) : current.traffic_ratio,
     id,
   );
   return getPanel(db, id)!;
@@ -170,13 +184,15 @@ export function deletePanel(db: DB, id: number, force = false): void {
   const { line_count } = panelUsage(db, id);
   if (line_count && !force) throw new InputError(`这块面板上还有 ${line_count} 条客户线路,删面板会把这些线路记录一并删掉(本期用掉的流量会留在客户的已用里);先删线路,或确认后强制删除`);
   db.transaction(() => {
-    // 这些线路本期用掉的流量结转到各自客户身上,客户的已用不变
+    // 这些线路本期用掉的流量结转到各自客户身上,客户的已用不变;计费用量按这块面板现在的倍率折好存下
     db.prepare(
       `UPDATE customers SET
          carried_up = carried_up + (SELECT COALESCE(SUM(up), 0) FROM lines WHERE lines.customer_id = customers.id AND lines.panel_id = @id),
-         carried_down = carried_down + (SELECT COALESCE(SUM(down), 0) FROM lines WHERE lines.customer_id = customers.id AND lines.panel_id = @id)
+         carried_down = carried_down + (SELECT COALESCE(SUM(down), 0) FROM lines WHERE lines.customer_id = customers.id AND lines.panel_id = @id),
+         carried_used_up = carried_used_up + (SELECT COALESCE(SUM(CAST(ROUND(up * @ratio) AS INTEGER)), 0) FROM lines WHERE lines.customer_id = customers.id AND lines.panel_id = @id),
+         carried_used_down = carried_used_down + (SELECT COALESCE(SUM(CAST(ROUND(down * @ratio) AS INTEGER)), 0) FROM lines WHERE lines.customer_id = customers.id AND lines.panel_id = @id)
        WHERE id IN (SELECT customer_id FROM lines WHERE panel_id = @id)`,
-    ).run({ id });
+    ).run({ id, ratio: getPanel(db, id)?.traffic_ratio ?? 1 });
     if (!db.prepare('DELETE FROM panels WHERE id = @id').run({ id }).changes) throw new InputError('面板不存在');
     // 「发过连不上」的记录一起清掉,id 以后可能给新面板用
     db.prepare('DELETE FROM notified WHERE key = ?').run(`panel_down:${id}`);

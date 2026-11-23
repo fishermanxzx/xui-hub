@@ -120,5 +120,5 @@ test('清零:结转的流量(删掉的线路、手动调整的)一起清零', as
   assert.equal(getCustomer(db, cid)!.actual_used, 573);
   assert.deepEqual(await resetCustomerUsage(db, getCustomer(db, cid)!, () => ({ resetClientTraffic: async () => {} })), []);
   const v = getCustomer(db, cid)!;
-  assert.deepEqual([v.actual_used, v.carried_up, v.carried_down, v.lines[0].up], [0, 0, 0, 0]);
+  assert.deepEqual([v.actual_used, v.used, v.carried_up, v.carried_down, v.carried_used_up, v.carried_used_down, v.lines[0].up], [0, 0, 0, 0, 0, 0, 0]);
 });

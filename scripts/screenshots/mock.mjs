@@ -10,9 +10,9 @@ const DAY = 86_400_000;
 const GB = 1024 ** 3;
 
 const panels = [
-  { id: 1, name: '香港-1', base_url: 'https://hk1.example.com:2053/panel', ip: '203.0.113.10', node_name: '香港 01', tags: ['香港', '中转'], inbound_count: 2, client_count: 5, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 45, expire_at: now + 52 * DAY },
-  { id: 2, name: '美国-1', base_url: 'https://us1.example.com:2053/panel', ip: '198.51.100.8', node_name: '美国 01', tags: ['美国', '便宜'], inbound_count: 3, client_count: 4, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 30, expire_at: now + 5 * DAY },
-  { id: 3, name: '日本-1', base_url: 'https://jp1.example.com:2053/panel', ip: '192.0.2.31', node_name: '', tags: ['日本'], inbound_count: 2, client_count: 2, panel_version: '3.10.2', xray_version: '26.10.21', monthly_cost: null, expire_at: 0 },
+  { id: 1, name: '香港-1', base_url: 'https://hk1.example.com:2053/panel', ip: '203.0.113.10', node_name: '香港 01', tags: ['香港', '中转'], traffic_ratio: 1, inbound_count: 2, client_count: 5, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 45, expire_at: now + 52 * DAY },
+  { id: 2, name: '美国-1', base_url: 'https://us1.example.com:2053/panel', ip: '198.51.100.8', node_name: '美国 01', tags: ['美国', '便宜'], traffic_ratio: 1, inbound_count: 3, client_count: 4, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 30, expire_at: now + 5 * DAY },
+  { id: 3, name: '日本-1', base_url: 'https://jp1.example.com:2053/panel', ip: '192.0.2.31', node_name: '', tags: ['日本'], traffic_ratio: 1, inbound_count: 2, client_count: 2, panel_version: '3.10.2', xray_version: '26.10.21', monthly_cost: null, expire_at: 0 },
 ].map((p) => ({ ...p, created_at: now - 40 * DAY, checked_at: now - 20_000, check_ok_at: now - 20_000, check_error: null, xray_state: 'running' }));
 
 const socks = [
@@ -35,7 +35,7 @@ const customer = (id, name, remark, quotaGb, expireDays, lines, extra = {}) => {
   const expire_at = expireDays == null ? 0 : now + expireDays * DAY;
   const state = expire_at && expire_at <= now ? 'expired' : quota_bytes && used >= quota_bytes ? 'over_quota' : 'active';
   const token = ['8Fq2mXvT1kLr9aZc0WbnYeHd', 'pV7sQ3uJxN5tRg2Kc8LmZa1E', 'Hy6dTz4BwC9eXo3MfN1qKs7U'][id - 1];
-  return { id, name, remark, quota_bytes, expire_at, sub_token: token, sub_url: `https://hub.example.com/sub/${token}`, sub_fetched_at: now - 2_400_000, sub_fetched_ua: 'clash-verge/v2.2.3', sub_clients: 2, sub_ips: 2, created_at: now - 30 * DAY, updated_at: now - DAY, lines, actual_up: used_up, actual_down: used_down, actual_used: used, traffic_ratio: 1, carried_up: 0, carried_down: 0, used_up, used_down, used, state, sub_links: [], upstreams: [], upstream_mode: 'merge', upstream_userinfo: false, monthly_fee: null, ...extra };
+  return { id, name, remark, quota_bytes, expire_at, sub_token: token, sub_url: `https://hub.example.com/sub/${token}`, sub_fetched_at: now - 2_400_000, sub_fetched_ua: 'clash-verge/v2.2.3', sub_clients: 2, sub_ips: 2, created_at: now - 30 * DAY, updated_at: now - DAY, lines, actual_up: used_up, actual_down: used_down, actual_used: used, carried_up: 0, carried_down: 0, carried_used_up: 0, carried_used_down: 0, used_up, used_down, used, state, sub_links: [], upstreams: [], upstream_mode: 'merge', upstream_userinfo: false, monthly_fee: null, ...extra };
 };
 const customers = [
   customer(1, '张三', '月付 30', 200, 18, [

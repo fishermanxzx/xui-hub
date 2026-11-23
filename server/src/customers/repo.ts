@@ -33,6 +33,8 @@ export interface Line {
   node_name: string;
   /** 线路所在面板的节点名:线路自己没设时用它;也空 = 用面板生成的名字 */
   panel_node_name: string;
+  /** 所在面板的流量倍率:这条线路的计费用量 = up / down × 它 */
+  panel_ratio: number;
   /** 面板上实际的出口(按 Xray 路由规则顺序,同步时读);null = 还没读到 */
   routes: RouteHop[] | null;
   routes_at: number;
@@ -41,9 +43,12 @@ export interface Line {
   created_at: number;
   /** 上次在 xui-hub 里清零的时间(0 = 没清过) */
   zeroed_at: number;
-  /** 最近一次同步到的客户端流量与状态 */
+  /** 最近一次同步到的客户端流量与状态(实际流量) */
   up: number;
   down: number;
+  /** 本期计费用量 = 实际 × 所在面板的倍率 */
+  used_up: number;
+  used_down: number;
   enable: boolean;
   auto_disabled: boolean;
   last_online: number;
@@ -68,11 +73,12 @@ export interface Customer {
   limit_devices: number;
   /** 月费(每月收多少),null = 没填;只用来记账 */
   monthly_fee: number | null;
-  /** 流量倍率:计费用量 = 实际流量 × 倍率,默认 1 */
-  traffic_ratio: number;
   /** 结转的实际流量(删掉的线路、面板上被清零前的计数、手动调整),清零时一起清;可以是负数(手动减过) */
   carried_up: number;
   carried_down: number;
+  /** 结转的计费用量:结转时按当时那块面板的倍率折好存下(手动调整的按 1),之后改面板倍率不重算它 */
+  carried_used_up: number;
+  carried_used_down: number;
   /** 订阅链接 /sub/<token> 里的 token,每个客户一个;重置后旧链接失效 */
   sub_token: string;
   /** 上次拉取订阅的时间和客户端(User-Agent) */
@@ -92,7 +98,7 @@ export type CustomerView = Customer & {
   actual_up: number;
   actual_down: number;
   actual_used: number;
-  /** 本期计费用量 = 实际 × 倍率;订阅里显示的、额度判断用的都是它 */
+  /** 本期计费用量 = 各线路实际流量 × 所在面板的倍率之和 + 结转的计费用量;订阅里显示的、额度判断用的都是它 */
   used_up: number;
   used_down: number;
   used: number;
@@ -115,8 +121,6 @@ export interface CustomerInput {
   limit_devices?: unknown;
   /** 月费:空 = 不填 */
   monthly_fee?: unknown;
-  /** 流量倍率:空 = 1 */
-  traffic_ratio?: unknown;
   /** 自定义订阅链接:整组替换,地址数组或按行分隔的字符串 */
   sub_links?: unknown;
   /** 外部订阅:整组替换,数组(每项是地址或 { url, node_name })或按行分隔的地址 */
@@ -130,14 +134,6 @@ export function customerState(c: { quota_bytes: number; expire_at: number }, use
   if (c.expire_at > 0 && c.expire_at <= now) return 'expired';
   if (c.quota_bytes > 0 && used >= c.quota_bytes) return 'over_quota';
   return 'active';
-}
-
-/** 流量倍率:0.01 到 100,保留两位小数;空 = 1 */
-export function validRatio(value: unknown): number {
-  if (value == null || value === '') return 1;
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 0.01 || n > 100) throw new InputError('流量倍率要是 0.01 到 100 之间的数,留空 = 1');
-  return Math.round(n * 100) / 100;
 }
 
 function nonNegativeInt(value: unknown, label: string): number {
@@ -169,7 +165,7 @@ function validName(value: unknown): string {
 }
 
 const LINE_SQL = `
-  SELECT l.*, p.name AS panel_name, p.node_name AS panel_node_name, ep.name AS exit_panel_name, es.name AS exit_socks_name
+  SELECT l.*, p.name AS panel_name, p.node_name AS panel_node_name, p.traffic_ratio AS panel_ratio, ep.name AS exit_panel_name, es.name AS exit_socks_name
   FROM lines l
   JOIN panels p ON p.id = l.panel_id
   LEFT JOIN panels ep ON ep.id = l.exit_panel_id
@@ -194,7 +190,11 @@ function parseRoutes(v: unknown): RouteHop[] | null {
   }
 }
 
+/** 实际流量按倍率折成计费用量(取整) */
+export const billed = (bytes: number, ratio: number) => Math.round(bytes * ratio);
+
 function toLine(row: any): Line {
+  const ratio = row.panel_ratio ?? 1;
   return {
     id: row.id,
     customer_id: row.customer_id,
@@ -214,6 +214,7 @@ function toLine(row: any): Line {
     exit_label: row.exit_label,
     node_name: row.node_name ?? '',
     panel_node_name: row.panel_node_name ?? '',
+    panel_ratio: ratio,
     routes: parseRoutes(row.routes),
     routes_at: row.routes_at ?? 0,
     rules: parseRules(row.rules),
@@ -221,6 +222,8 @@ function toLine(row: any): Line {
     zeroed_at: row.zeroed_at ?? 0,
     up: row.up ?? 0,
     down: row.down ?? 0,
+    used_up: billed(row.up ?? 0, ratio),
+    used_down: billed(row.down ?? 0, ratio),
     enable: row.enable !== 0,
     auto_disabled: row.auto_disabled === 1,
     last_online: row.last_online ?? 0,
@@ -250,17 +253,20 @@ function withLines(db: DB, rows: any[], now = Date.now()): CustomerView[] {
     // 手动减过时结转是负数,加起来不让它小于 0
     const actual_up = Math.max(0, lines.reduce((s, l) => s + l.up, 0) + (c.carried_up ?? 0));
     const actual_down = Math.max(0, lines.reduce((s, l) => s + l.down, 0) + (c.carried_down ?? 0));
-    const ratio = c.traffic_ratio ?? 1;
-    const used_up = Math.round(actual_up * ratio);
-    const used_down = Math.round(actual_down * ratio);
+    // 计费用量:每条线路按所在面板的倍率算,结转的用结转时折好的数
+    const used_up = Math.max(0, lines.reduce((s, l) => s + l.used_up, 0) + (c.carried_used_up ?? 0));
+    const used_down = Math.max(0, lines.reduce((s, l) => s + l.used_down, 0) + (c.carried_used_down ?? 0));
     const used = used_up + used_down;
+    // traffic_ratio 是 1.19 以前客户上的倍率列,现在倍率按面板设,这列不再往外带
+    const { traffic_ratio: _ratio, ...rest } = c;
     return {
-      ...c,
+      ...rest,
       upstream_userinfo: !!c.upstream_userinfo,
       monthly_fee: c.monthly_fee ?? null,
-      traffic_ratio: ratio,
       carried_up: c.carried_up ?? 0,
       carried_down: c.carried_down ?? 0,
+      carried_used_up: c.carried_used_up ?? 0,
+      carried_used_down: c.carried_used_down ?? 0,
       lines,
       actual_up,
       actual_down,
@@ -289,10 +295,10 @@ const newSubToken = () => randomBytes(18).toString('base64url');
 
 export function createCustomer(db: DB, input: CustomerInput, now = Date.now()): number {
   return db.transaction(() => {
-    const values = [validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, validTemplate(input.sub_template), validLimitDevices(input.limit_devices), validCost(input.monthly_fee, '月费'), validRatio(input.traffic_ratio), newSubToken(), validUpstreamMode(input.upstream_mode), input.upstream_userinfo === true ? 1 : 0, now, now];
+    const values = [validName(input.name), String(input.remark ?? '').trim(), nonNegativeInt(input.quota_bytes, '额度'), nonNegativeInt(input.expire_at, '到期时间'), validResetDay(input.reset_day), now, validTemplate(input.sub_template), validLimitDevices(input.limit_devices), validCost(input.monthly_fee, '月费'), newSubToken(), validUpstreamMode(input.upstream_mode), input.upstream_userinfo === true ? 1 : 0, now, now];
     // 先校验完再取 id,写错的不会白占一个号
     const id = nextId(db, 'customers');
-    db.prepare('INSERT INTO customers (id, name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_template, limit_devices, monthly_fee, traffic_ratio, sub_token, upstream_mode, upstream_userinfo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, ...values);
+    db.prepare('INSERT INTO customers (id, name, remark, quota_bytes, expire_at, reset_day, last_reset_at, sub_template, limit_devices, monthly_fee, sub_token, upstream_mode, upstream_userinfo, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, ...values);
     if (input.sub_links !== undefined) setCustomLinks(db, id, input.sub_links);
     if (input.upstreams !== undefined) setUpstreams(db, id, input.upstreams);
     return id;
@@ -317,7 +323,7 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
   if (!cur) throw new InputError('客户不存在');
   const resetDay = input.reset_day === undefined ? cur.reset_day : validResetDay(input.reset_day);
   const expireAt = input.expire_at === undefined ? cur.expire_at : nonNegativeInt(input.expire_at, '到期时间');
-  const update = db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, reset_day = ?, last_reset_at = ?, sub_template = ?, limit_devices = ?, monthly_fee = ?, traffic_ratio = ?, upstream_mode = ?, upstream_userinfo = ?, updated_at = ? WHERE id = ?');
+  const update = db.prepare('UPDATE customers SET name = ?, remark = ?, quota_bytes = ?, expire_at = ?, reset_day = ?, last_reset_at = ?, sub_template = ?, limit_devices = ?, monthly_fee = ?, upstream_mode = ?, upstream_userinfo = ?, updated_at = ? WHERE id = ?');
   const values = [
     input.name === undefined ? cur.name : validName(input.name),
     input.remark === undefined ? cur.remark : String(input.remark ?? '').trim(),
@@ -329,7 +335,6 @@ export function updateCustomer(db: DB, id: number, input: CustomerInput, now = D
     input.sub_template === undefined ? cur.sub_template : validTemplate(input.sub_template),
     input.limit_devices === undefined ? cur.limit_devices : validLimitDevices(input.limit_devices),
     input.monthly_fee === undefined ? cur.monthly_fee : validCost(input.monthly_fee, '月费'),
-    input.traffic_ratio === undefined ? cur.traffic_ratio : validRatio(input.traffic_ratio),
     input.upstream_mode === undefined ? cur.upstream_mode : validUpstreamMode(input.upstream_mode),
     input.upstream_userinfo === undefined ? cur.upstream_userinfo : input.upstream_userinfo === true ? 1 : 0,
     now,
@@ -402,19 +407,22 @@ export function zeroLineTraffic(db: DB, lineId: number, now = Date.now()): void 
   db.prepare('UPDATE lines SET up = 0, down = 0, zeroed_at = ? WHERE id = ?').run(now, lineId);
 }
 
-/** 把实际流量结转到客户身上(删线路、面板上的计数被清零时用);up / down 可以是负数(手动减) */
-export function carryTraffic(db: DB, customerId: number, up: number, down: number): void {
-  if (up || down) db.prepare('UPDATE customers SET carried_up = carried_up + ?, carried_down = carried_down + ? WHERE id = ?').run(up, down, customerId);
+/**
+ * 把流量结转到客户身上(删线路、面板上的计数被清零时用):up / down 是实际流量,ratio 是那块面板当时的倍率,
+ * 计费用量按它折好一起存下(之后改面板倍率不动已经结转的)。up / down 可以是负数(手动减)
+ */
+export function carryTraffic(db: DB, customerId: number, up: number, down: number, ratio: number): void {
+  if (up || down) db.prepare('UPDATE customers SET carried_up = carried_up + ?, carried_down = carried_down + ?, carried_used_up = carried_used_up + ?, carried_used_down = carried_used_down + ? WHERE id = ?').run(up, down, billed(up, ratio), billed(down, ratio), customerId);
 }
 
 /** 清零时结转的也清掉,和线路计数一个口径 */
 export function clearCarried(db: DB, customerId: number): void {
-  db.prepare('UPDATE customers SET carried_up = 0, carried_down = 0 WHERE id = ?').run(customerId);
+  db.prepare('UPDATE customers SET carried_up = 0, carried_down = 0, carried_used_up = 0, carried_used_down = 0 WHERE id = ?').run(customerId);
 }
 
 /**
- * 手动调整本期已用(实际流量,倍率另乘):加减 up / down 字节,记进结转。迁移时搬旧系统的用量、纠错时用,不用去改面板上的计数。
- * 调完的实际流量不能小于 0
+ * 手动调整本期已用:加减 up / down 字节,记进结转。调的是计费用量(界面上显示、和额度比的那个数),不乘倍率;
+ * 实际流量也加同样的字节。迁移时搬旧系统的用量、纠错时用,不用去改面板上的计数。调完的已用不能小于 0
  */
 export function adjustUsage(db: DB, customerId: number, delta: { up?: unknown; down?: unknown }): void {
   const int = (v: unknown, label: string) => {
@@ -428,8 +436,32 @@ export function adjustUsage(db: DB, customerId: number, delta: { up?: unknown; d
   if (!up && !down) throw new InputError('要调整多少?up / down 至少填一个不为 0 的数');
   const c = getCustomer(db, customerId);
   if (!c) throw new InputError('客户不存在');
-  if (c.actual_up + up < 0 || c.actual_down + down < 0) throw new InputError('减多了:调整后的已用不能小于 0');
-  carryTraffic(db, customerId, up, down);
+  if (c.used_up + up < 0 || c.used_down + down < 0) throw new InputError('减多了:调整后的已用不能小于 0');
+  carryTraffic(db, customerId, up, down, 1);
+}
+
+export interface RatioPreviewRow {
+  id: number;
+  name: string;
+  quota_bytes: number;
+  /** 这块面板改成新倍率前后,这位客户本期的计费用量 */
+  used_before: number;
+  used_after: number;
+  over_before: boolean;
+  over_after: boolean;
+}
+
+/** 面板改成 ratio 之后,上面每位客户的已用会变成多少、谁会超额(线路现算,已经结转的不动) */
+export function previewPanelRatio(db: DB, panelId: number, ratio: number): RatioPreviewRow[] {
+  const out: RatioPreviewRow[] = [];
+  for (const c of listCustomers(db)) {
+    const mine = c.lines.filter((l) => l.panel_id === panelId);
+    if (!mine.length) continue;
+    const delta = mine.reduce((s, l) => s + billed(l.up, ratio) + billed(l.down, ratio) - l.used_up - l.used_down, 0);
+    const used_after = Math.max(0, c.used + delta);
+    out.push({ id: c.id, name: c.name, quota_bytes: c.quota_bytes, used_before: c.used, used_after, over_before: c.quota_bytes > 0 && c.used >= c.quota_bytes, over_after: c.quota_bytes > 0 && used_after >= c.quota_bytes });
+  }
+  return out;
 }
 
 export function linesOnPanel(db: DB, panelId: number): Line[] {
@@ -520,9 +552,9 @@ export function setLineName(db: DB, id: number, name: string): void {
 /** 删线路记录;它本期用掉的流量结转到客户身上,客户的已用不会因为删线路变少 */
 export function deleteLine(db: DB, id: number): void {
   db.transaction(() => {
-    const line = db.prepare('SELECT customer_id, up, down FROM lines WHERE id = ?').get(id) as { customer_id: number; up: number; down: number } | undefined;
+    const line = db.prepare('SELECT l.customer_id, l.up, l.down, p.traffic_ratio AS ratio FROM lines l JOIN panels p ON p.id = l.panel_id WHERE l.id = ?').get(id) as { customer_id: number; up: number; down: number; ratio: number } | undefined;
     if (!line) throw new InputError('线路不存在');
-    carryTraffic(db, line.customer_id, line.up ?? 0, line.down ?? 0);
+    carryTraffic(db, line.customer_id, line.up ?? 0, line.down ?? 0, line.ratio ?? 1);
     db.prepare('DELETE FROM lines WHERE id = ?').run(id);
   })();
 }
