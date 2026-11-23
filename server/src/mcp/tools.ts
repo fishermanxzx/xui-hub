@@ -345,6 +345,30 @@ export const TOOLS: ToolDef[] = [
     run: (a, ctx) => call(ctx, 'GET', `/customers/${Number(a.customer_id)}/lines/${Number(a.line_id)}/links`),
   },
   {
+    name: 'change_line_exit',
+    title: '线路换出口',
+    description:
+      '给线路原地换出口:换成 SOCKS 页登记的代理(socks_id),或者直出(direct 为 true,从线路所在的面板出去)。不删线路、UUID 不变,客户不用更新订阅。' +
+      'line_ids 不给 = 这位客户的全部线路。同一块面板上的线路一起改,每块面板重启一次 Xray,上面所有客户端会断几秒(已经是这个出口的不动)。' +
+      '线路上带条件的出口规则不变。哪块面板没成,只有那块上的线路不改,failed 里带原因。执行前向用户确认要换哪些线路、换成哪个出口,并说明会断几秒。',
+    inputSchema: obj(
+      {
+        customer_id: customerId,
+        line_ids: { type: 'array', items: { type: 'integer', minimum: 1 }, minItems: 1, maxItems: 1000, description: '要换的线路 id(都得是这位客户的);不给 = 他的全部线路' },
+        socks_id: int('换成这个 SOCKS(list_socks 返回的 id)', { minimum: 1 }),
+        direct: { type: 'boolean', description: 'true = 换成直出' },
+      },
+      ['customer_id'],
+    ),
+    annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    run: async (a, ctx) => {
+      if ((a.direct === true) === (a.socks_id != null)) throw new ToolError('socks_id 和 direct 要给一个');
+      const exit = a.direct === true ? { kind: 'direct' } : { kind: 'socks', socks_id: a.socks_id };
+      const r = await call(ctx, 'POST', '/lines/batch-exit', { customer_id: Number(a.customer_id), ...(a.line_ids ? { line_ids: a.line_ids } : {}), exit });
+      return { changed: r.lines.map((l: any) => ({ line_id: l.id, panel: l.panel_name, email: l.email, exit: l.exit_label || '直出' })), failed: r.failed };
+    },
+  },
+  {
     name: 'delete_line',
     title: '删线路',
     description: '删掉客户的一条线路,面板上的客户端和它的出口规则一起删。面板连不上时 force 为 true 只删记录。执行前向用户确认。',
@@ -413,4 +437,4 @@ export async function runTool(tool: ToolDef, args: unknown, ctx: ToolContext): P
 
 export const INSTRUCTIONS =
   'xui-hub 把多台 3x-ui 面板接到一个后台,按「客户」管理线路。一位客户有若干线路(每条是某块面板上的一个客户端)、一个总流量额度、一个到期时间和一条订阅链接。' +
-  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer。删除类操作(delete_customer、delete_line、reset_subscription_link)执行前先向用户确认。';
+  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer。删除类操作(delete_customer、delete_line、reset_subscription_link)和换出口(change_line_exit,会重启面板的 Xray)执行前先向用户确认。';

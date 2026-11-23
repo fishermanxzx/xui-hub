@@ -5,14 +5,15 @@
 // 返回线路记录和客户端的分享链接。中途失败会把这次已经建的 client、路由规则、入站撤掉;同一块面板上的开 / 删线路排队执行。
 
 import { addClientTo, ensureInbound, freeEmail, type ClientAdmin, type CreateOptions } from '../clients/create';
-import { addLine, getCustomer, getLine, linesOnPanel, linesUsingSocks, setLineRoutes, setLineRules, type Line } from '../customers/repo';
+import { addLine, getCustomer, getLine, linesOnPanel, linesUsingSocks, setLineExit, setLineRoutes, setLineRules, type Line } from '../customers/repo';
 import type { DB } from '../db';
 import { getPanel, InputError, listPanels, type Panel } from '../panels/repo';
 import { errorText, panelKey, serial, using } from '../util';
 import { allSocks, getSocks, type SocksEndpoint } from '../socks/repo';
 import { renameLinks, validNodeName } from '../subscription/nodeName';
 import { XUIError } from '../xui/client';
-import { editXray, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, setUserRules, socksServer, type ExitServer, type ResolvedRule, type RouteAdmin, type UserRoute } from './relay';
+import { editXray, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, sameServer, setUserRules, socksServer, unrouteUserExit, userExit, type ExitServer, type ResolvedRule, type RouteAdmin, type UserRoute } from './relay';
+import { xrayConfig } from '../xui/json';
 import { routesForClient } from './routes';
 import { checkRulesGeo, type GeoValidator } from './geodata';
 import { validRules, type LineRule } from './rules';
@@ -208,4 +209,54 @@ export async function applyLineRules(db: DB, line: Line, rules: LineRule[], admi
     }),
   );
   return getLine(db, line.id)!;
+}
+
+/** 换成哪个出口:SOCKS 页登记的代理,或者直出(从线路所在的面板出去) */
+export type ExitTarget = { kind: 'direct' } | { kind: 'socks'; socks_id: number };
+
+export function parseExitTarget(raw: any): ExitTarget {
+  if (raw?.kind === 'direct') return { kind: 'direct' };
+  return { kind: 'socks', socks_id: parseExitSocksId(raw) };
+}
+
+/**
+ * 线路原地换出口:不删线路、不动面板上的客户端(UUID 不变),客户不用更新订阅。
+ * 每块面板上的线路一起改:读 Xray 配置 → 换掉(或去掉)这些客户端的「入站 + user → 出站」规则 → 写回并重启 Xray(已经是这个出口的不动,
+ * 都不用改就不重启)→ 读回核对 → 成功才改记录,并按读回的配置马上算一遍实际出口。
+ * 带条件的出口规则(rules)和面板上手配的规则都不碰。哪块面板没成,只有那块上的线路不改记录,返回里带原因
+ */
+export async function changeLineExits(db: DB, lines: Line[], target: ExitTarget, adminFor: (panel: Panel) => LineAdmin): Promise<{ changed: Line[]; failed: { line: Line; error: unknown }[] }> {
+  const exit = target.kind === 'socks' ? prepareExit(db, target.socks_id) : null;
+  const gone = lines.filter((l) => !getPanel(db, l.panel_id));
+  const changed: Line[] = [];
+  const failed = await onEachPanel(db, lines, adminFor, async (admin, group) => {
+    const tags = new Map((await admin.listInbounds()).map((ib) => [Number(ib.id), String(ib.tag ?? '')]));
+    const lost = group.filter((l) => !tags.get(l.inbound_id));
+    if (lost.length) throw new InputError(`面板上找不到这些线路的入站(或入站没有 tag):${lost.map((l) => l.email).join('、')}`);
+    await editXray(admin, (xray) => {
+      // 要加出站时读到的配置得完整,不然写回去会把面板原有的出站冲掉;换直出只是去掉规则,没有规则就什么都不写
+      if (exit && (!Array.isArray(xray.outbounds) || !xray.outbounds.length)) throw new Error('读到的 Xray 配置不完整(没有出站)');
+      for (const l of group) {
+        if (exit) routeUserToExit(xray, tags.get(l.inbound_id)!, l.email, exit.server);
+        else unrouteUserExit(xray, tags.get(l.inbound_id)!, l.email);
+      }
+    });
+    // 读回来核对:每个客户端的规则确实指到了新出口(直出 = 没有他自己的出口规则)
+    const back = xrayConfig(await admin.xraySettings());
+    const wrong = group.filter((l) => {
+      const now = userExit(back, tags.get(l.inbound_id)!, l.email);
+      return exit ? !now?.server || !sameServer(now.server, exit.server) : now != null;
+    });
+    if (wrong.length) throw new XUIError(`改完读回来,这些客户端的出口不对:${wrong.map((l) => l.email).join('、')}`);
+    const known = allSocks(db).map((s) => ({ id: s.id, host: s.host, port: s.port }));
+    for (const l of group) {
+      setLineExit(db, l.id, exit ? { socks_id: exit.socks_id, label: exit.label } : null);
+      setLineRoutes(db, l.id, routesForClient(back, tags.get(l.inbound_id)!, l.email, known));
+      changed.push(getLine(db, l.id) ?? l);
+    }
+  });
+  return {
+    changed,
+    failed: [...failed.flatMap((f) => f.lines.map((line) => ({ line, error: f.error }))), ...gone.map((line) => ({ line, error: new InputError('这条线路的面板已经不在了') }))],
+  };
 }

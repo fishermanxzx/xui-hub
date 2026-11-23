@@ -8,6 +8,7 @@ import TopologyGraph from '../components/TopologyGraph.vue';
 import GeoField from '../components/GeoField.vue';
 import Modal from '../components/Modal.vue';
 import CustomerTraffic from '../components/CustomerTraffic.vue';
+import LineExit from '../components/LineExit.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import MultiSelect from '../components/MultiSelect.vue';
 import { CUSTOMER_SORTS, CUSTOMER_STATES, matchState, queryCustomers, usesPanel, type CustomerQuery, type CustomerSort } from '../customerQuery';
@@ -788,6 +789,13 @@ async function saveRename() {
   }
 }
 
+// ---------- 换出口:一条线路,或一位客户的全部线路(弹窗里可以去掉几条) ----------
+const exitFor = ref<{ customer: Customer; lines: Line[] } | null>(null);
+async function exitDone() {
+  exitFor.value = null;
+  await load();
+}
+
 async function removeLine(line: Line) {
   if (!confirm(t(line.kind === 'relay' ? 'customers.confirmDeleteRelayLine' : 'customers.confirmDeleteLine', { panel: line.panel_name, email: line.email, used: fmtBytes(line.up + line.down) }))) return;
   try {
@@ -906,6 +914,7 @@ function exitText(l: Line): string {
           <button class="primary small-btn" :disabled="!panels.length" @click="openLineFor(c)">{{ t('customers.openLine') }}</button>
           <button class="link" :disabled="!c.lines.length" @click="topoFor = c">{{ t('customers.topology') }}</button>
           <button class="link" @click="trafficFor = c">{{ t('customers.trafficTrend') }}</button>
+          <button class="link" :disabled="!c.lines.length" @click="exitFor = { customer: c, lines: c.lines }">{{ t('customers.exitAll') }}</button>
           <button class="link" :disabled="!c.lines.length" @click="resetUsage(c)">{{ t('customers.resetUsage') }}</button>
           <button class="link" @click="openForm(c)">{{ t('common.edit') }}</button>
           <button class="link danger" @click="remove(c)">{{ t('common.delete') }}</button>
@@ -967,6 +976,7 @@ function exitText(l: Line): string {
           <span class="l-ops">
             <button class="link" :disabled="loadingLinks === l.id" @click="showLinks(l)">{{ loadingLinks === l.id ? t('common.loading') : t('customers.links') }}</button>
             <button class="link" @click="openRules(l)">{{ l.rules?.length ? t('customers.rulesCount', { n: l.rules.length }) : t('customers.rules') }}</button>
+            <button class="link" @click="exitFor = { customer: c, lines: [l] }">{{ t('customers.changeExit') }}</button>
             <button class="link" @click="openRename(l)">{{ t('customers.rename') }}</button>
             <button class="link danger" @click="removeLine(l)">{{ t('common.delete') }}</button>
           </span>
@@ -1280,6 +1290,10 @@ function exitText(l: Line): string {
       </table>
     </div>
     <p class="muted small">{{ t('customers.fetchesNote') }}</p>
+  </Modal>
+
+  <Modal v-if="exitFor" :title="exitFor.lines.length === 1 ? t('lineExit.titleOne', { panel: exitFor.lines[0].panel_name, email: exitFor.lines[0].email }) : t('lineExit.titleAll', { name: exitFor.customer.name })" @close="exitFor = null">
+    <LineExit :customer="exitFor.customer" :lines="exitFor.lines" :socks="socksList" @done="exitDone" />
   </Modal>
 
   <Modal v-if="trafficFor" :title="t('customers.trafficTrendTitle', { name: trafficFor.name })" wide @close="trafficFor = null">
@@ -1669,11 +1683,18 @@ h2 {
 }
 @media (max-width: 720px) {
   .line {
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto 1fr;
   }
+  /* 窄屏:出口、用量、操作各占一行,操作按钮放不下就换行,不挤线路名 */
   .exit,
-  .stat {
+  .stat,
+  .l-ops {
     grid-column: 2 / -1;
+  }
+  .l-ops {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 4px 14px;
   }
 }
 .check {

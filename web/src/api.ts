@@ -1,4 +1,4 @@
-import type { RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind } from './types';
+import type { RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
 import { locale } from './i18n';
 
 let onUnauthorized: (() => void) | null = null;
@@ -87,6 +87,9 @@ export const api = {
   /** force:面板上删不掉(连不上、已经不在了)也把这里的线路记录删掉 */
   deleteLine: (id: number, lineId: number, force = false) => call('DELETE', `/api/customers/${id}/lines/${lineId}${force ? '?force=1' : ''}`),
   /** 批量删线路:面板上删成了的删记录;force = 面板上删没删成都删记录 */
+  changeLineExit: (customerId: number, lineId: number, exit: LineExitTarget) => call<Line>('PUT', `/api/customers/${customerId}/lines/${lineId}/exit`, { exit }),
+  batchLineExit: (body: { customer_id?: number; line_ids?: number[]; exit: LineExitTarget }) =>
+    call<{ changed: number[]; lines: Line[]; failed: { id: number; line: string; error: string }[] }>('POST', '/api/lines/batch-exit', body),
   deleteLines: (lineIds: number[], force = false) => call<{ deleted: number[]; failed: { id: number; line: string; error: string }[] }>('POST', '/api/lines/batch-delete', { line_ids: lineIds, force }),
   /** 把面板上已有的客户端归到客户名下(成为直连线路),面板上不改 */
   importClients: (id: number, panelId: number, emails: string[]) => call<ImportResult>('POST', `/api/customers/${id}/lines/import`, { panel_id: panelId, emails }),

@@ -81,6 +81,8 @@ Authorization: Bearer xh_……
 | POST | `/customers/:id/lines` | 开线路,见下 |
 | POST | `/lines/batch-delete` | 批量删线路。请求体:`line_ids`(线路 id 数组,1-1000 个),`force`(可选,`true` 时面板上没删成也删记录)。面板上的 client 和出口规则一起删,同一块面板只连一次、Xray 最多重启一次;删成了的删记录(本期流量结转到客户身上)。返回 `deleted`(删掉的线路 id)、`failed`(面板上没删成的:`id`、`line`、`error`,记录还在) |
 | GET | `/customers/:id/lines/:lineId/links` | 这条线路的分享链接 |
+| PUT | `/customers/:id/lines/:lineId/exit` | 原地换出口。请求体:`exit`,`{ "kind": "socks", "socks_id": 3 }`(SOCKS 页登记的代理)或 `{ "kind": "direct" }`(直出,从线路所在的面板出去)。不删线路、面板上的客户端和 UUID 不变,客户不用更新订阅;换掉这个客户端的「入站 + user → 出站」规则(直出就去掉它),写回并重启这块面板的 Xray,读回核对后才改记录,并马上刷新实际出口(`routes`)。已经是这个出口就不动、不重启。线路上带条件的出口规则和面板上手配的规则不碰。返回线路;面板连不上回 502 |
+| POST | `/lines/batch-exit` | 批量换出口。请求体:`exit`(同上),`line_ids`(线路 id 数组,1-1000 个)或 `customer_id`(这位客户的全部线路;两个都给 = 这位客户的这几条)。同一块面板上的一起改,只连一次、Xray 只重启一次;哪块面板没成,只有那块上的线路不改。返回 `changed`(换好的线路 id)、`lines`(换好的线路)、`failed`(`id`、`line`、`error`) |
 | PUT | `/customers/:id/lines/:lineId/rules` | 设置出口规则(整组替换,空数组 = 去掉),见下。写到面板的 Xray 路由并重启 Xray,这块面板上的客户端会断几秒 |
 | PATCH | `/customers/:id/lines/:lineId` | 改自定义节点名。请求体:`node_name`(最多 64 个字符,空字符串 = 用面板生成的名字)。只改这里,面板上不动 |
 | DELETE | `/customers/:id/lines/:lineId` | 删线路(面板上的客户端一起删);面板连不上时加 `?force=1` 只删记录 |

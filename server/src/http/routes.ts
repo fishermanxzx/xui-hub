@@ -36,7 +36,7 @@ import { fetchUpstream, refreshUpstreams, type UpstreamFetcher } from '../subscr
 import { createToken, deleteToken, listTokens, TOKEN_BLOCKED, verifyToken } from './tokens';
 import { listGrants, revokeGrant } from '../mcp/oauth';
 import { enforceCustomers } from '../lines/enforce';
-import { applyLineRules, openLine, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
+import { applyLineRules, changeLineExits, openLine, parseExitTarget, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
 import { validRules } from '../lines/rules';
 import { checkSocks } from '../socks/check';
 import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, planSocksUpdate, saveCheck, updateSocks } from '../socks/repo';
@@ -593,6 +593,42 @@ export function apiRouter(deps: RouteDeps): Router {
         deleted.push(line.id);
       }
       return { deleted, failed: force ? [] : failed.map(({ line, error }) => ({ id: line.id, line: lineLabel(line), error: errorText(error) })) };
+    }),
+  );
+  // 线路原地换出口:exit = { kind: 'socks', socks_id } 或 { kind: 'direct' }。不删线路、UUID 不变,客户不用更新订阅;
+  // 这块面板重启一次 Xray(已经是这个出口就不动)。带条件的出口规则、面板上手配的规则不碰
+  r.put(
+    '/customers/:id/lines/:lid/exit',
+    wrap(async (req) => {
+      const line = lineOf(req);
+      const { failed } = await changeLineExits(db, [line], parseExitTarget(req.body?.exit), deps.clientFor);
+      if (failed.length) throw failed[0].error;
+      return getLine(db, line.id);
+    }),
+  );
+  // 批量换出口:line_ids(挑几条)或 customer_id(这位客户的全部线路;两个都给 = 这位客户的这几条)。
+  // 同一块面板上的一起改,只连一次、只重启一次 Xray;哪块面板没成,只有那块上的线路不改,带原因返回
+  r.post(
+    '/lines/batch-exit',
+    wrap(async (req) => {
+      const target = parseExitTarget(req.body?.exit);
+      const raw = req.body?.line_ids;
+      const owner = req.body?.customer_id == null ? null : plainCustomer(Number(req.body.customer_id));
+      let lines: Line[];
+      if (raw == null) {
+        if (!owner) throw new InputError('要给 line_ids 或 customer_id');
+        lines = owner.lines;
+      } else {
+        if (!Array.isArray(raw) || !raw.length || raw.length > 1000) throw new InputError('line_ids 要是 1 到 1000 个线路 id 的数组');
+        lines = [...new Set(raw.map(Number))].map((id) => {
+          const line = Number.isInteger(id) && id > 0 ? getLine(db, id) : undefined;
+          if (!line || (owner && line.customer_id !== owner.id)) throw new InputError(`线路 ${raw.find((x: unknown) => Number(x) === id)} 不存在${owner ? `或不是「${owner.name}」的` : ''}`);
+          return line;
+        });
+      }
+      if (!lines.length) throw new InputError('没有要换出口的线路');
+      const { changed, failed } = await changeLineExits(db, lines, target, deps.clientFor);
+      return { changed: changed.map((l) => l.id), lines: changed, failed: failed.map(({ line, error }) => ({ id: line.id, line: lineLabel(line), error: errorText(error) })) };
     }),
   );
   // 面板连不上 / 已经报废时删不掉面板上的 client,带 ?force=1 就只删这条记录
