@@ -27,7 +27,7 @@ export interface PageNode {
   name: string;
   host: string;
   port: number;
-  /** hy2 / tuic 走 UDP:浏览器只能测 TCP,测不到不代表不能用 */
+  /** hy2 / tuic 走 UDP:浏览器只能测 TCP,这种线路不测(测出来的要么超时、要么是同端口别的 TCP 服务的假数字),提示用客户端测 */
   udp: boolean;
 }
 
@@ -220,7 +220,7 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 ul.lines{list-style:none;margin:8px 0 0;padding:0}ul.lines li{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--rule);flex-wrap:wrap}ul.lines li:first-child{border-top:none}
 .pname{font-weight:500}
 .nodes li{justify-content:space-between;flex-wrap:nowrap}.nodes .pname{min-width:0;overflow-wrap:anywhere}
-.ms{flex:none;font-size:13px;font-variant-numeric:tabular-nums;font-weight:600;color:var(--soft)}.ms.good{color:var(--ok)}.ms.mid{color:var(--warn)}.ms.slow{color:var(--bad)}
+.ms{flex:none;font-size:13px;font-variant-numeric:tabular-nums;font-weight:600;color:var(--soft)}.ms.udp{font-weight:400;cursor:help}.ms.good{color:var(--ok)}.ms.mid{color:var(--warn)}.ms.slow{color:var(--bad)}
 .h2row{display:flex;justify-content:space-between;align-items:center;gap:12px}.small{font-size:13px;padding:5px 10px}
 .notice{background:var(--bad-bg);color:var(--bad);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:14px}
 h2{font-size:15px;margin:0 0 4px}
@@ -266,7 +266,7 @@ h2{font-size:15px;margin:0 0 4px}
 
 <div class="card">
   <div class="h2row"><h2>线路</h2><button class="small" id="reping" disabled onclick="pingAll()">重新测速</button></div>
-  <div class="muted">延迟是你这台设备的浏览器直接连各节点测的。测之前先关掉代理客户端(包括 TUN / 增强模式),不然测的是经过代理的,数字不准。含建立连接的时间,比客户端里显示的高一些,只作参考。</div>
+  <div class="muted">延迟是你这台设备的浏览器直接连各节点测的。测之前先关掉代理客户端(包括 TUN / 增强模式),不然测的是经过代理的,数字不准。含建立连接的时间,比客户端里显示的高一些,只作参考。UDP 线路浏览器测不了,看客户端里的延迟。</div>
   <ul class="lines nodes" id="nodes"><li class="muted">正在读取线路…</li></ul>
 </div>
 
@@ -280,17 +280,21 @@ function copy(){var i=document.getElementById('u');i.select();var done=function(
 if(navigator.clipboard){navigator.clipboard.writeText(i.value).then(done,function(){document.execCommand('copy');done()})}else{document.execCommand('copy');done()}}
 var NODES=[],busy=false,box=document.getElementById('nodes'),again=document.getElementById('reping');
 function msg(t){box.innerHTML='';var li=document.createElement('li');li.className='muted';li.textContent=t;box.appendChild(li)}
-function show(){box.innerHTML='';NODES.forEach(function(n){var li=document.createElement('li'),a=document.createElement('span'),b=document.createElement('span');a.className='pname';a.textContent=n.name;b.className='ms';b.textContent='等待测速';n.el=b;li.appendChild(a);li.appendChild(b);box.appendChild(li)})}
+/* UDP 线路浏览器测不了:不发探测,直接提示用客户端测 */
+function show(){box.innerHTML='';NODES.forEach(function(n){var li=document.createElement('li'),a=document.createElement('span'),b=document.createElement('span');a.className='pname';a.textContent=n.name;
+if(n.udp){b.className='ms udp';b.textContent='UDP 线路,请用客户端测';b.title='这条是 UDP 线路,浏览器只能测 TCP,测不到不代表不能用;延迟看客户端里的'}else{b.className='ms';b.textContent='等待测速'}
+n.el=b;li.appendChild(a);li.appendChild(b);box.appendChild(li)})}
 /* 浏览器直接连节点地址(https,不带 cookie),从发出到连接结束(握手完成被拒或报错)的时间;超过 4 秒算超时 */
 function probe(n){var h=n.host.indexOf(':')>=0?'['+n.host+']':n.host,c=new AbortController(),t0=performance.now(),tm=setTimeout(function(){c.abort()},4000);
 return fetch('https://'+h+':'+n.port+'/?t='+Math.random(),{mode:'no-cors',cache:'no-store',credentials:'omit',referrerPolicy:'no-referrer',signal:c.signal}).then(function(){},function(){}).then(function(){clearTimeout(tm);return c.signal.aborted?-1:performance.now()-t0})}
 function one(n){n.el.className='ms';n.el.textContent='测速中…';n.el.title='';var best=1e9,k=0;
 return (function next(){return probe(n).then(function(ms){if(ms<0){if(best===1e9)return -1;return best}best=Math.min(best,ms);return ++k<3?next():best})})().then(function(ms){
-if(ms<0){n.el.textContent=n.udp?'测不了':'超时';n.el.className='ms slow';if(n.udp){n.el.className='ms';n.el.title='这条是 UDP 线路,浏览器只能测 TCP,测不到不代表不能用'}return}
+if(ms<0){n.el.textContent='超时';n.el.className='ms slow';return}
 /* 立刻失败(浏览器禁止连这个端口等)不是网络延迟 */
 if(ms<3){n.el.textContent='测不了';n.el.title='浏览器不允许连这个端口,用客户端测';return}
 n.el.textContent=Math.round(ms)+' ms';n.el.className='ms '+(ms<200?'good':ms<400?'mid':'slow')})}
-function pingAll(){if(busy||!NODES.length)return;busy=true;again.disabled=true;var q=NODES.slice();
+/* 只测 TCP 线路;全是 UDP 的「重新测速」一直灰着 */
+function pingAll(){var q=NODES.filter(function(n){return !n.udp});if(busy||!q.length){if(!q.length)again.title='都是 UDP 线路,浏览器测不了,看客户端里的延迟';return}busy=true;again.disabled=true;
 function worker(){var n=q.shift();return n?one(n).then(worker):Promise.resolve()}
 Promise.all([worker(),worker(),worker()]).then(function(){busy=false;again.disabled=false})}
 fetch(${JSON.stringify(`${new URL(url).pathname}/nodes`).replace(/</g, '\\u003c')},{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){NODES=d.nodes||[];
