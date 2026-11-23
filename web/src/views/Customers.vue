@@ -17,7 +17,7 @@ import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
 import { toast, toastError } from '../toast';
-import type { ClientProtocol, Customer, EnforceOp, Line, LineRule, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
+import type { Customer, EnforceOp, Line, LineRule, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
 
 const customers = ref<Customer[]>([]);
 const panels = ref<Panel[]>([]);
@@ -331,7 +331,7 @@ const opening = ref(false);
 const opened = ref<OpenedLine[] | null>(null);
 /** 这次没开成的面板和原因 */
 const openFailed = ref<{ panel: string; error: string }[]>([]);
-/** 每块面板一行:入站 = 'auto:vless' / 'auto:hy2'(有同协议的入站就挂上去,没有就新建)或 'ib:<入站 id>' */
+/** 每块面板一行:入站 = 'ib:<入站 id>',要自己选(不给「自动」,常选错);'' = 还没选 */
 interface PanelPick {
   inbound: string;
   node_name: string;
@@ -343,11 +343,10 @@ const sf = ref<{ picked: Set<number>; rows: Record<number, PanelPick>; results: 
   exit: 'direct',
   socks_id: 0,
 });
-// 批量开线路:一块面板、一个入站
+// 批量开线路:一块面板、一个入站(要自己选,0 = 还没选)
 const lf = ref({
   panel_id: 0,
-  inbound: 'new' as 'new' | number,
-  protocol: 'vless' as ClientProtocol,
+  inbound: 0,
 });
 /** 各面板现取的入站(按面板 id 缓存) */
 const inboundsOf = ref<Record<number, PanelInbound[] | 'loading' | 'error'>>({});
@@ -361,6 +360,13 @@ async function fetchInbounds(panelId: number) {
     inboundsOf.value[panelId] = (await api.panelInbounds(panelId)).inbounds;
   } catch {
     inboundsOf.value[panelId] = 'error';
+    return;
+  }
+  // 只有一个能挂客户端的入站:直接选上(不会选错)
+  const only = clientInboundsOf(panelId);
+  if (only.length === 1) {
+    if (!rowOf(panelId).inbound) sf.value.rows[panelId] = { ...rowOf(panelId), inbound: `ib:${only[0].id}` };
+    if (lf.value.panel_id === panelId && !lf.value.inbound) lf.value.inbound = only[0].id;
   }
 }
 
@@ -370,10 +376,6 @@ const list = (id: number) => {
 };
 const clientInboundsOf = (id: number) => list(id).filter((i) => i.accepts_clients && i.enable);
 const clientInbounds = computed(() => clientInboundsOf(lf.value.panel_id));
-const PROTOCOL_OPTIONS: SelectOption<ClientProtocol>[] = [
-  { value: 'vless', label: 'vless(reality)' },
-  { value: 'hy2', label: 'hy2(hysteria2)' },
-];
 const panelOptions = (list: Panel[]): SelectOption<number>[] => list.map((p) => ({ value: p.id, label: p.name + (p.check_error ? t('customers.unreachable') : ''), disabled: !!p.check_error }));
 /** 出口下拉:只显示 IP(同一 IP 有几个端口时带上端口);名字和 IP 不一样时名字放前面 */
 const socksOptions = computed<SelectOption<number>[]>(() =>
@@ -394,7 +396,7 @@ function openLineFor(c: Customer) {
   sf.value = { picked: new Set(only), rows: {}, results: {}, exit: 'direct', socks_id: socksList.value[0]?.id ?? 0 };
   for (const id of only) void fetchInbounds(id);
 }
-const rowOf = (panelId: number): PanelPick => sf.value.rows[panelId] ?? { inbound: 'auto:vless', node_name: '' };
+const rowOf = (panelId: number): PanelPick => sf.value.rows[panelId] ?? { inbound: '', node_name: '' };
 function pickPanel(panelId: number) {
   sf.value.picked.add(panelId);
   void fetchInbounds(panelId);
@@ -417,21 +419,26 @@ function setRowName(panelId: number, v: string) {
   if (v.trim()) pickPanel(panelId);
 }
 function inboundChoices(panelId: number): SelectOption<string>[] {
+  const ibs = clientInboundsOf(panelId);
   return [
-    ...PROTOCOL_OPTIONS.map((o) => ({ value: `auto:${o.value}`, label: t('customers.inboundAutoShort', { proto: o.label }) })),
-    ...clientInboundsOf(panelId).map((i) => ({ value: `ib:${i.id}`, label: t('customers.inboundOption', { remark: i.remark || t('customers.unnamed'), proto: proto(i.protocol), port: i.port, n: i.clients.length }) })),
+    { value: '', label: ibs.length ? t('customers.pickInbound') : t('customers.noInbounds'), disabled: true },
+    ...ibs.map((i) => ({ value: `ib:${i.id}`, label: t('customers.inboundOption', { remark: i.remark || t('customers.unnamed'), proto: proto(i.protocol), port: i.port, n: i.clients.length }) })),
   ];
 }
-const inboundInput = (v: string): OpenLineInput['inbound'] => (v.startsWith('ib:') ? { id: Number(v.slice(3)) } : { protocol: v.slice(5) as ClientProtocol });
+const inboundInput = (v: string): OpenLineInput['inbound'] => ({ id: Number(v.slice(3)) });
 /** 勾上的面板(按面板列表的顺序) */
 const linePanels = computed(() => usablePanels.value.filter((p) => sf.value.picked.has(p.id)));
 
-const canOpen = computed(() => !!linePanels.value.length && (sf.value.exit === 'direct' || !!sf.value.socks_id));
-const canBatch = computed(() => !!lf.value.panel_id);
+/** 勾上的面板每块都选了入站 */
+const canOpen = computed(() => !!linePanels.value.length && linePanels.value.every((p) => rowOf(p.id).inbound.startsWith('ib:')) && (sf.value.exit === 'direct' || !!sf.value.socks_id));
+const canBatch = computed(() => !!lf.value.panel_id && !!lf.value.inbound);
 watch(
   () => lf.value.panel_id,
   (id) => {
-    lf.value.inbound = 'new';
+    lf.value.inbound = 0;
+    // 已经读过的:只有一个入站就直接选上
+    const only = clientInboundsOf(id);
+    if (only.length === 1) lf.value.inbound = only[0].id;
     void fetchInbounds(id);
   },
 );
@@ -504,8 +511,10 @@ function openBatch() {
   lineFor.value = null;
   opened.value = null;
   const usable = panels.value.filter((p) => !p.check_error);
-  lf.value = { panel_id: usable[0]?.id ?? 0, inbound: 'new', protocol: 'vless' };
-  void fetchInbounds(lf.value.panel_id);
+  const pid = usable[0]?.id ?? 0;
+  const only = clientInboundsOf(pid);
+  lf.value = { panel_id: pid, inbound: only.length === 1 ? only[0].id : 0 };
+  void fetchInbounds(pid);
   batch.value = { ids: new Set(), q: '', running: false, stop: false, done: false, results: {}, exits: {}, names: {} };
 }
 /** 这位客户在这块面板上已经有几条线路 */
@@ -581,8 +590,7 @@ async function runBatch() {
   b.stop = false;
   b.done = false;
   b.results = Object.fromEntries(targets.map((c) => [c.id, { state: 'wait', text: '' } as BatchResult]));
-  // 选「自动新建」时第一条会新建(或复用)入站,后面的都挂到同一个入站上
-  let inbound: OpenLineInput['inbound'] = f.inbound === 'new' ? { protocol: f.protocol } : { id: f.inbound };
+  const inbound: OpenLineInput['inbound'] = { id: f.inbound };
   let ok = 0;
   let created = '';
   for (const c of targets) {
@@ -596,7 +604,6 @@ async function runBatch() {
     if (nodeName) body.node_name = nodeName;
     try {
       const r = await api.openLine(c.id, body);
-      inbound = { id: r.line.inbound_id };
       if (r.created.inbound) created = r.created.inbound;
       b.results[c.id] = { state: 'ok', text: r.line.email };
       ok++;
@@ -1160,8 +1167,6 @@ function exitText(l: Line): string {
       <div class="field-block">
         <span class="label">{{ t('customers.inbound') }}</span>
         <div class="choices">
-          <label class="row small"><input v-model="lf.inbound" type="radio" value="new" />{{ t('customers.inboundAuto') }}</label>
-          <span v-if="lf.inbound === 'new'" class="inline"><Select v-model="lf.protocol" :options="PROTOCOL_OPTIONS" :aria-label="t('customers.inboundAuto')" /></span>
           <template v-if="inboundsOf[lf.panel_id] === 'loading'"><span class="muted small">{{ t('customers.readingInbounds') }}</span></template>
           <template v-else-if="inboundsOf[lf.panel_id] === 'error'"><span class="text-err small">{{ t('customers.inboundsError') }} <button type="button" class="link" @click="fetchInbounds(lf.panel_id)">{{ t('customers.retry') }}</button></span></template>
           <template v-else-if="clientInbounds.length">
