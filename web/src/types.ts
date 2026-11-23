@@ -105,8 +105,9 @@ export interface Socks {
   created_at: number;
   updated_at: number;
   check: SocksCheck | null;
-  /** 拿它当出口的线路数 */
+  /** 拿它当出口的线路数(出口是它,或出口规则里用了它);这些线路属于几位客户 */
   used_by: number;
+  customers: number;
 }
 
 export interface SocksInput {

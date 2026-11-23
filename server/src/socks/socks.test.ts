@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer, type AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import { addLine, createCustomer, deleteLine } from '../customers/repo';
+import { addLine, createCustomer, deleteLine, getCustomer } from '../customers/repo';
 import { addPanel, memoryDb } from '../testUtil';
 import { checkSocks, parseTrace } from './check';
 import { createSocks, deleteSocks, getSocks, getSocksView, listSocks, parseSocksAddress, planSocksUpdate, saveCheck, updateSocks } from './repo';
@@ -98,8 +98,16 @@ test('在用的 SOCKS 删不了:有线路拿它当出口时先删线路', () => 
   const cid = createCustomer(db, { name: 'zhang' });
   const line = addLine(db, { customer_id: cid, kind: 'relay', panel_id: a.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'zhang', exit_kind: 'socks', exit_socks_id: id, exit_label: 'SOCKS att' });
 
-  assert.deepEqual(listSocks(db).map((s) => [s.name, s.used_by]), [['att', 1], ['idle', 0]]);
+  assert.deepEqual(listSocks(db).map((s) => [s.name, s.used_by, s.customers]), [['att', 1, 1], ['idle', 0, 0]]);
   assert.equal(getSocksView(db, id)!.used_by, 1);
+  // 同一位客户再开一条也用它:线路 2 条,客户还是 1 位;出口规则里用到的也算
+  const line2 = addLine(db, { customer_id: cid, kind: 'direct', panel_id: a.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'zhang-2' });
+  db.prepare('UPDATE lines SET rules = ? WHERE id = ?').run(JSON.stringify([{ domain: ['geosite:netflix'], ip: [], port: '', network: '', to: { kind: 'socks', socks_id: id } }]), line2.id);
+  const cid2 = createCustomer(db, { name: 'li' });
+  addLine(db, { customer_id: cid2, kind: 'relay', panel_id: a.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'li', exit_kind: 'socks', exit_socks_id: id, exit_label: 'SOCKS att' });
+  assert.deepEqual([getSocksView(db, id)!.used_by, getSocksView(db, id)!.customers], [3, 2]);
+  deleteLine(db, line2.id);
+  deleteLine(db, getCustomer(db, cid2)!.lines[0].id);
   assert.throws(() => deleteSocks(db, id), /还有 1 条线路在用这个 SOCKS/);
   assert.ok(getSocks(db, id));
   deleteSocks(db, idle);

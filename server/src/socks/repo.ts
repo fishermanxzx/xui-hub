@@ -32,8 +32,8 @@ export interface SocksCheck {
   error: string | null;
 }
 
-/** used_by:用到它的线路数(出口是它,或出口规则里用了它) */
-export type SocksView = Omit<SocksProxy, 'password'> & { has_password: boolean; check: SocksCheck | null; used_by: number };
+/** used_by:用到它的线路数(出口是它,或出口规则里用了它);customers:这些线路属于几位客户 */
+export type SocksView = Omit<SocksProxy, 'password'> & { has_password: boolean; check: SocksCheck | null; used_by: number; customers: number };
 
 export interface SocksInput {
   name?: unknown;
@@ -119,12 +119,13 @@ function rowToView(row: any): SocksView {
     ...rest,
     has_password: password !== '',
     used_by: row.used_by ?? 0,
+    customers: row.customers ?? 0,
     check: row.check_at == null ? null : { at: row.check_at, ok: row.check_ok === 1, ms: row.check_ms, ip: row.check_ip, loc: row.check_loc, error: row.check_error },
   };
 }
 
-const VIEW_SQL = `SELECT s.*, (SELECT COUNT(*) FROM lines l WHERE l.exit_socks_id = s.id
-  OR EXISTS (SELECT 1 FROM json_each(l.rules) r WHERE json_extract(r.value, '$.to.socks_id') = s.id)) AS used_by FROM socks_proxies s`;
+const USING = `FROM lines l WHERE l.exit_socks_id = s.id OR EXISTS (SELECT 1 FROM json_each(l.rules) r WHERE json_extract(r.value, '$.to.socks_id') = s.id)`;
+const VIEW_SQL = `SELECT s.*, (SELECT COUNT(*) ${USING}) AS used_by, (SELECT COUNT(DISTINCT l.customer_id) ${USING}) AS customers FROM socks_proxies s`;
 
 export function listSocks(db: DB): SocksView[] {
   return (db.prepare(`${VIEW_SQL} ORDER BY s.name COLLATE NOCASE`).all() as any[]).map(rowToView);
