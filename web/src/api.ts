@@ -1,4 +1,4 @@
-import type { RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
+import type { Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
 import { locale } from './i18n';
 
 let onUnauthorized: (() => void) | null = null;
@@ -60,6 +60,11 @@ export const api = {
   /** 改了额度 / 到期会立刻执行停用 / 恢复,ops 是到面板上的操作结果 */
   updateCustomer: (id: number, body: CustomerInput) => call<Customer & { ops: EnforceOp[] }>('PATCH', `/api/customers/${id}`, body),
   /** 清零已用:各线路客户端在面板上的流量清零,超额停掉的随之恢复 */
+  renew: (id: number, body: RenewInput) => call<Customer & { payment: Payment; failed: { line: string; error: string }[]; ops: EnforceOp[] }>('POST', `/api/customers/${id}/renew`, body),
+  customerPayments: (id: number) => call<Payment[]>('GET', `/api/customers/${id}/payments`),
+  addPayment: (id: number, body: { amount: number; paid_at?: number; note?: string }) => call<Payment>('POST', `/api/customers/${id}/payments`, body),
+  payments: (from?: number, to?: number) => call<Payment[]>('GET', `/api/payments?${from != null ? `from=${from}` : ''}${to != null ? `&to=${to}` : ''}`),
+  deletePayment: (id: number) => call<{ ok: true }>('DELETE', `/api/payments/${id}`),
   resetUsage: (id: number) => call<Customer & { failed: { line: string; error: string }[]; ops: EnforceOp[] }>('POST', `/api/customers/${id}/reset-usage`),
   /** 重置订阅链接(换 token,旧链接立即失效) */
   resetSubToken: (id: number) => call<Customer>('POST', `/api/customers/${id}/sub-token`),
@@ -95,8 +100,8 @@ export const api = {
   importClients: (id: number, panelId: number, emails: string[]) => call<ImportResult>('POST', `/api/customers/${id}/lines/import`, { panel_id: panelId, emails }),
 
   /** 流量统计;id 给了就展开这位客户 / 这块面板名下的各个客户端 */
-  traffic: (by: TrafficBy, days: number, id?: number, exclude: number[] = []) =>
-    call<TrafficReport>('GET', `/api/traffic?by=${by}&days=${days}${id === undefined ? '' : `&id=${id}`}${exclude.length ? `&exclude=${exclude.join(',')}` : ''}`),
+  traffic: (by: TrafficBy, days: number, id?: number, exclude: number[] = [], customers: number[] = []) =>
+    call<TrafficReport>('GET', `/api/traffic?by=${by}&days=${days}${id === undefined ? '' : `&id=${id}`}${exclude.length ? `&exclude=${exclude.join(',')}` : ''}${customers.length ? `&customers=${customers.join(',')}` : ''}`),
 
   /** xui-hub 自己的版本和能不能更新;refresh 重新问一次 GitHub */
   systemVersion: (refresh = false) => call<UpdateInfo>('GET', `/api/system/version${refresh ? '?refresh=1' : ''}`),

@@ -9,6 +9,7 @@ import type { LinkFetcher } from '../subscription/service';
 import { HOP_HEADER, type UpstreamFetcher } from '../subscription/upstream';
 import { templateUrl } from '../subscription/templates';
 import { addPanel, memoryDb } from '../testUtil';
+import { recordTraffic } from '../traffic/daily';
 import { subscriptionRouter, type SubscriptionDeps } from './subscription';
 
 const CLASH_UA = 'clash-verge/v2.2.3';
@@ -602,6 +603,32 @@ test('自助页的线路列表:节点名和地址,不带 UUID / 密码;不算拉
     assert.equal((await get(`${link('bad-token')}/nodes`)).status, 404);
     updateCustomer(db, id, { expire_at: 1 });
     assert.deepEqual(await (await get(`${link(token)}/nodes`)).json(), { nodes: [], error: '' });
+  } finally {
+    await close();
+  }
+});
+
+test('自助页的每天用量:按倍率算(和已用一致),看不到实际流量;没用量不显示;流量和到期用外部订阅的时候不显示', async () => {
+  const { db, id, token } = setup();
+  const MB = 1024 ** 2;
+  const panel = getCustomer(db, id)!.lines[0].panel_id;
+  recordTraffic(db, panel, [{ email: 'zhu', up: 0, down: 0 }], Date.now() - 2);
+  const { link, close } = await serve(db, fakeConverter([]), () => false, fetcher, upstream([]));
+  const page = async () => (await fetch(link(token), { headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html' } })).text();
+  try {
+    assert.ok(!(await page()).includes('每天用量'));
+
+    recordTraffic(db, panel, [{ email: 'zhu', up: 10 * MB, down: 90 * MB }], Date.now() - 1);
+    updateCustomer(db, id, { traffic_ratio: 2 });
+    let html = await page();
+    assert.ok(html.includes('最近 30 天每天用量'));
+    assert.match(html, /用了 200 MB/);
+    // 柱子上是按倍率算的 200 MB,不是实际的 100 MB(纵轴半格刻度是 100 MB,不算)
+    assert.ok(html.includes('data-v="200 MB"') && !html.includes('data-v="100 MB"'));
+
+    updateCustomer(db, id, { upstreams: [UP_URL], upstream_userinfo: true });
+    html = await page();
+    assert.ok(!html.includes('每天用量'));
   } finally {
     await close();
   }

@@ -34,7 +34,7 @@ Authorization: Bearer xh_……
 | `traffic_ratio` | 流量倍率,默认 1(0.01-100,两位小数):计费用量 = 实际流量 × 倍率。写的时候传空 = 1 |
 | `actual_up` / `actual_down` / `actual_used` | 只读:本期实际流量(字节)= 各线路之和 + 结转 |
 | `carried_up` / `carried_down` | 只读:结转的实际流量(字节):删掉的线路本期用掉的、面板上计数被清零或重建前的、手动调整的;清零时一起清。手动减过时可以是负数 |
-| `used_up` / `used_down` / `used` | 只读:本期计费用量(字节)= 实际 × 倍率。订阅里的 `subscription-userinfo`、自助页、额度判断(超额停用)、用量提醒都按它 |
+| `used_up` / `used_down` / `used` | 只读:本期计费用量(字节)= 实际 × 倍率。订阅里的 `subscription-userinfo`、自助页(含最近 30 天每天用量)、额度判断(超额停用)、用量提醒都按它 |
 | `state` | `active` 正常 / `expired` 已到期 / `over_quota` 已超额 |
 | `sub_token` | 订阅链接是 `https://<后台地址>/sub/<sub_token>` |
 | `sub_url` | 配了 `SUB_BASE_URL` 时是完整的订阅链接,否则为 `null` |
@@ -50,14 +50,20 @@ Authorization: Bearer xh_……
 | GET | `/customers` | 全部客户 |
 | POST | `/customers` | 新建。请求体:`name`(必填)、`remark`、`quota_bytes`、`expire_at`、`reset_day`、`limit_devices`、`monthly_fee`、`traffic_ratio`、`sub_template`、`sub_links`、`upstreams`、`upstream_mode`、`upstream_userinfo` |
 | PATCH | `/customers/:id` | 修改,只传要改的字段。改了额度 / 到期会立刻停用或恢复他的客户端 |
-| POST | `/customers/:id/renew` | 续期。请求体:`days`(1-3650),`reset_usage`(可选,`true` 时顺带把流量清零)。在现在的到期日上加天数,已到期或没设到期日的从现在起算 |
+| POST | `/customers/:id/renew` | 续费。请求体:`months`(1-120,按自然月加,日子不变;那个月没有这一天就取月底)或 `days`(1-3650),给一个;`amount`(可选,收了多少钱,负数 = 退款)、`paid_at`(可选,收款日期,毫秒,默认现在)、`note`(可选,备注,最多 200 字)、`reset_usage`(可选,`true` 时顺带把流量清零)。在现在的到期日上加,已到期或没设到期日的从现在起算。每次都记一条续费记录(没填 `amount` 的记成只续期),返回的客户里带 `payment` |
+| GET | `/customers/:id/payments` | 这位客户的续费 / 收款记录,新的在前 |
+| POST | `/customers/:id/payments` | 单独记一笔收款,不续期。请求体:`amount`(必填)、`paid_at`、`note` |
 | POST | `/customers/:id/reset-usage` | 把已用流量清零(结转的一起清) |
 | POST | `/customers/:id/adjust-usage` | 调整本期已用。请求体:`up`、`down`(字节,整数,负数 = 减,至少一个不为 0)。按实际流量加减(倍率另乘),记进结转,不改面板上的计数;调完不能小于 0。之后马上停用或恢复他的客户端。迁移时搬旧系统的用量、纠错时用 |
 | POST | `/customers/:id/sub-token` | 重置订阅链接,旧链接立即失效 |
 | POST | `/customers/:id/upstreams/refresh` | 外部订阅马上重新取一遍,返回客户(看 `upstreams`) |
 | GET | `/customers/:id/devices` | 拉过订阅的设备(`id`、`ua`、`ip`、`first_at`、`last_at`) |
 | DELETE | `/customers/:id/devices/:deviceId` | 移除一台设备,让出名额 |
-| DELETE | `/customers/:id` | 删除客户,连同他在各面板上的客户端 |
+| DELETE | `/customers/:id` | 删除客户,连同他在各面板上的客户端(他的续费 / 收款记录留着) |
+| GET | `/payments` | 全部客户的续费 / 收款记录,新的在前。`from` / `to`(毫秒,可选)= 收款日期在 `[from, to)` 里的 |
+| DELETE | `/payments/:id` | 删一笔记录(记错了时用),只删记录,到期日不变 |
+
+续费 / 收款记录的字段:`id`、`customer_id`、`customer_name`(客户删了是记的时候的名字)、`customer_deleted`、`amount`(`null` = 只续期没记钱)、`paid_at`、`months`、`days`(都是 0 = 只记收款)、`expire_before`、`expire_after`、`note`、`created_at`。客户列表里的 `last_payment` 是他最近一笔收款(金额大于 0 的,退款不算)(`amount`、`paid_at`),没有为 `null`。
 
 删线路(包括在面板卡片上删客户端、强制删面板)时,线路本期用掉的流量结转到客户身上,客户的已用不会变少。同步时面板上的计数比上次小(在面板上清零过、删了重建同名客户端、面板重装),旧计数也会结转;要清零请用 `reset-usage`。
 
@@ -167,6 +173,6 @@ curl -s -H "$AUTH" -H 'Content-Type: application/json' \
 
 # 3. 把订阅链接发给买家:https://hub.example.com:8788/sub/AbCd…
 
-# 续费一个月并清零流量
-curl -s -H "$AUTH" -H 'Content-Type: application/json' -d '{"days":30,"reset_usage":true}' $API/customers/12/renew
+# 续费一个月、记一笔 30 元收款,并清零流量
+curl -s -H "$AUTH" -H 'Content-Type: application/json' -d '{"months":1,"amount":30,"note":"发卡站","reset_usage":true}' $API/customers/12/renew
 ```

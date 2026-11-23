@@ -290,6 +290,25 @@ export const MIGRATIONS: string[] = [
   -- 面板地址解析出的 IP(地址本身就是 IP 时也记),检查时更新;解析不出来保留上次的
   ALTER TABLE panels ADD COLUMN ip TEXT;
   `,
+  `
+  -- 续费 / 收款记录:续费时记一笔(没填金额的 amount 为 NULL = 只续期),也可以单独记收款(months / days 都是 0)。
+  -- 客户删了记录还在,customer_name 是记的时候的名字;expire_before / expire_after 是这笔前后的到期时间
+  CREATE TABLE payments (
+    id            INTEGER PRIMARY KEY,
+    customer_id   INTEGER NOT NULL,
+    customer_name TEXT NOT NULL,
+    amount        REAL,
+    paid_at       INTEGER NOT NULL,
+    months        INTEGER NOT NULL DEFAULT 0,
+    days          INTEGER NOT NULL DEFAULT 0,
+    expire_before INTEGER NOT NULL DEFAULT 0,
+    expire_after  INTEGER NOT NULL DEFAULT 0,
+    note          TEXT NOT NULL DEFAULT '',
+    created_at    INTEGER NOT NULL
+  );
+  CREATE INDEX payments_customer ON payments(customer_id, paid_at);
+  CREATE INDEX payments_paid ON payments(paid_at);
+  `,
 ];
 
 export function openDb(file: string): DB {

@@ -90,6 +90,13 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
     assert.deepEqual([direct.changed.length, direct.changed[0].exit, direct.failed], [1, '直出', []]);
     const renewed = toolJson(await call('renew_customer', { customer_id: c.id, days: 30 }));
     assert.ok(Math.abs(Date.parse(renewed.expire_at) - Date.parse(c.expire_at) - 30 * 86_400_000) < 1000);
+    assert.deepEqual([renewed.payment.amount, renewed.payment.days, renewed.last_payment], [null, 30, null]);
+    const paid = toolJson(await call('renew_customer', { customer_id: c.id, months: 1, amount: 30, note: '微信' }));
+    assert.deepEqual([paid.payment.amount, paid.payment.months, paid.payment.note, paid.last_payment.amount], [30, 1, '微信', 30]);
+    const ledger = toolJson(await call('list_payments', {}));
+    assert.deepEqual([ledger.total, ledger.payments.map((p: any) => p.amount)], [30, [30, null]]);
+    assert.equal(toolJson(await call('list_payments', { customer_id: c.id })).payments.length, 2);
+    assert.equal((await call('renew_customer', { customer_id: c.id })).body.result.isError, true);
     assert.equal(toolJson(await call('update_customer', { customer_id: c.id, limit_devices: 2, expire_at: '' })).expire_at, null);
     assert.deepEqual(toolJson(await call('list_devices', { customer_id: c.id })), { devices: [], recent_fetches: [] });
 

@@ -24,6 +24,7 @@ import {
   type CustomerView,
   type Line,
 } from '../customers/repo';
+import { deletePayment, insertPayment, lastPayments, listPayments, renewedExpire, renewSpan, validAmount, validNote, validPaidAt } from '../customers/payments';
 import { importClients } from '../lines/import';
 import { resetCustomerUsage } from '../lines/reset';
 import { broadcast, channelsFor } from '../notify/send';
@@ -377,6 +378,7 @@ export function apiRouter(deps: RouteDeps): Router {
     const counts = subClientCounts(db, Date.now() - deps.subLogDays * 86_400_000);
     const day = subIpsSince(db, Date.now() - 86_400_000);
     const devices = deviceCounts(db);
+    const paid = lastPayments(db);
     return customers.map((c) => ({
       ...c,
       sub_url: deps.subBaseUrl ? `${deps.subBaseUrl}/sub/${c.sub_token}` : null,
@@ -386,6 +388,8 @@ export function apiRouter(deps: RouteDeps): Router {
       sub_ips_day: day.get(c.id)?.length ?? 0,
       // 拉过订阅的设备数(设备数上限看这个)
       sub_devices: devices.get(c.id) ?? 0,
+      // 最近一笔收款(金额大于 0 的)
+      last_payment: paid.get(c.id) ?? null,
     }));
   };
   const plainCustomer = (id: number) => {
@@ -447,20 +451,56 @@ export function apiRouter(deps: RouteDeps): Router {
       return { ...customerOf(before.id), ops };
     }),
   );
-  // 续期:在现在的到期日上加 days 天(已过期或没设到期日的从现在起算);reset_usage 顺带把流量清零。给发卡 / 机器人用
+  // 续费:在现在的到期日上加 months 个月或 days 天(已过期或没设到期日的从现在起算),记一笔续费记录;
+  // amount 填了就是一笔收款(paid_at 收款日期、note 备注);reset_usage 顺带把流量清零
   r.post(
     '/customers/:id/renew',
     wrap(async (req) => {
       const c = plainCustomer(idParam(req));
-      const days = Number(req.body?.days);
-      if (!Number.isInteger(days) || days < 1 || days > 3650) throw new InputError('days 要是 1 到 3650 的整数');
+      const b = req.body ?? {};
+      const span = renewSpan(b);
       const now = Date.now();
-      updateCustomer(db, c.id, { expire_at: Math.max(c.expire_at, now) + days * 86_400_000 });
-      const failed = req.body?.reset_usage ? await resetCustomerUsage(db, c, deps.clientFor) : [];
+      const amount = validAmount(b.amount);
+      const paidAt = validPaidAt(b.paid_at, now);
+      const note = validNote(b.note);
+      const expireAt = renewedExpire(c.expire_at, span, now);
+      const payment = db.transaction(() => {
+        updateCustomer(db, c.id, { expire_at: expireAt });
+        return insertPayment(db, { customer_id: c.id, customer_name: c.name, amount, paid_at: paidAt, ...span, expire_before: c.expire_at, expire_after: expireAt, note }, now);
+      })();
+      const failed = b.reset_usage ? await resetCustomerUsage(db, c, deps.clientFor) : [];
       const ops = await enforceCustomers(db, deps.clientFor, c.id);
-      return { ...customerOf(c.id), failed, ops };
+      return { ...customerOf(c.id), failed, ops, payment };
     }),
   );
+  // 续费 / 收款记录:这位客户的(新的在前);单独记一笔收款(不续期,amount 必填)
+  r.get('/customers/:id/payments', wrap((req) => listPayments(db, { customer_id: plainCustomer(idParam(req)).id })));
+  r.post(
+    '/customers/:id/payments',
+    wrap((req) => {
+      const c = plainCustomer(idParam(req));
+      const b = req.body ?? {};
+      const amount = validAmount(b.amount);
+      if (amount == null) throw new InputError('要填金额');
+      return insertPayment(db, { customer_id: c.id, customer_name: c.name, amount, paid_at: validPaidAt(b.paid_at), expire_before: c.expire_at, expire_after: c.expire_at, note: validNote(b.note) });
+    }),
+  );
+  // 全部客户的续费 / 收款记录:from / to(毫秒)= 收款日期在 [from, to) 里的,不给就是全部
+  r.get(
+    '/payments',
+    wrap((req) => {
+      const ms = (k: string) => {
+        const v = req.query[k];
+        if (v === undefined || v === '') return undefined;
+        const n = Number(v);
+        if (!Number.isSafeInteger(n) || n < 0) throw new InputError(`${k} 要是毫秒时间戳`);
+        return n;
+      };
+      return listPayments(db, { from: ms('from'), to: ms('to') });
+    }),
+  );
+  // 删一笔记录(记错了):只删记录,到期日不变
+  r.delete('/payments/:id', wrap((req) => void deletePayment(db, idParam(req))));
   // 清零已用:把各线路客户端在面板上的流量清零,超额停掉的随之恢复
   r.post(
     '/customers/:id/reset-usage',
@@ -489,17 +529,20 @@ export function apiRouter(deps: RouteDeps): Router {
       return { ...r, customer: customerOf(idParam(req)) };
     }),
   );
-  // 流量统计:by=customer|panel,days=最近几天;带 id 时展开这位客户 / 这块面板名下的各个客户端;exclude=1,2 不算这些面板上的流量
+  // 流量统计:by=customer|panel,days=最近几天;带 id 时展开这位客户 / 这块面板名下的各个客户端;exclude=1,2 不算这些面板上的流量;
+  // customers=3,0 只算这些客户的(0 = 没归入客户的客户端)
   r.get(
     '/traffic',
     wrap(async (req) => {
       const by = req.query.by === 'panel' ? 'panel' : 'customer';
       const id = req.query.id === undefined || req.query.id === '' ? null : Number(req.query.id);
       if (id != null && !(Number.isInteger(id) && id >= 0)) throw new InputError('id 不对');
-      const raw = typeof req.query.exclude === 'string' ? req.query.exclude.split(',').filter((x) => x.trim() !== '') : [];
-      const exclude = raw.map(Number);
+      const ids = (k: string) => (typeof req.query[k] === 'string' ? (req.query[k] as string).split(',').filter((x) => x.trim() !== '') : []).map(Number);
+      const exclude = ids('exclude');
       if (exclude.some((x) => !(Number.isInteger(x) && x > 0))) throw new InputError('exclude 要是逗号分隔的面板 id');
-      return trafficReport(db, { by, days: Number(req.query.days) || 30, id, exclude });
+      const customers = ids('customers');
+      if (customers.some((x) => !(Number.isInteger(x) && x >= 0))) throw new InputError('customers 要是逗号分隔的客户 id(0 = 没归入客户的)');
+      return trafficReport(db, { by, days: Number(req.query.days) || 30, id, exclude, customers });
     }),
   );
   // xui-hub 自己的版本:当前版本、GitHub 上最新的发布版本、能不能在后台里直接更新;refresh=1 重新查一次
