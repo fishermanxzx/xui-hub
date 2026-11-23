@@ -344,6 +344,10 @@ export const MIGRATIONS: string[] = [
   -- 面板的节点名:这块面板上没单独设节点名的线路,订阅里用它;空 = 用面板(3x-ui)生成的名字
   ALTER TABLE panels ADD COLUMN node_name TEXT NOT NULL DEFAULT '';
   `,
+  `
+  -- 面板的标签(JSON 字符串数组),面板页 / 客户页按标签筛
+  ALTER TABLE panels ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 export function openDb(file: string): DB {

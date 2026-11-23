@@ -115,6 +115,8 @@ test('操作日志:设置只写开关和数字的前后,令牌 / 密钥不写值
     assert.equal(summaries(db)[0], '修改面板「hk」:节点名 (面板生成的) → 香港 01');
     await call('POST', `/panels/${p.id}/line-names`);
     assert.equal(summaries(db)[0], '把面板「hk」上 0 条线路的节点名改成跟着面板的「香港 01」');
+    await call('PATCH', `/panels/${p.id}`, { tags: '亚洲,便宜' });
+    assert.equal(summaries(db)[0], '修改面板「hk」:标签 (无) → 亚洲、便宜');
   } finally {
     await close();
   }

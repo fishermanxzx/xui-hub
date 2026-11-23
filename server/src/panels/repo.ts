@@ -30,6 +30,8 @@ export interface Panel {
   expire_at: number;
   /** 节点名:这块面板上没单独设节点名的线路在订阅里用它;空 = 用面板生成的名字 */
   node_name: string;
+  /** 标签(面板页 / 客户页按标签筛) */
+  tags: string[];
 }
 
 /** line_count:挂在这块面板上的客户线路数;exit_line_count:旧版本留下的、以它为出口的线路数 */
@@ -42,9 +44,39 @@ export interface PanelInput {
   monthly_cost?: unknown;
   expire_at?: unknown;
   node_name?: unknown;
+  /** 字符串数组,或用逗号 / 空格分开的一串 */
+  tags?: unknown;
 }
 
 export class InputError extends Error {}
+
+/** 标签:去掉首尾空白和重复的,每个最多 20 个字,最多 20 个;不能有逗号、换行 */
+export function validTags(value: unknown): string[] {
+  if (value == null || value === '') return [];
+  const raw = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[,,\s]+/) : null;
+  if (!raw) throw new InputError('标签要是字符串数组,或用逗号 / 空格分开');
+  const out: string[] = [];
+  for (const x of raw) {
+    if (typeof x !== 'string') throw new InputError('标签要是文字');
+    const tag = x.trim();
+    if (!tag) continue;
+    if (tag.length > 20) throw new InputError(`标签「${tag.slice(0, 20)}…」太长,最多 20 个字`);
+    if (/[,,\u0000-\u001f\u007f]/.test(tag)) throw new InputError('标签里不能有逗号、换行等字符');
+    if (!out.includes(tag)) out.push(tag);
+  }
+  if (out.length > 20) throw new InputError('标签最多 20 个');
+  return out;
+}
+
+function parseTags(v: unknown): string[] {
+  try {
+    const r = typeof v === 'string' ? JSON.parse(v) : [];
+    return Array.isArray(r) ? r.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+const toPanel = (row: any): Panel => ({ ...row, tags: parseTags(row.tags) });
 
 /** 月成本 / 月费:空 = 没填(null);否则 0 到 1 亿之间,保留两位小数 */
 export function validCost(value: unknown, label = '月成本'): number | null {
@@ -86,11 +118,12 @@ export function normalizeBaseUrl(value: string): string {
 }
 
 export function listPanels(db: DB): Panel[] {
-  return db.prepare('SELECT * FROM panels ORDER BY name').all() as Panel[];
+  return (db.prepare('SELECT * FROM panels ORDER BY name').all() as any[]).map(toPanel);
 }
 
 export function getPanel(db: DB, id: number): Panel | undefined {
-  return db.prepare('SELECT * FROM panels WHERE id = ?').get(id) as Panel | undefined;
+  const row = db.prepare('SELECT * FROM panels WHERE id = ?').get(id);
+  return row ? toPanel(row) : undefined;
 }
 
 export function createPanel(db: DB, input: PanelInput, now = Date.now()): Panel {
@@ -100,10 +133,10 @@ export function createPanel(db: DB, input: PanelInput, now = Date.now()): Panel 
   const token = input.token?.trim();
   if (!token) throw new InputError('缺少 API token');
   if (db.prepare('SELECT 1 FROM panels WHERE name = ?').get(name)) throw new InputError(`面板名称已存在:${name}`);
-  const values = [name, normalizeBaseUrl(input.base_url), token, validCost(input.monthly_cost), validExpire(input.expire_at), validNodeName(input.node_name), now] as const;
+  const values = [name, normalizeBaseUrl(input.base_url), token, validCost(input.monthly_cost), validExpire(input.expire_at), validNodeName(input.node_name), JSON.stringify(validTags(input.tags)), now] as const;
   const id = db.transaction(() => {
     const id = nextId(db, 'panels');
-    db.prepare('INSERT INTO panels (id, name, base_url, token, monthly_cost, expire_at, node_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id, ...values);
+    db.prepare('INSERT INTO panels (id, name, base_url, token, monthly_cost, expire_at, node_name, tags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, ...values);
     return id;
   })();
   return getPanel(db, id)!;
@@ -119,13 +152,14 @@ export function updatePanel(db: DB, id: number, patch: PanelInput): Panel {
   // 地址换了主机,旧 IP 不算数,下次检查再解析
   const hostChanged = new URL(baseUrl).hostname !== new URL(current.base_url).hostname;
   // 改节点名只改面板这一项:单独设过节点名的线路不跟着变(要统一用「线路都用这个节点名」)
-  db.prepare(`UPDATE panels SET name = ?, base_url = ?, token = ?, monthly_cost = ?, expire_at = ?, node_name = ?${hostChanged ? ', ip = NULL' : ''} WHERE id = ?`).run(
+  db.prepare(`UPDATE panels SET name = ?, base_url = ?, token = ?, monthly_cost = ?, expire_at = ?, node_name = ?, tags = ?${hostChanged ? ', ip = NULL' : ''} WHERE id = ?`).run(
     name,
     baseUrl,
     patch.token?.trim() || current.token, // 留空表示不修改 token
     patch.monthly_cost !== undefined ? validCost(patch.monthly_cost) : current.monthly_cost,
     patch.expire_at !== undefined ? validExpire(patch.expire_at) : current.expire_at,
     patch.node_name !== undefined ? validNodeName(patch.node_name) : current.node_name,
+    JSON.stringify(patch.tags !== undefined ? validTags(patch.tags) : current.tags),
     id,
   );
   return getPanel(db, id)!;

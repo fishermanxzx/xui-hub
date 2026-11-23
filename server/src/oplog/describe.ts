@@ -148,6 +148,7 @@ const panelDiff = (a: Panel, b: Panel) =>
     ...(a.base_url !== b.base_url ? ['地址改了'] : []),
     ...(a.token !== b.token ? ['令牌改了'] : []),
     ...(a.node_name !== b.node_name ? [`节点名 ${a.node_name || '(面板生成的)'} → ${b.node_name || '(面板生成的)'}`] : []),
+    ...(JSON.stringify(a.tags) !== JSON.stringify(b.tags) ? [`标签 ${a.tags.join('、') || '(无)'} → ${b.tags.join('、') || '(无)'}`] : []),
   ]);
 
 const socksDiff = (a: SocksProxy, b: SocksProxy) =>
