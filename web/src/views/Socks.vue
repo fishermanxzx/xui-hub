@@ -146,7 +146,7 @@ async function remove(s: Socks) {
               <template v-if="s.check?.ok">{{ s.check.ip }} <span class="muted">{{ region(s.check.loc) }}</span></template>
               <span v-else class="muted">—</span>
             </td>
-            <td class="small nowrap"><template v-if="s.used_by">{{ t('socks.usedBy', { n: s.used_by }, s.used_by) }}</template><span v-else class="muted">—</span></td>
+            <td class="small nowrap"><template v-if="s.used_by"><span :title="t('socks.usedLines', { n: s.used_by }, s.used_by)">{{ t('socks.usedBy', { n: s.customers }, s.customers) }}</span></template><span v-else class="muted">—</span></td>
             <td class="small mono"><template v-if="s.monthly_cost != null">{{ fmtCost(s.monthly_cost) }}</template><span v-else class="muted">—</span></td>
             <td class="small nowrap">
               <template v-if="s.expire_at">{{ fmtDate(s.expire_at) }} <span :class="dueClass(s.expire_at, 'muted')">{{ fmtDue(s.expire_at) }}</span></template>
