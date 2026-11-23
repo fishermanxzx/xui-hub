@@ -1,7 +1,8 @@
 // MCP 工具:让 AI 客户端管理客户和线路。每个工具对应后台的一个接口,经内部通道调同一套 /api(校验、停用恢复等逻辑完全一致)。
 // 不提供改设置、备份恢复、管理令牌、增删面板这些。
 
-export type ApiCall = (method: string, path: string, body?: unknown) => Promise<{ status: number; body: any }>;
+/** actor:编码过的「谁、从哪个 IP」(见 oplog/log.ts 的 encodeActor),内部通道带给 /api 记操作日志 */
+export type ApiCall = (method: string, path: string, body?: unknown, actor?: string) => Promise<{ status: number; body: any }>;
 
 export interface ToolContext {
   api: ApiCall;

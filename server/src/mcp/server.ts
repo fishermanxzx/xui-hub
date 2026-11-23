@@ -10,7 +10,9 @@ import { createMcpHandler, fromJsonSchema, McpServer } from '@modelcontextprotoc
 import express, { Router, type Request, type Response } from 'express';
 import type { DB } from '../db';
 import { LoginLimiter } from '../http/auth';
-import { verifyToken } from '../http/tokens';
+import { tokenName, verifyToken } from '../http/tokens';
+import { ACTOR_HEADER, encodeActor } from '../oplog/log';
+import { clientIp } from '../subscription/fetchLog';
 import { baseUrlOf, resourceMetadataUrl, SCOPE, verifyAccessToken } from './oauth';
 import { INSTRUCTIONS, runTool, TOOLS, type ApiCall } from './tools';
 
@@ -36,10 +38,12 @@ export function mcpRouter(deps: McpDeps): Router {
   const handler = createMcpHandler(
     (ctx) => {
       const baseUrl = ctx.requestInfo?.headers.get(BASE_HEADER) ?? '';
+      const actor = ctx.requestInfo?.headers.get(ACTOR_HEADER) ?? undefined;
+      const api: ApiCall = (method, path, body) => deps.api(method, path, body, actor);
       const server = new McpServer({ name: 'xui-hub', title: 'xui-hub', version: deps.version }, { instructions: INSTRUCTIONS });
       for (const tool of TOOLS) {
         server.registerTool(tool.name, { title: tool.title, description: tool.description, inputSchema: fromJsonSchema(tool.inputSchema as never), annotations: tool.annotations }, (args: unknown) =>
-          runTool(tool, args, { api: deps.api, baseUrl }),
+          runTool(tool, args, { api, baseUrl }),
         );
       }
       return server;
@@ -60,10 +64,13 @@ export function mcpRouter(deps: McpDeps): Router {
     // 没有会话、不开独立的 SSE 流:GET / DELETE 一律 405
     if (req.method !== 'POST') return void res.status(405).set('Allow', 'POST, OPTIONS').json(rpcError(-32000, 'Method not allowed: this endpoint only accepts POST'));
 
+    // 谁调的(记操作日志用):进来的同名头一律覆盖掉
+    const by = (who: string) => void (req.headers[ACTOR_HEADER] = encodeActor(who, clientIp(req)));
     if (!authEnabled) {
       // 没设后台密码(只监听本机)时不鉴权,这时要防 DNS 重绑定:浏览器带来的 Origin 必须就是这个地址
       const origin = req.get('origin');
       if (origin && origin !== baseUrlOf(req)) return void res.status(403).json(rpcError(-32000, 'Forbidden: invalid Origin'));
+      by('MCP');
       return next();
     }
     const header = req.get('authorization');
@@ -71,10 +78,14 @@ export function mcpRouter(deps: McpDeps): Router {
     if (!header) return void res.status(401).set('WWW-Authenticate', challenge()).json(rpcError(-32000, 'Unauthorized: send an API token or an OAuth access token as a Bearer token'));
     const ip = req.ip ?? 'unknown';
     if (!limiter.allow(ip)) return void res.status(429).json(rpcError(-32000, 'Too many failed attempts, try again in 10 minutes'));
-    if (verifyToken(db, header) == null && verifyAccessToken(db, header) == null) {
+    const tokenId = verifyToken(db, header);
+    const grantId = tokenId == null ? verifyAccessToken(db, header) : undefined;
+    if (tokenId == null && grantId == null) {
       limiter.fail(ip);
       return void res.status(401).set('WWW-Authenticate', challenge('invalid_token')).json(rpcError(-32000, 'Unauthorized: token is invalid or expired'));
     }
+    const client = grantId == null ? undefined : (db.prepare('SELECT client_name FROM oauth_grants WHERE id = ?').get(grantId) as { client_name: string } | undefined)?.client_name;
+    by(tokenId != null ? `MCP · 令牌「${tokenName(db, tokenId)}」` : `MCP · ${client || '已授权的客户端'}`);
     next();
   });
 

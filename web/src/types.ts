@@ -496,5 +496,20 @@ export interface RenewInput {
   reset_usage?: boolean;
 }
 
+/** 操作日志的一条 */
+export interface OpLog {
+  id: number;
+  at: number;
+  /** 后台 / 令牌「名字」/ MCP · 客户端 */
+  actor: string;
+  ip: string;
+  /** 方法 + 路由 */
+  action: string;
+  summary: string;
+  ok: boolean;
+  error: string;
+  customer_id: number | null;
+}
+
 /** 换出口:换成 SOCKS 页登记的代理,或直出 */
 export type LineExitTarget = { kind: 'direct' } | { kind: 'socks'; socks_id: number };

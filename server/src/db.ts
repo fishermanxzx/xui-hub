@@ -309,6 +309,23 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX payments_customer ON payments(customer_id, paid_at);
   CREATE INDEX payments_paid ON payments(paid_at);
   `,
+  `
+  -- 操作日志:后台、API 令牌、MCP 每次改东西记一条。actor = 谁(后台 / 令牌「名字」/ MCP · 客户端),
+  -- action = 方法 + 路由(如 POST /customers/:id/renew),summary = 给人看的一句话;customer_id 是涉及的客户(没有为空)
+  CREATE TABLE op_log (
+    id          INTEGER PRIMARY KEY,
+    at          INTEGER NOT NULL,
+    actor       TEXT NOT NULL,
+    ip          TEXT NOT NULL DEFAULT '',
+    action      TEXT NOT NULL,
+    summary     TEXT NOT NULL,
+    ok          INTEGER NOT NULL,
+    error       TEXT NOT NULL DEFAULT '',
+    customer_id INTEGER
+  );
+  CREATE INDEX op_log_at ON op_log(at);
+  CREATE INDEX op_log_customer ON op_log(customer_id, id);
+  `,
 ];
 
 export function openDb(file: string): DB {

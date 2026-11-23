@@ -34,7 +34,7 @@ import { listSubFetches, subClientCounts, subIpsSince } from '../subscription/fe
 import { deleteDevice, deviceCounts, listDevices } from '../subscription/devices';
 import { renameLinks, validNodeName } from '../subscription/nodeName';
 import { fetchUpstream, refreshUpstreams, type UpstreamFetcher } from '../subscription/upstream';
-import { createToken, deleteToken, listTokens, TOKEN_BLOCKED, verifyToken } from './tokens';
+import { createToken, deleteToken, listTokens, TOKEN_BLOCKED, tokenName, verifyToken } from './tokens';
 import { listGrants, revokeGrant } from '../mcp/oauth';
 import { enforceCustomers } from '../lines/enforce';
 import { applyLineRules, changeLineExits, openLine, parseExitTarget, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
@@ -42,6 +42,9 @@ import { validRules } from '../lines/rules';
 import { checkSocks } from '../socks/check';
 import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, planSocksUpdate, saveCheck, updateSocks } from '../socks/repo';
 import { trafficReport } from '../traffic/daily';
+import { ACTOR_HEADER, addOpLog, decodeActor, listOpLog } from '../oplog/log';
+import { describe as describeOp, MUTATING, snapshot } from '../oplog/describe';
+import { clientIp } from '../subscription/fetchLog';
 import type { Updater } from '../update';
 import { errorText, mapLimit, panelKey, serial, using } from '../util';
 import { XUIError, type GeoCategory, type GeoEntry, type GeoFile, type GeoIssue, type GeoKind, type GeoPage } from '../xui/client';
@@ -85,6 +88,8 @@ export interface RouteDeps {
   fetchTemplate?: TemplateFetcher;
   /** 拉外部订阅;测试里换成假的 */
   fetchUpstream?: UpstreamFetcher;
+  /** 内部通道(MCP 工具调的):认请求头里带来的「谁、从哪个 IP」,记操作日志用 */
+  trustActorHeader?: boolean;
 }
 
 type Handler = (req: Request, res: Response) => unknown;
@@ -127,42 +132,102 @@ export function apiRouter(deps: RouteDeps): Router {
     res.json({ auth_required: authEnabled, logged_in: loggedIn(req) });
   });
 
+  /** 登录 / 退出也记进操作日志(没设后台密码时没有登录这回事,不记) */
+  const logSession = (req: Request, summary: string, ok: boolean, error = '') =>
+    addOpLog(db, { at: Date.now(), actor: '后台', ip: clientIp(req), action: `POST ${req.path}`, summary, ok, error, customer_id: null });
   r.post('/login', (req, res) => {
     const ip = req.ip ?? 'unknown';
     if (!authEnabled) return res.json({ ok: true });
     if (!limiter.allow(ip)) return res.status(429).json({ error: '尝试次数过多,请 10 分钟后再试' });
     if (!passwordMatches(deps.adminPassword, req.body?.password)) {
       limiter.fail(ip);
+      logSession(req, '登录', false, '密码错误');
       return res.status(401).json({ error: '密码错误' });
     }
     limiter.clear(ip);
+    logSession(req, '登录', true);
     res.setHeader('Set-Cookie', sessionCookie(req, signSession(keys.current()), SESSION_MAX_AGE_MS));
     res.json({ ok: true });
   });
 
   // 退出登录换掉签名密钥:这台和其他设备上的会话一起失效(拿着旧 cookie 的也进不来)
   r.post('/logout', (req, res) => {
-    if (authEnabled && loggedIn(req)) keys.rotate();
+    if (authEnabled && loggedIn(req)) {
+      keys.rotate();
+      logSession(req, '退出登录(所有设备上的登录一起失效)', true);
+    }
     res.setHeader('Set-Cookie', sessionCookie(req, '', 0));
     res.json({ ok: true });
   });
 
   // 登录的会话,或开放 API 的令牌(Authorization: Bearer xh_…)。令牌碰不了设置、备份恢复和令牌管理;带错令牌和输错密码一样计入限流
+  // res.locals.actor / ip:这次请求是谁、从哪来,记操作日志用
   r.use((req, res, next) => {
-    if (loggedIn(req)) return next();
+    res.locals.ip = clientIp(req);
+    if (deps.trustActorHeader) {
+      const who = decodeActor(req.get(ACTOR_HEADER));
+      res.locals.actor = who?.by || 'MCP';
+      if (who?.ip) res.locals.ip = who.ip;
+      return next();
+    }
+    if (loggedIn(req)) {
+      res.locals.actor = '后台';
+      return next();
+    }
     const header = req.get('authorization');
     if (header) {
       const ip = req.ip ?? 'unknown';
       if (!limiter.allow(ip)) return res.status(429).json({ error: '尝试次数过多,请 10 分钟后再试' });
-      if (verifyToken(db, header) == null) {
+      const tokenId = verifyToken(db, header);
+      if (tokenId == null) {
         limiter.fail(ip);
         return res.status(401).json({ error: '令牌无效' });
       }
       if (TOKEN_BLOCKED.test(req.path)) return res.status(403).json({ error: '这个接口不能用 API 令牌调用,要在后台登录后操作' });
+      res.locals.actor = `令牌「${tokenName(db, tokenId)}」`;
       return next();
     }
     res.status(401).json({ error: '未登录' });
   });
+
+  // 操作日志:改东西的请求,处理前记下要动的对象,响应完写一条(谁、做了什么、成没成);查看类的不记,见 oplog/describe.ts
+  r.use((req, res, next) => {
+    if (!MUTATING.has(req.method)) return next();
+    const before = snapshot(db, req.path, req.body);
+    const json = res.json.bind(res);
+    res.json = (body: unknown) => {
+      res.locals.body = body;
+      return json(body);
+    };
+    res.on('finish', () => {
+      const route = (req.route as { path?: unknown } | undefined)?.path;
+      if (typeof route !== 'string') return;
+      const ok = res.statusCode < 400;
+      try {
+        const d = describeOp(db, `${req.method} ${route}`, before, req, res.locals.body, ok);
+        if (!d) return;
+        const error = ok ? '' : String((res.locals.body as { error?: unknown } | undefined)?.error ?? `HTTP ${res.statusCode}`);
+        addOpLog(db, { at: Date.now(), actor: String(res.locals.actor ?? '后台'), ip: String(res.locals.ip ?? ''), action: `${req.method} ${route}`, summary: d.summary, ok, error, customer_id: d.customer_id });
+      } catch (e) {
+        console.error('记操作日志失败:', e);
+      }
+    });
+    next();
+  });
+  // 操作日志:新的在前;before = 上一页最后一条的 id;customer_id / q(做了什么、谁、IP 里的字)/ failed=1 筛选
+  r.get(
+    '/oplog',
+    wrap((req) => {
+      const num = (k: string) => {
+        const v = req.query[k];
+        if (v === undefined || v === '') return undefined;
+        const n = Number(v);
+        if (!Number.isSafeInteger(n) || n < 0) throw new InputError(`${k} 要是正整数`);
+        return n;
+      };
+      return listOpLog(db, { before: num('before'), limit: num('limit'), customer_id: num('customer_id'), q: typeof req.query.q === 'string' ? req.query.q : undefined, failed: req.query.failed === '1' });
+    }),
+  );
 
   // ---------- 面板 ----------
   r.get('/panels', wrap(() => listPanels(db).map(view)));
