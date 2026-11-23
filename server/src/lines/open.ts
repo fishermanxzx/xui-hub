@@ -99,7 +99,7 @@ export async function openLine(db: DB, customerId: number, input: OpenLineInput,
         });
         if (rules.length) setLineRules(db, line.id, rules);
         if (edited) setLineRoutes(db, line.id, routesForClient(edited, String(inbound.tag), email, allSocks(db).map((s) => ({ id: s.id, host: s.host, port: s.port }))));
-        return { line: getLine(db, line.id) ?? line, links: renameLinks(links, nodeName), created: { inbound: created ? String(inbound.remark ?? '') : null } };
+        return { line: getLine(db, line.id) ?? line, links: renameLinks(links, nodeName || panel.node_name), created: { inbound: created ? String(inbound.remark ?? '') : null } };
       } catch (e) {
         for (const step of undo.reverse()) await step().catch(() => {});
         throw e;

@@ -60,11 +60,11 @@ async function checkAll() {
 const editing = ref<Panel | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', base_url: '', token: '', cost: '', expire: '' });
+const form = ref({ name: '', base_url: '', token: '', cost: '', expire: '', nodeName: '' });
 
 function openForm(panel: Panel | null) {
   editing.value = panel;
-  form.value = { name: panel?.name ?? '', base_url: panel?.base_url ?? '', token: '', cost: panel?.monthly_cost == null ? '' : String(panel.monthly_cost), expire: msToDateInput(panel?.expire_at ?? 0) };
+  form.value = { name: panel?.name ?? '', base_url: panel?.base_url ?? '', token: '', cost: panel?.monthly_cost == null ? '' : String(panel.monthly_cost), expire: msToDateInput(panel?.expire_at ?? 0), nodeName: panel?.node_name ?? '' };
   showForm.value = true;
 }
 
@@ -72,7 +72,7 @@ async function submit() {
   // 到期日没动就原样发回(表单里只有日期,重算会把到期时刻改成当天 23:59)
   const was = editing.value;
   const expireAt = was && form.value.expire === msToDateInput(was.expire_at) ? was.expire_at : dateInputToMs(form.value.expire);
-  const body: PanelInput = { name: form.value.name, base_url: form.value.base_url, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: expireAt };
+  const body: PanelInput = { name: form.value.name, base_url: form.value.base_url, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: expireAt, node_name: form.value.nodeName.trim() };
   if (form.value.token) body.token = form.value.token;
   saving.value = true;
   try {
@@ -142,6 +142,8 @@ onUnmounted(() => clearInterval(timer));
         {{ t('panels.token') }}{{ editing ? t('panels.keepBlank') : '' }}
         <input v-model="form.token" type="password" autocomplete="off" :required="!editing" />
       </label>
+      <label class="field">{{ t('panels.nodeName') }}<input v-model="form.nodeName" maxlength="64" :placeholder="t('panels.nodeNamePlaceholder')" /></label>
+      <p class="muted small hint node-hint">{{ t('panels.nodeNameHint') }}</p>
       <div class="two">
         <label class="field">{{ t('cost.field') }}<input v-model="form.cost" type="number" min="0" step="0.01" /></label>
         <label class="field">{{ t('cost.expireField') }}<input v-model="form.expire" type="date" /></label>
@@ -183,6 +185,9 @@ h2 {
 }
 .hint {
   margin: 0;
+}
+.node-hint {
+  margin-top: -6px;
 }
 .two {
   display: grid;

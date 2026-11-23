@@ -23,6 +23,22 @@ const resolvedIp = computed(() => {
 });
 const emit = defineEmits<{ toggle: []; edit: []; remove: []; changed: [] }>();
 
+// ---------- 一键改名:这块面板上的线路都用面板的节点名 ----------
+const renaming = ref(false);
+async function applyLineNames() {
+  if (!confirm(t('card.lineNamesConfirm', { panel: props.panel.name, n: props.panel.line_count, name: props.panel.node_name }))) return;
+  renaming.value = true;
+  try {
+    const r = await api.panelLineNames(props.panel.id);
+    toast(t('card.lineNamesDone', { n: props.panel.line_count, name: props.panel.node_name, changed: r.changed }));
+    emit('changed');
+  } catch (e) {
+    toastError(e);
+  } finally {
+    renaming.value = false;
+  }
+}
+
 const detail = ref<PanelDetail | null>(null);
 const loading = ref(false);
 const error = ref('');
@@ -281,6 +297,7 @@ async function removeClient(c: PanelClient) {
           </span>
         </template>
         <span v-else class="muted">{{ t('card.notChecked') }}</span>
+        <span v-if="panel.node_name" class="node-name" :title="t('card.nodeNameHint')">{{ t('card.nodeName', { name: panel.node_name }) }}</span>
         <span v-if="panel.monthly_cost != null" class="muted">{{ t('cost.value', { v: fmtCost(panel.monthly_cost) }) }}</span>
         <span v-if="panel.expire_at" :class="dueClass(panel.expire_at, 'muted')">{{ t('cost.expireOn', { date: fmtDate(panel.expire_at) }) }} · {{ fmtDue(panel.expire_at) }}</span>
       </div>
@@ -290,6 +307,7 @@ async function removeClient(c: PanelClient) {
         <button class="link" :disabled="!!panel.check_error" @click="openXray">{{ t('card.xray') }}</button>
         <button class="link" :disabled="restarting" :title="t('card.restartHint')" @click="restart">{{ restarting ? t('card.restarting') : t('card.restart') }}</button>
         <a class="link" :href="panel.base_url" target="_blank" rel="noopener noreferrer" :title="t('card.openPanelHint')">{{ t('card.openPanel') }}</a>
+        <button v-if="panel.node_name && panel.line_count" class="link" :disabled="renaming" :title="t('card.lineNamesHint')" @click="applyLineNames">{{ t('card.lineNames') }}</button>
         <button class="link" @click="emit('edit')">{{ t('common.edit') }}</button>
         <button class="link danger" @click="emit('remove')">{{ t('common.delete') }}</button>
       </div>
@@ -470,6 +488,9 @@ async function removeClient(c: PanelClient) {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
   user-select: all;
+}
+.facts .node-name {
+  font-weight: 500;
 }
 .facts {
   grid-column: 1;

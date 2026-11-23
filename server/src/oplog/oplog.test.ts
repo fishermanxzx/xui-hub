@@ -110,6 +110,11 @@ test('操作日志:设置只写开关和数字的前后,令牌 / 密钥不写值
     const ps = summaries(db)[0];
     assert.equal(ps, '修改面板「hk」:地址改了;令牌改了;月成本 没填 → 9');
     assert.ok(!ps.includes('hk2.example') && !ps.includes('new-token'));
+    // 面板节点名、一键改名
+    await call('PATCH', `/panels/${p.id}`, { node_name: '香港 01' });
+    assert.equal(summaries(db)[0], '修改面板「hk」:节点名 (面板生成的) → 香港 01');
+    await call('POST', `/panels/${p.id}/line-names`);
+    assert.equal(summaries(db)[0], '把面板「hk」上 0 条线路的节点名改成跟着面板的「香港 01」');
   } finally {
     await close();
   }

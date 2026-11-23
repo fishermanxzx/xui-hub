@@ -1,6 +1,7 @@
 // 面板的增删改查。token 只在服务端使用,对外视图不含 token。
 
 import { nextId, type DB } from '../db';
+import { validNodeName } from '../subscription/nodeName';
 
 export interface Panel {
   id: number;
@@ -27,6 +28,8 @@ export interface Panel {
   monthly_cost: number | null;
   /** 到期时间(毫秒),0 = 没填 / 不限期 */
   expire_at: number;
+  /** 节点名:这块面板上没单独设节点名的线路在订阅里用它;空 = 用面板生成的名字 */
+  node_name: string;
 }
 
 /** line_count:挂在这块面板上的客户线路数;exit_line_count:旧版本留下的、以它为出口的线路数 */
@@ -38,6 +41,7 @@ export interface PanelInput {
   token?: string;
   monthly_cost?: unknown;
   expire_at?: unknown;
+  node_name?: unknown;
 }
 
 export class InputError extends Error {}
@@ -96,10 +100,10 @@ export function createPanel(db: DB, input: PanelInput, now = Date.now()): Panel 
   const token = input.token?.trim();
   if (!token) throw new InputError('缺少 API token');
   if (db.prepare('SELECT 1 FROM panels WHERE name = ?').get(name)) throw new InputError(`面板名称已存在:${name}`);
-  const values = [name, normalizeBaseUrl(input.base_url), token, validCost(input.monthly_cost), validExpire(input.expire_at), now] as const;
+  const values = [name, normalizeBaseUrl(input.base_url), token, validCost(input.monthly_cost), validExpire(input.expire_at), validNodeName(input.node_name), now] as const;
   const id = db.transaction(() => {
     const id = nextId(db, 'panels');
-    db.prepare('INSERT INTO panels (id, name, base_url, token, monthly_cost, expire_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, ...values);
+    db.prepare('INSERT INTO panels (id, name, base_url, token, monthly_cost, expire_at, node_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(id, ...values);
     return id;
   })();
   return getPanel(db, id)!;
@@ -114,12 +118,14 @@ export function updatePanel(db: DB, id: number, patch: PanelInput): Panel {
   const baseUrl = patch.base_url !== undefined ? normalizeBaseUrl(patch.base_url) : current.base_url;
   // 地址换了主机,旧 IP 不算数,下次检查再解析
   const hostChanged = new URL(baseUrl).hostname !== new URL(current.base_url).hostname;
-  db.prepare(`UPDATE panels SET name = ?, base_url = ?, token = ?, monthly_cost = ?, expire_at = ?${hostChanged ? ', ip = NULL' : ''} WHERE id = ?`).run(
+  // 改节点名只改面板这一项:单独设过节点名的线路不跟着变(要统一用「线路都用这个节点名」)
+  db.prepare(`UPDATE panels SET name = ?, base_url = ?, token = ?, monthly_cost = ?, expire_at = ?, node_name = ?${hostChanged ? ', ip = NULL' : ''} WHERE id = ?`).run(
     name,
     baseUrl,
     patch.token?.trim() || current.token, // 留空表示不修改 token
     patch.monthly_cost !== undefined ? validCost(patch.monthly_cost) : current.monthly_cost,
     patch.expire_at !== undefined ? validExpire(patch.expire_at) : current.expire_at,
+    patch.node_name !== undefined ? validNodeName(patch.node_name) : current.node_name,
     id,
   );
   return getPanel(db, id)!;

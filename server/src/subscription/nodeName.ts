@@ -32,6 +32,22 @@ export function renameLinks(links: string[], name: string): string[] {
   return links.map((l, i) => renameLink(l, i === 0 ? name : `${name} ${i + 1}`));
 }
 
+/**
+ * 一份订阅里节点名不能重(Clash / sing-box 按名字认节点):重名的依次加「 2」「 3」(跳过已被占用的)。
+ * 同一块面板上的几条线路都跟着面板的节点名时就会重名
+ */
+export function uniqueNames(links: string[]): string[] {
+  const taken = new Set<string>();
+  return links.map((link) => {
+    const name = linkName(link);
+    if (!name) return link;
+    let next = name;
+    for (let i = 2; taken.has(next); i++) next = `${name} ${i}`;
+    taken.add(next);
+    return next === name ? link : renameLink(link, next);
+  });
+}
+
 /** 链接里的节点名:vmess 是 ps,其余是 # 后面那段;没有返回空串 */
 export function linkName(link: string): string {
   if (/^vmess:\/\//i.test(link)) {

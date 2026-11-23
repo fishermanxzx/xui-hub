@@ -18,6 +18,7 @@ import { clientIp, recordSubFetch } from '../subscription/fetchLog';
 import { collectLinks, encodeSubscription, mergeLinks, userinfoHeader, type LinkFetcher } from '../subscription/service';
 import { cachedUpstream, fetchUpstream, HOP_HEADER, refreshUpstreams, userinfoText, type UpstreamFetcher } from '../subscription/upstream';
 import { pageNodes, renderSubPage } from './subPage';
+import { uniqueNames } from '../subscription/nodeName';
 import { trafficReport } from '../traffic/daily';
 import { templateUrl } from '../subscription/templates';
 import { admitDevice, deleteDevice, deviceKey, listDevices } from '../subscription/devices';
@@ -120,7 +121,7 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
     const sources = lines.length + up.total;
     const failed = lines.filter((l) => l.error).length + up.failed;
     if (sources && failed === sources) throw new Error(up.total ? `全部 ${sources} 个来源(线路 / 外部订阅)都取不到节点` : `全部 ${sources} 条线路都取不到节点`);
-    return [...new Set([...mergeLinks(lines), ...up.links])];
+    return uniqueNames([...new Set([...mergeLinks(lines), ...up.links])]);
   };
 
   /** 请求来自别处 xui-hub 拉外部订阅:只给自己线路的节点 */

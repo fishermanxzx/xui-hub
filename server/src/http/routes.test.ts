@@ -845,3 +845,45 @@ test('批量换出口:哪块面板没成,只有那块上的线路不改记录、
     await close();
   }
 });
+
+test('面板的节点名:改面板节点名不动线路记录;一键改名把这块面板上线路各自设的清掉、跟着面板的;没填节点名不让一键改', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  const b = addPanel(db, 'b');
+  const data = { a: relayPanel(), b: relayPanel() };
+  const { call, close } = await serve(db, data);
+  try {
+    const c = (await call('POST', '/customers', { name: 'zhang' })).body;
+    const l1 = (await call('POST', `/customers/${c.id}/lines`, { panel_id: a.id, inbound: { id: 5 }, node_name: '专线' })).body.line;
+    const l2 = (await call('POST', `/customers/${c.id}/lines`, { panel_id: a.id, inbound: { id: 5 } })).body.line;
+    const l3 = (await call('POST', `/customers/${c.id}/lines`, { panel_id: b.id, inbound: { id: 5 }, node_name: '别的面板' })).body.line;
+    assert.equal((await call('POST', `/panels/${a.id}/line-names`)).status, 400);
+
+    const p = (await call('PATCH', `/panels/${a.id}`, { node_name: ' 香港 01 ' })).body;
+    assert.equal(p.node_name, '香港 01');
+    // 线路记录不动;没设节点名的线路在链接里用面板的
+    const lines = () => getCustomer(db, c.id)!.lines.map((l) => [l.node_name, l.panel_node_name]);
+    assert.deepEqual(lines(), [['专线', '香港 01'], ['', '香港 01'], ['别的面板', '']]);
+    const links = (await call('GET', `/customers/${c.id}/lines/${l2.id}/links`)).body.links;
+    assert.match(links[0], /#%E9%A6%99%E6%B8%AF%2001$/);
+    // 开线路时没给节点名:返回的链接也用面板的
+    const l4 = (await call('POST', `/customers/${c.id}/lines`, { panel_id: a.id, inbound: { id: 5 } })).body;
+    assert.match(l4.links[0], /#%E9%A6%99%E6%B8%AF%2001$/);
+
+    // 一键改名:只清面板 a 上的,别的面板不动;面板上的客户端、UUID、Xray 都不动
+    const before = JSON.stringify([data.a.clients, data.a.xray, data.a.restarts]);
+    const r = (await call('POST', `/panels/${a.id}/line-names`)).body;
+    assert.equal(r.changed, 1);
+    assert.deepEqual(lines(), [['', '香港 01'], ['', '香港 01'], ['别的面板', ''], ['', '香港 01']]);
+    assert.equal(JSON.stringify([data.a.clients, data.a.xray, data.a.restarts]), before);
+    void l1;
+    void l3;
+    // 节点名太长 / 有换行不让存
+    assert.equal((await call('PATCH', `/panels/${a.id}`, { node_name: 'x'.repeat(65) })).status, 400);
+    assert.equal((await call('PATCH', `/panels/${a.id}`, { node_name: 'a\nb' })).status, 400);
+    // 清空:回到面板生成的名字
+    assert.equal((await call('PATCH', `/panels/${a.id}`, { node_name: '' })).body.node_name, '');
+  } finally {
+    await close();
+  }
+});

@@ -4,6 +4,8 @@ export interface Panel {
   id: number;
   name: string;
   base_url: string;
+  /** 节点名:这块面板上没单独设节点名的线路在订阅里用它;空 = 用面板生成的名字 */
+  node_name: string;
   created_at: number;
   /** 最近一次连通性检查 */
   checked_at: number | null;
@@ -43,6 +45,7 @@ export interface PanelInput {
   token?: string;
   monthly_cost?: number | null;
   expire_at?: number;
+  node_name?: string;
 }
 
 export interface PanelClient {
@@ -151,8 +154,10 @@ export interface Line {
   exit_socks_id: number | null;
   exit_socks_name: string | null;
   exit_label: string;
-  /** 自定义节点名:订阅里代替面板生成的名字,空 = 用面板的 */
+  /** 自定义节点名:订阅里代替面板生成的名字,空 = 跟着面板的节点名 */
   node_name: string;
+  /** 线路所在面板的节点名:线路自己没设时用它;也空 = 用面板生成的名字 */
+  panel_node_name: string;
   created_at: number;
   /** 最近一次同步到的客户端流量与状态 */
   up: number;

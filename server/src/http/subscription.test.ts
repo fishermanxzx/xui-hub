@@ -9,6 +9,7 @@ import type { LinkFetcher } from '../subscription/service';
 import { HOP_HEADER, type UpstreamFetcher } from '../subscription/upstream';
 import { templateUrl } from '../subscription/templates';
 import { addPanel, memoryDb } from '../testUtil';
+import { updatePanel } from '../panels/repo';
 import { recordTraffic } from '../traffic/daily';
 import { subscriptionRouter, type SubscriptionDeps } from './subscription';
 
@@ -629,6 +630,34 @@ test('自助页的每天用量:按倍率算(和已用一致),看不到实际流�
     updateCustomer(db, id, { upstreams: [UP_URL], upstream_userinfo: true });
     html = await page();
     assert.ok(!html.includes('每天用量'));
+  } finally {
+    await close();
+  }
+});
+
+test('面板的节点名:线路没设节点名就用面板的,自己设了的不变;同一块面板几条线路重名时依次加 2、3', async () => {
+  const { db, id, token } = setup();
+  const a = getCustomer(db, id)!.lines[0].panel_id;
+  // 面板 a 上再开一条(fetcher 对面板 a 都回同一个链接,只看名字)
+  addLine(db, { customer_id: id, kind: 'direct', panel_id: a, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'zhu-2' });
+  const { link, close } = await serve(db, fakeConverter([]));
+  const names = async () => (await decode(await get(link(token), V2RAYN_UA))).split('\n').map((l) => decodeURIComponent(l.slice(l.indexOf('#') + 1)));
+  try {
+    // 面板没设:用面板生成的(fetcher 给的 A / B);同一个链接只出一次
+    assert.deepEqual(await names(), ['A', 'B']);
+    updatePanel(db, a, { node_name: '香港 01' });
+    // 面板 a 上两条线路都跟着面板的节点名:重名加 2
+    const fetcher: LinkFetcher = async (panel, email) => (panel.name === 'a' ? [`vless://${email}@1.1.1.1:1#A`] : ['hysteria2://y@2.2.2.2:2#B']);
+    const { link: link2, close: close2 } = await serve(db, fakeConverter([]), () => false, fetcher);
+    try {
+      const names2 = async () => (await decode(await get(link2(token), V2RAYN_UA))).split('\n').map((l) => decodeURIComponent(l.slice(l.indexOf('#') + 1)));
+      assert.deepEqual(await names2(), ['香港 01', 'B', '香港 01 2']);
+      // 自己设了节点名的线路不跟着面板变
+      setLineName(db, getCustomer(db, id)!.lines[2].id, '专线');
+      assert.deepEqual(await names2(), ['香港 01', 'B', '专线']);
+    } finally {
+      await close2();
+    }
   } finally {
     await close();
   }

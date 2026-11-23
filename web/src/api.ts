@@ -35,6 +35,8 @@ export const api = {
   panels: () => call<Panel[]>('GET', '/api/panels'),
   createPanel: (body: PanelInput) => call<Panel>('POST', '/api/panels', body),
   updatePanel: (id: number, body: PanelInput) => call<Panel>('PATCH', `/api/panels/${id}`, body),
+  /** 一键改名:这块面板上的线路都用面板的节点名(清掉各自设的),只改订阅里显示的名字 */
+  panelLineNames: (id: number) => call<{ changed: number; panel: Panel }>('POST', `/api/panels/${id}/line-names`),
   /** 面板上还记着客户线路时要 force,线路记录一并删掉 */
   deletePanel: (id: number, force = false) => call('DELETE', `/api/panels/${id}${force ? '?force=1' : ''}`),
   checkPanels: () => call<Panel[]>('POST', '/api/panels/check'),

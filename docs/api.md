@@ -147,6 +147,7 @@ Authorization: Bearer xh_……
 | GET | `/panels/:id/geodata/categories?file=geosite.dat` | 一个库的全部分类:`items` 每项有 `code`、`entries`(条数)、`attributes`(如 `ads`、`cn`) |
 | GET | `/panels/:id/geodata/entries?file=&code=&q=&offset=&limit=` | 一个分类里的条目,分页(`limit` 最多 500,默认 100),`q` 按值过滤:`total`、`items`(`kind` 是 `domain` / `full` / `keyword` / `regexp` / `cidr`,`value`) |
 | POST | `/panels/:id/geodata/validate` | 按面板的库核对写法:`{ "kind": "site" 或 "ip", "tokens": ["geosite:netflix", …] }`,返回 `issues`(对不上的,`reason` 是 `categoryMissing` / `fileMissing` / `attributeMissing` / `syntax` / `wrongKind`);普通域名、网段不查 |
+| POST | `/panels/:id/line-names` | 一键改名:这块面板上的线路都用面板的节点名(清掉各自设的 `node_name`)。只改订阅里显示的名字,面板上的客户端、UUID、出口都不动,客户更新订阅后生效。面板没填节点名时报 400。返回 `changed`(原来单独设过名字、这次清掉的条数)和 `panel` |
 | POST | `/panels/:id/restart` | 重启面板和 Xray 内核,等两个都恢复才返回(一般十几秒);上面所有客户端会断流几秒 |
 | GET | `/socks` | SOCKS 代理列表 |
 | GET | `/sub-templates` | 内置的订阅模板 |
@@ -161,6 +162,8 @@ Authorization: Bearer xh_……
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/oplog` | 新的在前,一次最多 200 条(`limit`,默认 50)。`before`(上一页最后一条的 `id`,翻页)、`customer_id`(只看涉及这位客户的)、`q`(在「做了什么」「谁」「IP」里搜)、`failed=1`(只看没成的)。返回 `rows`(每条 `id`、`at`、`actor`、`ip`、`action`(方法 + 路由)、`summary`、`ok`、`error`、`customer_id`)和 `more`(还有没有更早的) |
+
+面板带 `node_name`(节点名,空 = 用面板生成的名字):线路没单独设节点名的,订阅里就用它;改面板的节点名不动线路各自设的。线路里的 `panel_node_name` 是它所在面板的节点名,订阅里实际用的是 `node_name` 不空就用它、否则 `panel_node_name`。一份订阅里重名的节点依次加「 2」「 3」。
 
 面板和 SOCKS 都带 `monthly_cost`(月成本,`null` = 没填)和 `expire_at`(到期时间,毫秒,`0` = 没填),只用来记账和提醒续费,在后台的面板页 / SOCKS 页填写。
 

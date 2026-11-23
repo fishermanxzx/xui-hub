@@ -108,7 +108,12 @@ function toggleAllLines() {
   saveOpenLines(next);
 }
 /** 收起时那一行列的名字:有自定义节点名用它,没有用面板名 */
-const lineNames = (c: Customer) => c.lines.map((l) => l.node_name || l.panel_name).join(' · ');
+/** 线路在订阅里用的节点名:自己设的,没设就是面板的;都空就是面板生成的(这里显示面板名) */
+const nodeNameOf = (l: Line) => l.node_name || l.panel_node_name;
+const lineNames = (c: Customer) => c.lines.map((l) => nodeNameOf(l) || l.panel_name).join(' · ');
+/** 新线路不填节点名时用的:这块面板的节点名 */
+const panelNodeName = (panelId: number) => panels.value.find((p) => p.id === panelId)?.node_name ?? '';
+const nodeNamePh = (panelId: number) => (panelNodeName(panelId) ? t('customers.followPanelName', { name: panelNodeName(panelId) }) : t('customers.batchNodeNamePh'));
 const linesOff = (c: Customer) => c.lines.filter((l) => !l.enable).length;
 
 function clearFilters() {
@@ -554,7 +559,7 @@ function batchExitOptions(c: Customer): SelectOption<string>[] {
   const copies = c.lines.filter(copyable).map((l) => {
     const exit = l.kind === 'relay' ? t('customers.routeSocks', { name: l.exit_socks_name ?? '' }) : t('customers.direct');
     const rules = l.rules?.length ? t('customers.batchCopyRules', { n: l.rules.length }) : '';
-    return { value: `copy:${l.id}`, label: t('customers.batchCopy', { line: l.node_name ? `${l.panel_name}「${l.node_name}」` : l.panel_name, exit: exit + rules }) };
+    return { value: `copy:${l.id}`, label: t('customers.batchCopy', { line: nodeNameOf(l) ? `${l.panel_name}「${nodeNameOf(l)}」` : l.panel_name, exit: exit + rules }) };
   });
   return [...copies, { value: 'direct', label: t('customers.direct') }, ...socksList.value.map((s) => ({ value: `socks:${s.id}`, label: t('customers.routeSocks', { name: s.name }) }))];
 }
@@ -989,6 +994,7 @@ function exitText(l: Line): string {
           <span class="where">
             <strong>{{ l.panel_name }}</strong>
             <span v-if="l.node_name" class="small node-name" :title="t('customers.nodeNameTitle')">「{{ l.node_name }}」</span>
+            <span v-else-if="l.panel_node_name" class="small node-name muted" :title="t('customers.nodeNameFromPanel')">「{{ l.panel_node_name }}」</span>
             <span class="muted small">{{ l.inbound_remark || l.inbound_id }} · {{ proto(l.protocol) }} · {{ l.email }}</span>
           </span>
           <span v-if="multiExit(l)" class="small exit hops" :title="t('customers.routesTitle', { ago: fmtAgo(l.routes_at) })">
@@ -1110,7 +1116,7 @@ function exitText(l: Line): string {
                   <span v-if="inboundsOf[p.id] === 'loading'" class="muted small">{{ t('customers.readingInbounds') }}</span>
                   <span v-else-if="inboundsOf[p.id] === 'error'" class="text-err small">{{ t('customers.inboundsError') }} <button type="button" class="link" @click="fetchInbounds(p.id)">{{ t('customers.retry') }}</button></span>
                 </span>
-                <input class="b-nodename" :value="rowOf(p.id).node_name" maxlength="64" :placeholder="t('customers.batchNodeNamePh')" :aria-label="t('customers.nodeNameFor', { name: p.name })" @input="setRowName(p.id, ($event.target as HTMLInputElement).value)" />
+                <input class="b-nodename" :value="rowOf(p.id).node_name" maxlength="64" :placeholder="nodeNamePh(p.id)" :aria-label="t('customers.nodeNameFor', { name: p.name })" @input="setRowName(p.id, ($event.target as HTMLInputElement).value)" />
                 <span class="small b-res" :class="sf.results[p.id]?.state" :title="sf.results[p.id]?.text">{{ sf.results[p.id] ? batchText(sf.results[p.id]) : '' }}</span>
               </template>
             </li>
@@ -1145,7 +1151,7 @@ function exitText(l: Line): string {
       <template v-else>
         <p class="muted small">{{ t('customers.openedMultiHint', { n: opened.length }) }}</p>
         <section v-for="o in opened" :key="o.line.id" class="opened-one">
-          <p class="opened-head">{{ o.line.node_name ? `${o.line.panel_name}「${o.line.node_name}」` : o.line.panel_name }}</p>
+          <p class="opened-head">{{ nodeNameOf(o.line) ? `${o.line.panel_name}「${nodeNameOf(o.line)}」` : o.line.panel_name }}</p>
           <p class="muted small">{{ t('customers.openedSummaryShort', { exit: exitText(o.line), inbound: o.line.inbound_remark || o.line.inbound_id, proto: proto(o.line.protocol), email: o.line.email }) }}</p>
           <ClientLinks :links="o.links" :name="o.line.email" collapsed />
         </section>
@@ -1208,13 +1214,13 @@ function exitText(l: Line): string {
               </label>
               <div class="b-nodes small">
                 <template v-if="c.lines.length">
-                  <span v-for="l in c.lines" :key="l.id" class="b-node" :class="{ here: l.panel_id === lf.panel_id }" :title="nodeTitle(l)">{{ l.node_name || l.panel_name }}</span>
+                  <span v-for="l in c.lines" :key="l.id" class="b-node" :class="{ here: l.panel_id === lf.panel_id }" :title="nodeTitle(l)">{{ nodeNameOf(l) || l.panel_name }}</span>
                 </template>
                 <span v-else class="muted">{{ t('customers.batchNoLines') }}</span>
               </div>
             </div>
             <span class="b-exit"><Select :model-value="exitOf(c)" :options="batchExitOptions(c)" :aria-label="t('customers.batchExitFor', { name: c.name })" @update:model-value="(v: string) => setExit(c, v)" /></span>
-            <input class="b-nodename" :value="batch.names[c.id] ?? ''" maxlength="64" :placeholder="t('customers.batchNodeNamePh')" :aria-label="t('customers.batchNodeNameFor', { name: c.name })" @input="setName(c, ($event.target as HTMLInputElement).value)" />
+            <input class="b-nodename" :value="batch.names[c.id] ?? ''" maxlength="64" :placeholder="nodeNamePh(lf.panel_id)" :aria-label="t('customers.batchNodeNameFor', { name: c.name })" @input="setName(c, ($event.target as HTMLInputElement).value)" />
             <span class="small b-res" :class="batch.results[c.id]?.state" :title="batch.results[c.id]?.text">{{ batch.results[c.id] ? batchText(batch.results[c.id]) : '' }}</span>
           </li>
           <li v-if="!batchList.length" class="muted small">{{ t('customers.batchEmpty') }}</li>
@@ -1256,7 +1262,7 @@ function exitText(l: Line): string {
               <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
             </label>
             <span class="b-nodes small">
-              <span v-for="l in linesOnPanelOf(c, del.panel_id)" :key="l.id" class="b-node" :title="`${nodeTitle(l)} · ${t('customers.used', { used: fmtBytes(l.up + l.down) })}`">{{ l.node_name || l.email }}</span>
+              <span v-for="l in linesOnPanelOf(c, del.panel_id)" :key="l.id" class="b-node" :title="`${nodeTitle(l)} · ${t('customers.used', { used: fmtBytes(l.up + l.down) })}`">{{ nodeNameOf(l) || l.email }}</span>
             </span>
             <span class="small b-res" :class="del.results[c.id]?.state" :title="del.results[c.id]?.text">{{ del.results[c.id] ? delText(del.results[c.id]) : '' }}</span>
           </li>
@@ -1378,7 +1384,7 @@ function exitText(l: Line): string {
     <form id="rename-form" class="form" @submit.prevent="saveRename">
       <label class="field">
         {{ t('customers.nodeName') }}
-        <input v-model="renameText" maxlength="64" autofocus :placeholder="t('customers.nodeNamePlaceholder')" />
+        <input v-model="renameText" maxlength="64" autofocus :placeholder="renameFor.panel_node_name ? t('customers.followPanelName', { name: renameFor.panel_node_name }) : t('customers.nodeNamePlaceholder')" />
       </label>
       <p class="muted small hint">{{ t('customers.nodeNameHint') }}</p>
     </form>
