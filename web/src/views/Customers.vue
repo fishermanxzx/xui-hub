@@ -104,6 +104,8 @@ function toggleAllLines() {
 /** 线路在订阅里用的节点名:自己设的,没设就是面板的;都空就是面板生成的(这里显示面板名) */
 const nodeNameOf = (l: Line) => l.node_name || l.panel_node_name;
 const lineNames = (c: Customer) => c.lines.map((l) => nodeNameOf(l) || l.panel_name).join(' · ');
+/** 线路所在面板的 3x-ui 后台地址(点面板名新开标签页打开) */
+const panelUrl = (panelId: number) => panels.value.find((p) => p.id === panelId)?.base_url ?? '';
 /** 新线路不填节点名时用的:这块面板的节点名 */
 const panelNodeName = (panelId: number) => panels.value.find((p) => p.id === panelId)?.node_name ?? '';
 const nodeNamePh = (panelId: number) => (panelNodeName(panelId) ? t('customers.followPanelName', { name: panelNodeName(panelId) }) : t('customers.batchNodeNamePh'));
@@ -969,7 +971,8 @@ function exitText(l: Line): string {
         <li v-for="l in c.lines" :key="l.id" class="line" :class="{ dim: offPanel(l) }">
           <span class="chip" :class="l.kind">{{ l.kind === 'direct' ? t('customers.direct') : t('customers.relay') }}</span>
           <span class="where">
-            <strong>{{ l.panel_name }}</strong>
+            <a v-if="panelUrl(l.panel_id)" class="panel-link" :href="panelUrl(l.panel_id)" target="_blank" rel="noopener noreferrer" :title="t('customers.openPanelHint', { name: l.panel_name })">{{ l.panel_name }}</a>
+            <strong v-else>{{ l.panel_name }}</strong>
             <span v-if="l.node_name" class="small node-name" :title="t('customers.nodeNameTitle')">「{{ l.node_name }}」</span>
             <span v-else-if="l.panel_node_name" class="small node-name muted" :title="t('customers.nodeNameFromPanel')">「{{ l.panel_node_name }}」</span>
             <span class="muted small">{{ l.inbound_remark || l.inbound_id }} · {{ proto(l.protocol) }} · {{ l.email }}</span>
@@ -1644,6 +1647,15 @@ h2 {
 .chip.relay {
   background: var(--accent-soft);
   color: var(--accent-strong);
+}
+.panel-link {
+  font-weight: 600;
+  color: inherit;
+  text-decoration: none;
+}
+.panel-link:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
 }
 .where {
   display: flex;

@@ -783,6 +783,7 @@ const en: Messages = {
     batchStopped: '{n} not opened (stopped)',
     nodeNamePlaceholder: 'Blank = the name the panel generates',
     followPanelName: 'Blank = the panel\'s "{name}"',
+    openPanelHint: 'Open the 3x-ui admin of "{name}" in a new tab (log in with the panel\'s own account)',
     nodeNameFromPanel: 'Follows the panel\'s node name (no name set on this line)',
     nodeNameTitle: 'Custom node name shown in the subscription',
     nodeNameHint: 'The node name the customer sees in the subscription. Only changed here; the inbound remark and client on the panel stay as they are. Takes effect the next time the customer updates the subscription. Leave blank to follow the panel\'s node name (or the panel-generated name if the panel has none).',

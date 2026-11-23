@@ -781,6 +781,7 @@ export default {
     batchStopped: '{n} 位没开(停止了)',
     nodeNamePlaceholder: '留空 = 用面板生成的名字',
     followPanelName: '不填 = 用面板的「{name}」',
+    openPanelHint: '打开「{name}」的 3x-ui 后台(新标签页,要用面板的账号密码登录)',
     nodeNameFromPanel: '跟着面板的节点名(这条线路没单独设)',
     nodeNameTitle: '自定义节点名:客户拉订阅时看到的名字',
     nodeNameHint: '客户拉订阅时看到的节点名。只改这里,面板上的入站备注和客户端都不动;客户下次更新订阅生效。留空 = 跟着面板设的节点名(面板也没设就用面板生成的名字)。',
