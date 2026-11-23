@@ -15,6 +15,7 @@ const en: Messages = {
     refresh: 'Refresh',
     loading: 'Loading…',
     language: 'Language',
+    noMatch: 'No matches',
   },
   nav: {
     label: 'Pages',
@@ -108,6 +109,12 @@ const en: Messages = {
     excludeOne: 'Excluding {name}',
     excludeN: 'Excluding {n} panels',
     excludedNote: 'Traffic on {list} is left out: totals, the daily chart, per-customer figures (their lines on these panels) and the per-panel view. It is only skipped when calculating; the records are kept and come back when you stop excluding. The choice is remembered in this browser.',
+    onlyLabel: 'Show only these customers',
+    onlyOne: 'Only {name}',
+    onlyN: 'Only {n} customers',
+    onlySearch: 'Search customers',
+    onlyNote: 'Only traffic of {list} is counted: totals, the daily chart and the per-panel view (how much they used on each panel).',
+    andMore: '{list} and {n} more',
   },
   customerTraffic: {
     peak: 'Peak',

@@ -7,7 +7,7 @@ import TrafficChart from '../components/TrafficChart.vue';
 import type { SelectOption } from '../components/Select.vue';
 import { fmtBytes } from '../format';
 import { toastError } from '../toast';
-import type { Panel, TrafficBy, TrafficReport, TrafficRow } from '../types';
+import type { Customer, Panel, TrafficBy, TrafficReport, TrafficRow } from '../types';
 
 const RANGES = [1, 7, 30, 90];
 const rangeLabel = (n: number) => (n === 1 ? t('traffic.today') : t('traffic.days', { n }));
@@ -30,13 +30,18 @@ try {
   /* 忽略坏数据 */
 }
 const panels = ref<Panel[]>([]);
+const customers = ref<Customer[]>([]);
 onMounted(async () => {
   try {
-    panels.value = await api.panels();
+    [panels.value, customers.value] = await Promise.all([api.panels(), api.customers()]);
   } catch (e) {
     toastError(e);
   }
 });
+const listOf = (names: string[]) => {
+  const sep = locale.value === 'zh' ? '、' : ', ';
+  return names.length > 5 ? t('traffic.andMore', { list: names.slice(0, 5).join(sep), n: names.length - 5 }) : names.join(sep);
+};
 const panelName = (id: number) => panels.value.find((p) => p.id === id)?.name ?? t('traffic.deletedPanel', { id });
 /** 面板页上的面板;排除过、后来删掉的面板也列出来,好取消 */
 const excludeOptions = computed<SelectOption<number>[]>(() => [
@@ -48,7 +53,7 @@ const excludeLabel = computed(() => {
   if (!ids.length) return t('traffic.excludeNone');
   return ids.length === 1 ? t('traffic.excludeOne', { name: panelName(ids[0]) }) : t('traffic.excludeN', { n: ids.length });
 });
-const excludedList = computed(() => exclude.value.map(panelName).join(locale.value === 'zh' ? '、' : ', '));
+const excludedList = computed(() => listOf(exclude.value.map(panelName)));
 watch(exclude, (ids) => {
   try {
     localStorage.setItem(EXCLUDE_KEY, JSON.stringify(ids));
@@ -59,11 +64,30 @@ watch(exclude, (ids) => {
   if (by.value === 'panel' && focus.value && ids.includes(focus.value.id)) focus.value = null;
 });
 
+// ---------- 只看哪些客户(0 = 没归入客户的客户端):合计、走势、按面板都只算他们的;不记,刷新页面回到全部 ----------
+const only = ref<number[]>([]);
+const customerName = (id: number) => (id === 0 ? t('traffic.unassigned') : (customers.value.find((c) => c.id === id)?.name ?? t('traffic.deletedCustomer', { id })));
+const onlyOptions = computed<SelectOption<number>[]>(() => [
+  ...[...customers.value].sort((a, b) => a.name.localeCompare(b.name, locale.value)).map((c) => ({ value: c.id, label: c.name })),
+  { value: 0, label: t('traffic.unassigned') },
+  ...only.value.filter((id) => id !== 0 && !customers.value.some((c) => c.id === id)).map((id) => ({ value: id, label: customerName(id) })),
+]);
+const onlyLabel = computed(() => {
+  const ids = only.value;
+  if (!ids.length) return t('traffic.allCustomers');
+  return ids.length === 1 ? t('traffic.onlyOne', { name: customerName(ids[0]) }) : t('traffic.onlyN', { n: ids.length });
+});
+const onlyList = computed(() => listOf(only.value.map(customerName)));
+watch(only, (ids) => {
+  // 正展开看的客户不在里面了:回到全部客户
+  if (by.value === 'customer' && focus.value && ids.length && !ids.includes(focus.value.id)) focus.value = null;
+});
+
 async function load() {
   const mine = ++seq;
   loading.value = true;
   try {
-    const r = await api.traffic(by.value, days.value, focus.value?.id, exclude.value);
+    const r = await api.traffic(by.value, days.value, focus.value?.id, exclude.value, only.value);
     if (mine === seq) report.value = r;
   } catch (e) {
     if (mine === seq) toastError(e);
@@ -75,7 +99,7 @@ function setBy(v: TrafficBy) {
   by.value = v;
   focus.value = null;
 }
-watch([by, days, focus, exclude], load);
+watch([by, days, focus, exclude, only], load);
 onMounted(load);
 
 const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
@@ -114,9 +138,11 @@ function open(r: TrafficRow) {
     <div class="seg" role="group" :aria-label="t('traffic.rangeLabel')">
       <button v-for="n in RANGES" :key="n" :class="{ on: days === n }" :aria-pressed="days === n" @click="days = n">{{ rangeLabel(n) }}</button>
     </div>
+    <MultiSelect v-model="only" :options="onlyOptions" :label="onlyLabel" :all-label="t('traffic.allCustomers')" :aria-label="t('traffic.onlyLabel')" :title="t('traffic.onlyLabel')" searchable :search-placeholder="t('traffic.onlySearch')" />
     <MultiSelect v-model="exclude" :options="excludeOptions" :label="excludeLabel" :all-label="t('traffic.excludeNone')" :aria-label="t('traffic.excludeLabel')" :title="t('traffic.excludeLabel')" />
     <span v-if="loading" class="muted small">{{ t('common.loading') }}</span>
   </div>
+  <p v-if="only.length" class="small muted excluded">{{ t('traffic.onlyNote', { list: onlyList }) }}</p>
   <p v-if="exclude.length" class="small muted excluded">{{ t('traffic.excludedNote', { list: excludedList }) }}</p>
 
   <p v-if="focus" class="crumb small">
