@@ -98,7 +98,9 @@ function customerView(c: any, ctx: ToolContext) {
       panel_id: l.panel_id,
       protocol: l.protocol === 'hysteria' ? 'hy2' : l.protocol,
       email: l.email,
-      node_name: l.node_name || null,
+      // 订阅里实际用的节点名:线路自己设的,没设就是面板的;null = 用面板生成的
+      node_name: l.node_name || l.panel_node_name || null,
+      node_name_from_panel: !l.node_name && !!l.panel_node_name ? true : undefined,
       // 面板上实际的出口(按路由规则顺序,每分钟同步时读):when 为空 = 其余流量
       rules: l.rules?.length ? l.rules : undefined,
       routes: l.routes
@@ -320,7 +322,7 @@ export const TOOLS: ToolDef[] = [
         protocol: { type: 'string', enum: ['vless', 'hy2'], description: '协议,默认 vless(reality)' },
         inbound_id: int('挂到面板上哪个已有入站(不传则按协议自动选或新建)', { minimum: 1 }),
         exit_socks_id: int('出口:SOCKS 代理 id(list_socks 返回的);不传就从这块面板直出', { minimum: 1 }),
-        node_name: str('自定义节点名:客户拉订阅时看到的名字;不传就用面板生成的', { maxLength: 64 }),
+        node_name: str('自定义节点名:客户拉订阅时看到的名字;不传就跟着面板的节点名(面板也没设就用面板生成的)', { maxLength: 64 }),
       },
       ['customer_id', 'panel_id'],
     ),
@@ -337,7 +339,7 @@ export const TOOLS: ToolDef[] = [
     name: 'rename_line',
     title: '改节点名',
     description: '改一条线路的自定义节点名(客户拉订阅时看到的名字),空字符串 = 恢复用面板生成的名字。只改 xui-hub 里的记录,面板上不动,下次拉订阅生效。',
-    inputSchema: obj({ customer_id: customerId, line_id: int('线路 id', { minimum: 1 }), node_name: str('新的节点名,最多 64 个字符;空字符串 = 用面板生成的', { maxLength: 64 }) }, ['customer_id', 'line_id', 'node_name']),
+    inputSchema: obj({ customer_id: customerId, line_id: int('线路 id', { minimum: 1 }), node_name: str('新的节点名,最多 64 个字符;空字符串 = 跟着面板的节点名(面板也没设就用面板生成的)', { maxLength: 64 }) }, ['customer_id', 'line_id', 'node_name']),
     annotations: { destructiveHint: false, idempotentHint: true },
     run: async (a, ctx) => {
       const l = await call(ctx, 'PATCH', `/customers/${Number(a.customer_id)}/lines/${Number(a.line_id)}`, { node_name: a.node_name });
@@ -443,6 +445,8 @@ export const TOOLS: ToolDef[] = [
         inbounds: p.inbound_count ?? null,
         clients: p.client_count ?? null,
         monthly_cost: p.monthly_cost ?? null,
+        // 这块面板上没单独设节点名的线路在订阅里用的名字;null = 用面板生成的
+        node_name: p.node_name || null,
         expire_at: iso(p.expire_at ?? 0),
       })),
   },

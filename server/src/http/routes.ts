@@ -14,8 +14,10 @@ import {
   deleteCustomer,
   deleteLine,
   getCustomer,
+  clearLineNames,
   getLine,
   lineByEmail,
+  lineNodeName,
   linesOnPanel,
   listCustomers,
   resetSubToken,
@@ -369,6 +371,15 @@ export function apiRouter(deps: RouteDeps): Router {
       return view(after);
     }),
   );
+  // 一键改名:这块面板上的线路都用面板的节点名(清掉各自设的)。只改订阅里显示的名字,面板上的客户端、UUID、出口都不动;客户更新订阅后生效
+  r.post(
+    '/panels/:id/line-names',
+    wrap((req) => {
+      const panel = panelOf(req);
+      if (!panel.node_name) throw new InputError('先给这块面板填节点名');
+      return { changed: clearLineNames(db, panel.id), panel: view(panel) };
+    }),
+  );
   // 重启面板和 Xray 内核:先重启面板、等它回来,再重启 Xray、等它回到 running(上面所有客户端断流几秒)
   r.post(
     '/panels/:id/restart',
@@ -658,7 +669,7 @@ export function apiRouter(deps: RouteDeps): Router {
       const line = lineOf(req);
       const panel = getPanel(db, line.panel_id);
       if (!panel) throw new InputError('线路所在的面板已删除');
-      return withClient(panel, async (client) => ({ links: renameLinks(await client.clientLinks(line.email), line.node_name) }));
+      return withClient(panel, async (client) => ({ links: renameLinks(await client.clientLinks(line.email), lineNodeName(line)) }));
     }),
   );
   // 改线路的自定义节点名(只改这里,面板上不动;下次拉订阅生效)

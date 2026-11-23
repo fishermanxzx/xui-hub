@@ -133,7 +133,12 @@ function costDiff(a: { name: string; monthly_cost: number | null; expire_at: num
   return out;
 }
 
-const panelDiff = (a: Panel, b: Panel) => costDiff(a, b, [...(a.base_url !== b.base_url ? ['地址改了'] : []), ...(a.token !== b.token ? ['令牌改了'] : [])]);
+const panelDiff = (a: Panel, b: Panel) =>
+  costDiff(a, b, [
+    ...(a.base_url !== b.base_url ? ['地址改了'] : []),
+    ...(a.token !== b.token ? ['令牌改了'] : []),
+    ...(a.node_name !== b.node_name ? [`节点名 ${a.node_name || '(面板生成的)'} → ${b.node_name || '(面板生成的)'}`] : []),
+  ]);
 
 const socksDiff = (a: SocksProxy, b: SocksProxy) =>
   costDiff(a, b, [
@@ -310,6 +315,8 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
       return S(`删除面板${pname}${req.query?.force === '1' ? '(连同上面的线路记录)' : ''}`, null);
     case 'POST /panels/:id/xray/:version':
       return S(`给面板${pname}换 Xray ${b.segs[3] ?? ''}`, null);
+    case 'POST /panels/:id/line-names':
+      return S(`把面板${pname}上 ${typeof result?.changed === 'number' ? result.changed : ''} 条线路的节点名改成跟着面板的「${b.panel?.node_name ?? ''}」`, null);
     case 'POST /panels/:id/restart':
       return S(`重启面板${pname}`, null);
     case 'POST /panels/:id/update':

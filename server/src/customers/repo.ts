@@ -29,8 +29,10 @@ export interface Line {
   exit_socks_id: number | null;
   exit_socks_name: string | null;
   exit_label: string;
-  /** 自定义节点名:订阅和分享链接里代替面板生成的名字,空 = 用面板的 */
+  /** 自定义节点名:订阅和分享链接里代替面板生成的名字,空 = 跟着面板的节点名(见 panel_node_name) */
   node_name: string;
+  /** 线路所在面板的节点名:线路自己没设时用它;也空 = 用面板生成的名字 */
+  panel_node_name: string;
   /** 面板上实际的出口(按 Xray 路由规则顺序,同步时读);null = 还没读到 */
   routes: RouteHop[] | null;
   routes_at: number;
@@ -167,7 +169,7 @@ function validName(value: unknown): string {
 }
 
 const LINE_SQL = `
-  SELECT l.*, p.name AS panel_name, ep.name AS exit_panel_name, es.name AS exit_socks_name
+  SELECT l.*, p.name AS panel_name, p.node_name AS panel_node_name, ep.name AS exit_panel_name, es.name AS exit_socks_name
   FROM lines l
   JOIN panels p ON p.id = l.panel_id
   LEFT JOIN panels ep ON ep.id = l.exit_panel_id
@@ -211,6 +213,7 @@ function toLine(row: any): Line {
     exit_socks_name: row.exit_socks_name ?? null,
     exit_label: row.exit_label,
     node_name: row.node_name ?? '',
+    panel_node_name: row.panel_node_name ?? '',
     routes: parseRoutes(row.routes),
     routes_at: row.routes_at ?? 0,
     rules: parseRules(row.rules),
@@ -472,6 +475,14 @@ export function addLine(db: DB, l: LineInsert, now = Date.now()): Line {
     )
     .run(l.customer_id, l.kind, l.panel_id, l.inbound_id, l.inbound_remark, l.protocol, l.email, l.exit_kind ?? null, l.exit_panel_id ?? null, l.exit_port ?? null, l.exit_socks_id ?? null, l.exit_label ?? '', l.node_name ?? '', now);
   return getLine(db, Number(info.lastInsertRowid))!;
+}
+
+/** 线路在订阅里用的节点名:自己设的,没设就用面板的;都空 = 用面板生成的 */
+export const lineNodeName = (l: Pick<Line, 'node_name' | 'panel_node_name'>) => l.node_name || l.panel_node_name;
+
+/** 这块面板上的线路都改成跟着面板的节点名(清掉各自设的,只改这里的记录,面板上不动)。返回改了几条 */
+export function clearLineNames(db: DB, panelId: number): number {
+  return db.prepare("UPDATE lines SET node_name = '' WHERE panel_id = ? AND node_name != ''").run(panelId).changes;
 }
 
 /** 改线路的自定义节点名(只改这里的记录,面板上不动) */

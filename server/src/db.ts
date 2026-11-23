@@ -326,6 +326,10 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX op_log_at ON op_log(at);
   CREATE INDEX op_log_customer ON op_log(customer_id, id);
   `,
+  `
+  -- 面板的节点名:这块面板上没单独设节点名的线路,订阅里用它;空 = 用面板(3x-ui)生成的名字
+  ALTER TABLE panels ADD COLUMN node_name TEXT NOT NULL DEFAULT '';
+  `,
 ];
 
 export function openDb(file: string): DB {
