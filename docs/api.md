@@ -34,7 +34,7 @@ Authorization: Bearer xh_……
 | `traffic_ratio` | 流量倍率,默认 1(0.01-100,两位小数):计费用量 = 实际流量 × 倍率。写的时候传空 = 1 |
 | `actual_up` / `actual_down` / `actual_used` | 只读:本期实际流量(字节)= 各线路之和 + 结转 |
 | `carried_up` / `carried_down` | 只读:结转的实际流量(字节):删掉的线路本期用掉的、面板上计数被清零或重建前的、手动调整的;清零时一起清。手动减过时可以是负数 |
-| `used_up` / `used_down` / `used` | 只读:本期计费用量(字节)= 实际 × 倍率。订阅里的 `subscription-userinfo`、自助页、额度判断(超额停用)、用量提醒都按它 |
+| `used_up` / `used_down` / `used` | 只读:本期计费用量(字节)= 实际 × 倍率。订阅里的 `subscription-userinfo`、自助页(含最近 30 天每天用量)、额度判断(超额停用)、用量提醒都按它 |
 | `state` | `active` 正常 / `expired` 已到期 / `over_quota` 已超额 |
 | `sub_token` | 订阅链接是 `https://<后台地址>/sub/<sub_token>` |
 | `sub_url` | 配了 `SUB_BASE_URL` 时是完整的订阅链接,否则为 `null` |
