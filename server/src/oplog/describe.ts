@@ -67,6 +67,13 @@ const entryText = (e: Partial<LedgerEntry>) => {
   const extra = [e.category, link('面板', e.panel_id, e.panel_name), link('SOCKS', e.socks_id, e.socks_name), link('客户', e.customer_id, e.customer_name), e.note ? `备注「${e.note}」` : ''].filter(Boolean);
   return `${e.amount != null ? ` ${e.amount}` : ''}${extra.length ? `(${extra.join(';')})` : ''}`;
 };
+/** 面板上手配的一条规则:「geosite:google → SOCKS「美国」」 */
+function panelRuleText(db: DB, r: { when?: Record<string, string[]>; to?: { kind?: string; tag?: string; socks_id?: number } }): string {
+  const when = Object.values(r.when ?? {}).flat().join('、') || '全部流量';
+  const to = r.to ?? {};
+  const target = to.kind === 'direct' ? '直出' : to.kind === 'block' ? '拦截' : to.kind === 'socks' && to.socks_id ? `SOCKS「${getSocks(db, to.socks_id)?.name ?? to.tag}」` : `出站「${to.tag ?? ''}」`;
+  return `${when} → ${target}`;
+}
 const exitOf = (l: Line) => (l.kind === 'direct' ? '直出' : l.exit_label || '走代理');
 
 function decode(s: string): string {
@@ -306,6 +313,11 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
     case 'PUT /customers/:id/lines/:lid/rules': {
       const n = Array.isArray(body.rules) ? body.rules.length : 0;
       return S(`改${cname}线路${ofLine}的出口规则(${n ? `${n} 条` : '全部去掉'})`);
+    }
+    case 'DELETE /customers/:id/lines/:lid/panel-rules/:key':
+    case 'POST /customers/:id/lines/:lid/panel-rules/:key/adopt': {
+      const what = action.startsWith('DELETE') ? '删除' : '接管';
+      return S(`${what}${cname}线路${ofLine}在面板上手配的规则${ok && result?.rule ? `:${panelRuleText(db, result.rule)}` : ''}`);
     }
     case 'PUT /customers/:id/lines/:lid/exit': {
       const after = b.line && getLine(db, b.line.id);

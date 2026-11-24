@@ -145,7 +145,7 @@ test('同步时读面板的 Xray 路由,记下每条线路实际的出口;读不
   const got = getLine(db, line.id)!;
   assert.equal(got.routes_at, 200);
   assert.deepEqual(got.routes, [
-    { when: { domain: ['geosite:netflix'] }, to: { kind: 'socks', tag: 'us', address: '198.51.100.9:1080', socks_id: sockId }, fallback: false },
+    { when: { domain: ['geosite:netflix'] }, to: { kind: 'socks', tag: 'us', address: '198.51.100.9:1080', socks_id: sockId }, fallback: false, origin: 'own' },
     { when: {}, to: { kind: 'direct', tag: 'direct' }, fallback: true },
   ]);
 

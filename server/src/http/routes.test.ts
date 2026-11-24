@@ -513,6 +513,79 @@ test('外部订阅:保存时新填的马上取一次(取不到也照样保存),�
   }
 });
 
+test('面板上手配、点名这条线路的规则:能列出来;只点名他的能删、能接管(按原来的顺序存进出口规则);重启失败改回去;多人共用的删不了', async () => {
+  const db = memoryDb();
+  const relay = addPanel(db, 'relay', 'https://1.1.1.1:2053/p');
+  const data = { relay: relayPanel() };
+  const { call, close } = await serve(db, data);
+  try {
+    const s = (await call('POST', '/socks', { name: 'us', address: 'socks5://u:p@isp.example.com:1080' })).body;
+    const c = (await call('POST', '/customers', { name: 'zhang' })).body;
+    const line = (await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: relay.id, inbound: { id: 5 } })).body.line;
+    const base = `/customers/${c.id}/lines/${line.id}/panel-rules`;
+    await call('PUT', `/customers/${c.id}/lines/${line.id}/rules`, { rules: [{ domain: ['ads.com'], to: { kind: 'block' } }] });
+    // 面板上手配的(迁移前写的那种,没有 ruleTag):一条排在 xui-hub 写的前面,一条指向没登记的代理,一条多人共用
+    const x = data.relay.xray;
+    x.outbounds.push({ tag: 'old-socks', protocol: 'socks', settings: { servers: [{ address: 'isp.example.com', port: 1080, users: [{ user: 'u', pass: 'p' }] }] } });
+    x.outbounds.push({ tag: 'socks-gone.example.com-1', protocol: 'socks', settings: { servers: [{ address: 'gone.example.com', port: 1 }] } });
+    const at = x.routing.rules.findIndex((r: any) => r.ruleTag);
+    x.routing.rules.splice(at, 0, { type: 'field', inboundTag: ['in-500'], user: [line.email], domain: ['geosite:google'], outboundTag: 'old-socks' }, { type: 'field', user: [line.email], domain: ['junk.com'], outboundTag: 'socks-gone.example.com-1' });
+    x.routing.rules.unshift({ type: 'field', inboundTag: ['in-500'], user: [line.email, 'li'], domain: ['shared.com'], outboundTag: 'direct' });
+
+    const listed = (await call('GET', base)).body;
+    assert.deepEqual(
+      listed.map((r: any) => [r.when.domain[0], r.own, r.takeover?.to ?? null]),
+      [
+        ['shared.com', false, null],
+        ['geosite:google', true, { kind: 'socks', socks_id: s.id }],
+        ['junk.com', true, null],
+      ],
+    );
+    const key = (d: string) => listed.find((r: any) => r.when.domain[0] === d).key;
+    const restarts = data.relay.restarts;
+
+    // 多人共用的、对不上的 key:不动面板
+    assert.match((await call('DELETE', `${base}/${key('shared.com')}`)).body.error, /不能在这里删/);
+    assert.match((await call('POST', `${base}/${key('junk.com')}/adopt`)).body.error, /不能接管.*没在 SOCKS 页登记/);
+    assert.match((await call('DELETE', `${base}/0123456789abcdef`)).body.error, /没有这条规则了/);
+    assert.equal((await call('DELETE', `${base}/zz`)).status, 400);
+    assert.equal(data.relay.restarts, restarts);
+
+    // 重启失败:改回原来的配置,规则还在
+    data.relay.fail = { restartXray: 'boom' };
+    assert.notEqual((await call('DELETE', `${base}/${key('junk.com')}`)).status, 200);
+    delete data.relay.fail;
+    assert.ok(data.relay.xray.routing.rules.some((r: any) => r.domain?.[0] === 'junk.com'));
+
+    // 删:规则去掉,没人用的出站一起删
+    const del = await call('DELETE', `${base}/${key('junk.com')}`);
+    assert.equal(del.status, 200);
+    assert.ok(!data.relay.xray.routing.rules.some((r: any) => r.domain?.[0] === 'junk.com'));
+    assert.ok(!data.relay.xray.outbounds.some((o: any) => o.tag === 'socks-gone.example.com-1'));
+
+    // 接管:排在 xui-hub 写的那条前面,存进出口规则也排第一;复用原来的出站;实际出口里手配的那跳变成 xui-hub 管的
+    const adopted = await call('POST', `${base}/${key('geosite:google')}/adopt`);
+    assert.equal(adopted.status, 200);
+    assert.deepEqual(adopted.body.line.rules.map((r: any) => [r.domain[0], r.to.kind]), [['geosite:google', 'socks'], ['ads.com', 'block']]);
+    const tagged = data.relay.xray.routing.rules.filter((r: any) => r.user?.[0] === line.email && r.user.length === 1);
+    assert.deepEqual(tagged.map((r: any) => [r.ruleTag, r.domain[0], r.outboundTag]), [
+      [`xui-hub:in-500:${line.email}:1`, 'geosite:google', 'old-socks'],
+      [`xui-hub:in-500:${line.email}:2`, 'ads.com', 'blocked'],
+    ]);
+    assert.deepEqual(adopted.body.line.routes.map((h: any) => [h.when.domain?.[0] ?? 'rest', h.origin ?? null]), [
+      ['shared.com', 'shared'],
+      ['geosite:google', 'xui'],
+      ['ads.com', 'xui'],
+      ['rest', null],
+    ]);
+    assert.deepEqual((await call('GET', base)).body.map((r: any) => r.when.domain[0]), ['shared.com']);
+    assert.match(listOpLog(db).rows[0].summary, /^接管「zhang」线路 .+ 在面板上手配的规则:geosite:google → SOCKS「us」$/);
+    assert.match(listOpLog(db).rows[1].summary, /^删除「zhang」线路 .+ 在面板上手配的规则:junk\.com → 出站「socks-gone\.example\.com-1」$/);
+  } finally {
+    await close();
+  }
+});
+
 test('出口规则:写到面板并重启、存下规则和实际出口;不合法不动面板;改 SOCKS 地址跟着改;被规则用着的 SOCKS 删不了;删线路一起去掉', async () => {
   const db = memoryDb();
   const relay = addPanel(db, 'relay', 'https://1.1.1.1:2053/p');

@@ -173,7 +173,7 @@ export async function repointSocksLines(db: DB, socksId: number, to: SocksEndpoi
 }
 
 /** 规则里的 SOCKS 换成它的地址和账号;override:改地址时用新的 */
-function resolveRules(db: DB, rules: LineRule[], override?: { id: number; server: ExitServer }): ResolvedRule[] {
+export function resolveRules(db: DB, rules: LineRule[], override?: { id: number; server: ExitServer }): ResolvedRule[] {
   return rules.map((r) => {
     if (r.to.kind !== 'socks') return { ...r, to: r.to };
     const id = r.to.socks_id;

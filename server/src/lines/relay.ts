@@ -47,7 +47,8 @@ export function prepareExit(db: DB, socksId: number): PreparedExit {
   return { server: socksServer(s), label: `SOCKS ${s.name}`, socks_id: s.id };
 }
 
-const serverOf = (o: any) => {
+/** socks 出站连的地址和账号(地址转小写) */
+export const serverOf = (o: any): ExitServer => {
   const s = decodeJson(o?.settings) ?? {};
   const first = (s.servers ?? [])[0] ?? {};
   const u = (first.users ?? [])[0] ?? {};
@@ -83,7 +84,7 @@ const plainRule = (r: any) => CONDITIONS.every((k) => r?.[k] == null || (Array.i
  * 是不是我们给某个客户端加的规则:只有 inboundTag + user 两个条件。
  * 带别的条件的(比如在面板上手配的「这个客户端的流媒体走另一个出口」)不算,换出口 / 删线路都不碰它
  */
-const isUserRule = (r: any, inboundTag: string, email: string) =>
+export const isUserRule = (r: any, inboundTag: string, email: string) =>
   Array.isArray(r?.inboundTag) &&
   r.inboundTag.length === 1 &&
   r.inboundTag[0] === inboundTag &&
@@ -96,7 +97,7 @@ const isUserRule = (r: any, inboundTag: string, email: string) =>
 const catchesInbound = (r: any, inboundTag: string) => r?.enabled !== false && plainRule(r) && (r?.outboundTag || r?.balancerTag) && (!r?.inboundTag?.length || r.inboundTag.includes(inboundTag));
 
 /** 本系统加的 socks 出站(tag 是 socks-…)没有规则、负载均衡、别的出站在用了就删掉 */
-function dropUnusedOutbound(xray: any, tag: unknown): void {
+export function dropUnusedOutbound(xray: any, tag: unknown): void {
   if (typeof tag !== 'string' || !tag.startsWith('socks-') || !Array.isArray(xray.outbounds)) return;
   const routing = xray.routing ?? {};
   const selectors: unknown[] = [
@@ -163,10 +164,10 @@ export function userExit(xray: any, inboundTag: string, email: string): { tag: s
 export const sameServer = (a: ExitServer, b: ExitServer) => a.address.toLowerCase() === b.address.toLowerCase() && a.port === b.port && a.user === b.user && a.pass === b.pass;
 
 /** 出口规则(lines/rules.ts)写到面板上带的 ruleTag 前缀;本系统只认、只改带它的条件规则 */
-const MANAGED = 'xui-hub:';
+export const MANAGED = 'xui-hub:';
 
 /** 是不是本系统给这个客户端写的出口规则(带条件的那几条) */
-const isManagedRule = (r: any, inboundTag: string, email: string) =>
+export const isManagedRule = (r: any, inboundTag: string, email: string) =>
   typeof r?.ruleTag === 'string' &&
   r.ruleTag.startsWith(MANAGED) &&
   Array.isArray(r?.inboundTag) &&
@@ -187,7 +188,7 @@ export interface ResolvedRule {
 }
 
 /** 某种协议的出站:已有就用第一个,没有就加一个不重名的 */
-function outboundOf(xray: any, protocol: 'freedom' | 'blackhole', base: string): string {
+export function outboundOf(xray: any, protocol: 'freedom' | 'blackhole', base: string): string {
   xray.outbounds = Array.isArray(xray.outbounds) ? xray.outbounds : [];
   const found = xray.outbounds.find((o: any) => o?.protocol === protocol && typeof o?.tag === 'string' && o.tag);
   if (found) return found.tag;

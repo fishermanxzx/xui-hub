@@ -40,14 +40,14 @@ test('一个客户端按规则走多个出口:按顺序列出条件和去向,登
     },
   };
   assert.deepEqual(routesForClient(xray, 'in-443', 'zhang', SOCKS), [
-    { when: { domain: ['geosite:netflix', 'netflix.com'] }, to: { kind: 'socks', tag: 'socks-us', address: 'isp-us.example.net:10002', socks_id: 7 }, fallback: false },
-    { when: { ip: ['geoip:jp'], network: ['tcp', 'udp'] }, to: { kind: 'proxy', tag: 'jp-raw', address: '192.0.2.31:1080' }, fallback: false },
-    { when: { domain: ['openai.com'] }, to: { kind: 'balancer', tag: 'lb' }, fallback: false },
-    { when: {}, to: { kind: 'proxy', tag: 'hk-vless', address: 'hk.example.com:443' }, fallback: true },
+    { when: { domain: ['geosite:netflix', 'netflix.com'] }, to: { kind: 'socks', tag: 'socks-us', address: 'isp-us.example.net:10002', socks_id: 7 }, fallback: false, origin: 'shared' },
+    { when: { ip: ['geoip:jp'], network: ['tcp', 'udp'] }, to: { kind: 'proxy', tag: 'jp-raw', address: '192.0.2.31:1080' }, fallback: false, origin: 'own' },
+    { when: { domain: ['openai.com'] }, to: { kind: 'balancer', tag: 'lb' }, fallback: false, origin: 'own' },
+    { when: {}, to: { kind: 'proxy', tag: 'hk-vless', address: 'hk.example.com:443' }, fallback: true, origin: 'xui' },
   ]);
   // 同入站的别的客户端:只有点名他的那条 + 兜底;别的入站不受这些规则影响
   assert.deepEqual(routesForClient(xray, 'in-443', 'li', SOCKS).map((h) => h.to.tag), ['socks-us', 'direct']);
   assert.deepEqual(routesForClient(xray, 'in-8443', 'zhang', SOCKS).map((h) => h.to.tag), ['jp-raw', 'direct']);
   // 出站名写错了:unknown
-  assert.deepEqual(routesForClient({ outbounds: [], routing: { rules: [{ user: ['x'], outboundTag: 'gone' }] } }, 'in', 'x', SOCKS), [{ when: {}, to: { kind: 'unknown', tag: 'gone' }, fallback: true }]);
+  assert.deepEqual(routesForClient({ outbounds: [], routing: { rules: [{ user: ['x'], outboundTag: 'gone' }] } }, 'in', 'x', SOCKS), [{ when: {}, to: { kind: 'unknown', tag: 'gone' }, fallback: true, origin: 'own' }]);
 });

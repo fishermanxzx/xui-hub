@@ -16,9 +16,9 @@ import ActionMenu, { type MenuItem } from '../components/ActionMenu.vue';
 import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, exitIpOwners, exitIps, lastOnline, lineExitIp, matchCount, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort } from '../customerQuery';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
-import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
+import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget, routeWhen } from '../format';
 import { toast, toastError } from '../toast';
-import type { Customer, EnforceOp, Line, LineRule, OpenedLine, OpenLineInput, Panel, PanelInbound, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
+import type { Customer, EnforceOp, Line, LineRule, OpenedLine, OpenLineInput, Panel, PanelInbound, PanelRule, RouteHop, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
 
 const customers = ref<Customer[]>([]);
 const panels = ref<Panel[]>([]);
@@ -897,7 +897,51 @@ const defaultTarget = () => (socksList.value[0] ? `socks:${socksList.value[0].id
 function openRules(line: Line) {
   rulesFor.value = line;
   ruleRows.value = (line.rules ?? []).map(toRow);
+  rulesBaseline = JSON.stringify(ruleRows.value);
+  void loadPanelRules(line);
 }
+
+// ---------- 面板上手配、点名这条线路的规则(不归 xui-hub 管):打开出口规则时读面板列出来,只点名他的能删、对得上的能接管 ----------
+const panelRules = ref<PanelRule[] | null>(null);
+const panelRulesError = ref('');
+const panelRuleBusy = ref('');
+/** 打开时的规则行:接管会按面板重新列出,有没保存的修改要先问 */
+let rulesBaseline = '';
+async function loadPanelRules(line: Line) {
+  panelRules.value = null;
+  panelRulesError.value = '';
+  try {
+    const list = await api.panelRules(line.customer_id, line.id);
+    if (rulesFor.value?.id === line.id) panelRules.value = list;
+  } catch (e) {
+    if (rulesFor.value?.id === line.id) panelRulesError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+const panelRuleText = (r: PanelRule) => t('customers.routeHop', { when: Object.keys(r.when).length ? routeWhen(r.when) : t('customers.panelRuleAll'), to: routeTarget(r.to, socksList.value) });
+async function actPanelRule(r: PanelRule, adopt: boolean) {
+  const line = rulesFor.value;
+  if (!line || panelRuleBusy.value) return;
+  if (adopt && JSON.stringify(ruleRows.value) !== rulesBaseline && !confirm(t('customers.panelRuleDirty'))) return;
+  if (!confirm(t(adopt ? 'customers.panelRuleConfirmAdopt' : 'customers.panelRuleConfirmDelete', { panel: line.panel_name, rule: panelRuleText(r) }))) return;
+  panelRuleBusy.value = r.key;
+  try {
+    const res = adopt ? await api.adoptPanelRule(line.customer_id, line.id, r.key) : await api.deletePanelRule(line.customer_id, line.id, r.key);
+    toast(adopt ? t('customers.panelRuleAdopted') : t('customers.panelRuleDeleted', { panel: line.panel_name }));
+    if (rulesFor.value?.id !== line.id) return;
+    rulesFor.value = res.line;
+    if (adopt) {
+      ruleRows.value = (res.line.rules ?? []).map(toRow);
+      rulesBaseline = JSON.stringify(ruleRows.value);
+    }
+    await Promise.all([loadPanelRules(res.line), load()]);
+  } catch (e) {
+    toastError(e);
+  } finally {
+    panelRuleBusy.value = '';
+  }
+}
+/** 出口里不归 xui-hub 管的那一跳:手配只点名他的 / 多人共用的 */
+const foreign = (h?: RouteHop) => (h?.origin === 'own' || h?.origin === 'shared' ? h.origin : null);
 function addRule() {
   ruleRows.value.push({ domain: '', ip: '', port: '', network: '', to: defaultTarget() });
 }
@@ -1206,10 +1250,14 @@ function exitText(l: Line): string {
             <span class="muted small">{{ l.inbound_remark || l.inbound_id }} · {{ proto(l.protocol) }} · <span class="mono">{{ l.email }}</span></span>
           </span>
           <span v-if="multiExit(l)" class="route small" :title="t('customers.routesTitle', { ago: fmtAgo(l.routes_at) })">
-            <span v-for="(h, i) in l.routes" :key="i" class="hop" :title="routeHopText(h, socksList)">{{ routeHopText(h, socksList) }}</span>
+            <span v-for="(h, i) in l.routes" :key="i" class="hop" :title="routeHopText(h, socksList)"
+              >{{ routeHopText(h, socksList) }}<span v-if="foreign(h)" class="hop-tag" :title="t(foreign(h) === 'own' ? 'customers.hopOwnHint' : 'customers.hopSharedHint')">{{ t(foreign(h) === 'own' ? 'customers.hopOwn' : 'customers.hopShared') }}</span></span
+            >
           </span>
           <span v-else class="route small" :title="l.routes ? t('customers.routesTitle', { ago: fmtAgo(l.routes_at) }) : ''">
-            <span class="hop" :class="{ plain: exitText(l) === t('customers.direct') }">{{ exitText(l) }}</span>
+            <span class="hop" :class="{ plain: exitText(l) === t('customers.direct') }"
+              >{{ exitText(l) }}<span v-if="foreign(l.routes?.[0])" class="hop-tag" :title="t(foreign(l.routes?.[0]) === 'own' ? 'customers.hopOwnHint' : 'customers.hopSharedHint')">{{ t(foreign(l.routes?.[0]) === 'own' ? 'customers.hopOwn' : 'customers.hopShared') }}</span></span
+            >
           </span>
           <span class="stat small">
             <span class="figure-ish">{{ fmtBytes(l.up + l.down) }}</span>
@@ -1575,6 +1623,24 @@ function exitText(l: Line): string {
       </div>
       <p class="small">{{ t('customers.rulesRest', { exit: baseExit(rulesFor) }) }}</p>
       <p class="muted small hint">{{ t('customers.rulesHint') }}</p>
+      <section v-if="panelRulesError || panelRules?.length" class="panel-rules">
+        <h4 class="small">{{ t('customers.panelRules') }}</h4>
+        <p class="muted small">{{ t('customers.panelRulesIntro') }}</p>
+        <p v-if="panelRulesError" class="small text-err">{{ t('customers.panelRulesError', { error: panelRulesError }) }}</p>
+        <ul v-else class="panel-rule-list">
+          <li v-for="r in panelRules" :key="r.key" class="panel-rule">
+            <div class="pr-main">
+              <span class="pr-text" :class="{ muted: !r.active }">{{ panelRuleText(r) }}</span>
+              <span v-if="!r.active" class="badge" :title="t('customers.panelRuleInactiveHint')">{{ t('customers.panelRuleInactive') }}</span>
+              <span v-if="r.users > 1" class="badge">{{ t('customers.hopShared') }}</span>
+              <span class="spacer" />
+              <button v-if="r.takeover" type="button" class="link" :disabled="!!panelRuleBusy" @click="actPanelRule(r, true)">{{ panelRuleBusy === r.key ? t('common.saving') : t('customers.panelRuleAdopt') }}</button>
+              <button v-if="r.own" type="button" class="link danger" :disabled="!!panelRuleBusy" @click="actPanelRule(r, false)">{{ t('common.delete') }}</button>
+            </div>
+            <p v-if="r.why" class="muted small pr-why">{{ r.why }}</p>
+          </li>
+        </ul>
+      </section>
     </form>
     <template #footer>
       <span class="spacer" />
@@ -1897,6 +1963,58 @@ function exitText(l: Line): string {
 .rule-add {
   flex-wrap: wrap;
   gap: 6px 12px;
+}
+/* 出口规则弹窗下面:面板上手配的规则 */
+.panel-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule-soft);
+}
+.panel-rules h4 {
+  margin: 0;
+}
+.panel-rules p {
+  margin: 0;
+}
+.panel-rule-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.panel-rule {
+  border: 1px dashed var(--rule);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.pr-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.pr-text {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.pr-why {
+  margin-top: 2px !important;
+}
+/* 出口里不归 xui-hub 管的那一跳 */
+.hop-tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px dashed var(--rule);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  cursor: help;
 }
 .upstream-err {
   min-width: 0;
