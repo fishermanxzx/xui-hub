@@ -1,11 +1,14 @@
 <script setup lang="ts">
-// 续费 / 收款记录的表格:客户的续费弹窗和「收款记录」共用。
+// 续费 / 收款记录的表格:客户的续费弹窗和账本页的「收支明细」共用。
+// 账本页里还混着自己记的收入 / 支出(LedgerEntry,有 kind):客户那一列显示类别,支出前面带「−」。
 import { t } from '../i18n';
 import { fmtCost, fmtDate } from '../format';
+import { isEntry, rowAt, rowKey, type LedgerRow } from '../ledgerRows';
 import type { Payment } from '../types';
 
-defineProps<{ rows: Payment[]; showCustomer?: boolean; busy?: number | null }>();
-const emit = defineEmits<{ remove: [p: Payment] }>();
+/** busy:正在删的那一行的 rowKey */
+defineProps<{ rows: LedgerRow[]; showCustomer?: boolean; busy?: string | null }>();
+const emit = defineEmits<{ remove: [r: LedgerRow] }>();
 
 const what = (p: Payment) => (p.months ? t('payments.whatMonths', { n: p.months }) : p.days ? t('payments.whatDays', { n: p.days }) : t('payments.whatPay'));
 const renewed = (p: Payment) => p.months > 0 || p.days > 0;
@@ -17,31 +20,43 @@ const renewed = (p: Payment) => p.months > 0 || p.days > 0;
       <thead>
         <tr>
           <th>{{ t('payments.colDate') }}</th>
-          <th v-if="showCustomer">{{ t('payments.colCustomer') }}</th>
+          <th v-if="showCustomer">{{ t('payments.colCustomerOrCategory') }}</th>
           <th class="num">{{ t('payments.colAmount') }}</th>
           <th>{{ t('payments.colWhat') }}</th>
           <th class="act"><span class="sr-only">{{ t('common.delete') }}</span></th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="p in rows" :key="p.id">
-          <td class="date">{{ fmtDate(p.paid_at) }}</td>
-          <td v-if="showCustomer">
-            {{ p.customer_name }}<span v-if="p.customer_deleted" class="badge warn">{{ t('payments.customerDeleted') }}</span>
-          </td>
-          <td class="num">
-            <span v-if="p.amount == null" class="muted" :title="t('payments.noAmountHint')">—</span>
-            <span v-else :class="{ 'text-err': p.amount < 0 }">{{ fmtCost(p.amount) }}</span>
-          </td>
-          <td>
-            <div class="what">
-              <span>{{ what(p) }}</span>
-              <span v-if="renewed(p)" class="muted small">{{ t('payments.expireChange', { from: fmtDate(p.expire_before), to: fmtDate(p.expire_after) }) }}</span>
-              <span v-if="p.note" class="muted small note">{{ p.note }}</span>
-            </div>
-          </td>
+        <tr v-for="r in rows" :key="rowKey(r)">
+          <td class="date">{{ fmtDate(rowAt(r)) }}</td>
+          <template v-if="isEntry(r)">
+            <td v-if="showCustomer" :class="{ muted: !r.category }">{{ r.category || '—' }}</td>
+            <td class="num">{{ r.kind === 'expense' ? `−${fmtCost(r.amount)}` : fmtCost(r.amount) }}</td>
+            <td>
+              <div class="what">
+                <span>{{ r.kind === 'expense' ? t('payments.whatExpense') : t('payments.whatIncome') }}</span>
+                <span v-if="r.note" class="muted small note">{{ r.note }}</span>
+              </div>
+            </td>
+          </template>
+          <template v-else>
+            <td v-if="showCustomer">
+              {{ r.customer_name }}<span v-if="r.customer_deleted" class="badge warn">{{ t('payments.customerDeleted') }}</span>
+            </td>
+            <td class="num">
+              <span v-if="r.amount == null" class="muted" :title="t('payments.noAmountHint')">—</span>
+              <span v-else :class="{ 'text-err': r.amount < 0 }">{{ fmtCost(r.amount) }}</span>
+            </td>
+            <td>
+              <div class="what">
+                <span>{{ what(r) }}</span>
+                <span v-if="renewed(r)" class="muted small">{{ t('payments.expireChange', { from: fmtDate(r.expire_before), to: fmtDate(r.expire_after) }) }}</span>
+                <span v-if="r.note" class="muted small note">{{ r.note }}</span>
+              </div>
+            </td>
+          </template>
           <td class="act">
-            <button class="link danger small" :disabled="busy === p.id" @click="emit('remove', p)">{{ t('common.delete') }}</button>
+            <button class="link danger small" :disabled="busy === rowKey(r)" @click="emit('remove', r)">{{ t('common.delete') }}</button>
           </td>
         </tr>
       </tbody>

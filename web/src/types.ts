@@ -513,6 +513,28 @@ export interface Payment {
   created_at: number;
 }
 
+/** 自己记的收入 / 支出(不挂客户,如买服务器、域名) */
+export type EntryKind = 'income' | 'expense';
+export interface LedgerEntry {
+  id: number;
+  kind: EntryKind;
+  /** 金额,总是正数;支出也是正数 */
+  amount: number;
+  /** 日期(毫秒) */
+  at: number;
+  /** 类别,如「服务器」;可以空 */
+  category: string;
+  note: string;
+  created_at: number;
+}
+export interface EntryInput {
+  kind: EntryKind;
+  amount: number;
+  at?: number;
+  category?: string;
+  note?: string;
+}
+
 export interface RenewInput {
   months?: number;
   days?: number;

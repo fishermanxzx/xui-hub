@@ -4,6 +4,7 @@ import { t } from '../i18n';
 import { computed, ref, watch } from 'vue';
 import { api } from '../api';
 import PaymentRows from './PaymentRows.vue';
+import { isEntry, rowKey, type LedgerRow } from '../ledgerRows';
 import Select, { type SelectOption } from './Select.vue';
 import { addMonths, fmtCost, fmtDate, msToDateInput } from '../format';
 import { toast, toastError } from '../toast';
@@ -98,7 +99,7 @@ async function submit() {
 
 // ---------- 记录 ----------
 const rows = ref<Payment[] | null>(null);
-const busy = ref<number | null>(null);
+const busy = ref<string | null>(null);
 async function load() {
   try {
     rows.value = await api.customerPayments(props.customer.id);
@@ -111,9 +112,10 @@ const paidTotal = computed(() => {
   const list = (rows.value ?? []).filter((p) => p.amount != null);
   return { n: list.length, v: list.reduce((sum, p) => sum + Math.round(p.amount! * 100), 0) / 100 };
 });
-async function remove(p: Payment) {
-  if (!confirm(t('payments.confirmDelete', { date: fmtDate(p.paid_at) }))) return;
-  busy.value = p.id;
+async function remove(p: LedgerRow) {
+  // 这里只有这位客户的收款记录,没有自己记的收入 / 支出
+  if (isEntry(p) || !confirm(t('payments.confirmDelete', { date: fmtDate(p.paid_at) }))) return;
+  busy.value = rowKey(p);
   try {
     await api.deletePayment(p.id);
     emit('changed');

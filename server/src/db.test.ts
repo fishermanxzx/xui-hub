@@ -117,7 +117,7 @@ test('客户 / 面板的 id 不复用:删掉最新的再建,拿新号;升级时�
 
 test('迁移 29:倍率搬到面板上;客户上原来的倍率不再用,已经结转的流量按当时客户的倍率折成计费用量存下', () => {
   const old = new Database(':memory:');
-  const last = MIGRATIONS.length - 1;
+  const last = 28; // 迁移 29 在数组里是第 28 个
   for (let i = 0; i < last; i++) old.exec(MIGRATIONS[i]);
   old.pragma(`user_version = ${last}`);
   old.prepare("INSERT INTO customers (id, name, sub_token, created_at, updated_at, traffic_ratio, carried_up, carried_down) VALUES (1, 'x', 'tok1', 0, 0, 1.2, 100, 200)").run();
