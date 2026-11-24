@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 客户页:每位客户一张卡片,列出线路(直连 / 中转 → 出口);新建客户后开线路,线路可看链接、删除。
 import { t, te } from '../i18n';
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { api, isLost } from '../api';
 import ClientLinks from '../components/ClientLinks.vue';
 import TopologyGraph from '../components/TopologyGraph.vue';
@@ -126,6 +126,33 @@ const linesOff = (c: Customer) => c.lines.filter((l) => !l.enable).length;
 function clearFilters() {
   query.value = { ...query.value, q: '', panels: [], state: '', tags: [], lines: '', exits: '', ips: [] };
 }
+
+// ---------- 从别的页跳过来看某位客户(#customers/5,如面板页客户端后面的客户名) ----------
+// 挡住他的筛选清掉,线路展开,滚到他那张卡片,闪一下
+const focused = ref<number | null>(null);
+let focusTimer: ReturnType<typeof setTimeout> | undefined;
+async function focusFromHash() {
+  const m = location.hash.match(/^#customers\/(\d+)$/);
+  if (!m) return;
+  // 地址换回 #customers:刷新不会再跳一次;后退照样回到原来那页
+  history.replaceState(history.state, '', '#customers');
+  const c = customers.value.find((x) => x.id === Number(m[1]));
+  if (!c) return void toast(t('customers.focusGone'), 'err');
+  if (!shown.value.some((x) => x.id === c.id)) clearFilters();
+  if (c.lines.length && !linesShown(c)) toggleLines(c);
+  focused.value = c.id;
+  await nextTick();
+  document.getElementById(`customer-${c.id}`)?.scrollIntoView({ block: 'center' });
+  clearTimeout(focusTimer);
+  focusTimer = setTimeout(() => (focused.value = null), 2000);
+}
+// 已经在客户页时地址变了(手动改、别处的链接)也跟着跳
+const onHash = () => void focusFromHash();
+window.addEventListener('hashchange', onHash);
+onBeforeUnmount(() => {
+  window.removeEventListener('hashchange', onHash);
+  clearTimeout(focusTimer);
+});
 /** 面板上用到的所有标签(按面板顺序出现的先后) */
 const allTags = computed(() => [...new Set(panels.value.flatMap((p) => p.tags ?? []))]);
 const tagFilterOptions = computed<SelectOption<string>[]>(() =>
@@ -192,6 +219,7 @@ async function load() {
 }
 onMounted(async () => {
   await load();
+  void focusFromHash();
   try {
     const tpl = await api.subTemplates();
     templates.value = tpl.templates;
@@ -1088,7 +1116,7 @@ function exitText(l: Line): string {
   </div>
 
   <div class="cards">
-    <article v-for="c in shown" :key="c.id" class="card sheet">
+    <article v-for="c in shown" :id="`customer-${c.id}`" :key="c.id" class="card sheet" :class="{ focused: focused === c.id }">
       <header class="head">
         <div class="who">
           <div class="who-top">
@@ -1671,6 +1699,17 @@ function exitText(l: Line): string {
 }
 .card {
   overflow: hidden;
+  transition: box-shadow 0.6s ease-out;
+}
+/* 从别的页跳过来的那位客户:闪一下 */
+.card.focused {
+  box-shadow: 0 0 0 2px var(--accent);
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
 }
 .head {
   display: grid;
