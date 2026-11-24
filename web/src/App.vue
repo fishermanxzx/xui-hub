@@ -16,8 +16,9 @@ import LedgerView from './views/Ledger.vue';
 
 type Tab = 'customers' | 'panels' | 'traffic' | 'ledger' | 'socks' | 'log' | 'settings';
 const TABS: Tab[] = ['customers', 'panels', 'traffic', 'ledger', 'socks', 'log', 'settings'];
+/** #customers/5 这类带对象的地址:「/」前面是页 */
 function tabFromHash(): Tab {
-  const id = location.hash.slice(1);
+  const id = location.hash.slice(1).split('/')[0];
   // 默认打开客户页(日常最常用)
   return TABS.includes(id as Tab) ? (id as Tab) : 'customers';
 }

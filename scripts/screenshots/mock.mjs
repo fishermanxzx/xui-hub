@@ -86,6 +86,11 @@ const details = {
 
 // 面板 / SOCKS 上的线路数、入站能不能挂客户端,从上面的数据算出来
 const lines = customers.flatMap((x) => x.lines);
+// 面板上的客户端是哪位客户的线路(按面板 + email 对上)
+for (const [pid, d] of Object.entries(details)) for (const ib of d.inbounds) for (const cl of ib.clients) {
+  const l = lines.find((x) => x.panel_id === Number(pid) && x.email === cl.email);
+  cl.customer = l ? { id: l.customer_id, name: customers.find((x) => x.id === l.customer_id).name } : null;
+}
 for (const l of lines) Object.assign(l, { panel_node_name: panels.find((x) => x.id === l.panel_id)?.node_name ?? '', panel_ratio: 1, used_up: l.up, used_down: l.down });
 for (const x of panels) Object.assign(x, { line_count: lines.filter((l) => l.panel_id === x.id).length, exit_line_count: lines.filter((l) => l.exit_panel_id === x.id).length });
 for (const x of socks) Object.assign(x, { used_by: lines.filter((l) => l.exit_socks_id === x.id).length, customers: new Set(lines.filter((l) => l.exit_socks_id === x.id).map((l) => l.customer_id)).size });

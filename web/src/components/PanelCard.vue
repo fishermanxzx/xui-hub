@@ -368,7 +368,7 @@ async function removeClient(c: PanelClient) {
           </header>
           <ul v-if="g.clients.length" class="clients">
             <li v-for="c in g.clients" :key="c.email" class="client">
-              <span class="email">{{ c.email }}<span v-if="!c.enable" class="badge err">{{ t('card.clientOff') }}</span><span v-if="c.customer" class="chip owner" :title="t('card.ownerHint', { name: c.customer.name })">{{ c.customer.name }}</span></span>
+              <span class="email">{{ c.email }}<span v-if="!c.enable" class="badge err">{{ t('card.clientOff') }}</span><a v-if="c.customer" class="chip owner" :href="`#customers/${c.customer.id}`" :title="t('card.ownerHint', { name: c.customer.name })">{{ c.customer.name }}</a></span>
               <span class="stats small">
                 <span class="muted">{{ t('card.used', { used: fmtBytes(c.up + c.down) }) }}<template v-if="c.total_bytes"> / {{ fmtBytes(c.total_bytes) }}</template></span>
                 <span :class="{ 'text-warn': dueLevel(c.expiry_ms) === 'warn', 'text-err': dueLevel(c.expiry_ms) === 'err', muted: !c.expiry_ms }">{{ fmtDue(c.expiry_ms) }}</span>
@@ -672,6 +672,16 @@ async function removeClient(c: PanelClient) {
   margin-left: 8px;
   background: var(--accent-soft);
   color: var(--accent-strong);
+  text-decoration: none;
+}
+/* 点了去客户页,看这位客户的线路、续费、编辑等 */
+.chip.owner:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--rule));
+  text-decoration: underline;
+}
+.chip.owner:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .email .badge {
   margin-left: 6px;
