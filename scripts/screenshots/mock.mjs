@@ -53,10 +53,10 @@ const customers = [
     line(1, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 2, inbound_remark: 'hy2', protocol: 'hysteria', email: '张三-2', up: 0.4 * GB, down: 5.6 * GB, exit_kind: 'socks', exit_socks_id: 1, exit_socks_name: '美国家宽-ATT', exit_label: 'SOCKS 美国家宽-ATT' }),
   ], { monthly_fee: 30, last_payment: { amount: 30, paid_at: now - 12 * DAY } }),
   customer(2, '李四', '流量包', 100, 40, [
-    line(2, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 1, inbound_remark: 'vless-reality', protocol: 'vless', email: '李四', up: 6.2 * GB, down: 94.1 * GB, enable: false, auto_disabled: true, exit_kind: 'socks', exit_socks_id: 2, exit_socks_name: '台湾家宽', exit_label: 'SOCKS 台湾家宽' }),
+    line(2, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 1, inbound_remark: 'vless-reality', protocol: 'vless', email: '李四', up: 6.2 * GB, down: 94.1 * GB, last_online: now - 2 * DAY, enable: false, auto_disabled: true, exit_kind: 'socks', exit_socks_id: 2, exit_socks_name: '台湾家宽', exit_label: 'SOCKS 台湾家宽' }),
   ], { sub_fetched_ua: 'Shadowrocket/2701 CFNetwork/3826 Darwin/24.6.0', sub_clients: 1, sub_ips: 1, monthly_fee: 50, last_payment: { amount: 50, paid_at: now - 20 * DAY } }),
   customer(3, '王五', '', 0, 3, [
-    line(3, { kind: 'direct', panel_id: 3, panel_name: '日本-1', inbound_id: 1, inbound_remark: 'hy2', protocol: 'hysteria', email: '王五', up: 0.8 * GB, down: 12.9 * GB }),
+    line(3, { kind: 'direct', panel_id: 3, panel_name: '日本-1', inbound_id: 1, inbound_remark: 'hy2', protocol: 'hysteria', email: '王五', up: 0.8 * GB, down: 12.9 * GB, last_online: now - 1_500_000 }),
   ], {
     sub_fetched_ua: 'SFA/1.12.4 (sing-box 1.12.4)',
     sub_clients: 3,
