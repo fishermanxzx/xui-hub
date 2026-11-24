@@ -1,14 +1,15 @@
 <script setup lang="ts">
-// 客户的「续费」弹窗:按月 / 按天续期,顺手记一笔收款;也可以只记收款(或退款)。下面是这位客户的续费 / 收款记录。
+// 客户的「续费」弹窗:按月 / 按天续期,顺手记一笔收款;也可以只记收款(或退款)。
+// 下面是这位客户的续费 / 收款记录,账本里关联了这位客户的收入也在里面。
 import { t } from '../i18n';
 import { computed, ref, watch } from 'vue';
 import { api } from '../api';
 import PaymentRows from './PaymentRows.vue';
-import { isEntry, rowKey, type LedgerRow } from '../ledgerRows';
+import { isEntry, rowAt, rowCents, rowKey, type LedgerRow } from '../ledgerRows';
 import Select, { type SelectOption } from './Select.vue';
 import { addMonths, fmtCost, fmtDate, msToDateInput } from '../format';
 import { toast, toastError } from '../toast';
-import type { Customer, Payment } from '../types';
+import type { Customer } from '../types';
 
 const props = defineProps<{ customer: Customer }>();
 const emit = defineEmits<{ changed: [] }>();
@@ -98,26 +99,27 @@ async function submit() {
 }
 
 // ---------- 记录 ----------
-const rows = ref<Payment[] | null>(null);
+const rows = ref<LedgerRow[] | null>(null);
 const busy = ref<string | null>(null);
 async function load() {
   try {
-    rows.value = await api.customerPayments(props.customer.id);
+    const [payments, entries] = await Promise.all([api.customerPayments(props.customer.id), api.ledger(props.customer.id)]);
+    rows.value = [...payments, ...entries].sort((a, b) => rowAt(b) - rowAt(a) || b.created_at - a.created_at);
   } catch (e) {
     toastError(e);
   }
 }
 watch(() => props.customer.id, load, { immediate: true });
 const paidTotal = computed(() => {
-  const list = (rows.value ?? []).filter((p) => p.amount != null);
-  return { n: list.length, v: list.reduce((sum, p) => sum + Math.round(p.amount! * 100), 0) / 100 };
+  const list = (rows.value ?? []).filter((p) => isEntry(p) || p.amount != null);
+  return { n: list.length, v: list.reduce((sum, p) => sum + rowCents(p), 0) / 100 };
 });
 async function remove(p: LedgerRow) {
-  // 这里只有这位客户的收款记录,没有自己记的收入 / 支出
-  if (isEntry(p) || !confirm(t('payments.confirmDelete', { date: fmtDate(p.paid_at) }))) return;
+  const ask = isEntry(p) ? t('ledger.confirmDeleteEntry', { date: fmtDate(p.at), what: t('entry.income'), v: fmtCost(p.amount) }) : t('payments.confirmDelete', { date: fmtDate(p.paid_at) });
+  if (!confirm(ask)) return;
   busy.value = rowKey(p);
   try {
-    await api.deletePayment(p.id);
+    await (isEntry(p) ? api.deleteLedgerEntry(p.id) : api.deletePayment(p.id));
     emit('changed');
     await load();
   } catch (e) {

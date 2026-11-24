@@ -525,6 +525,17 @@ export interface LedgerEntry {
   /** 类别,如「服务器」;可以空 */
   category: string;
   note: string;
+  /** 关联的客户(只有收入能关联);null = 没关联。名字是现在的,删了是记的时候的 */
+  customer_id: number | null;
+  customer_name: string;
+  customer_deleted: boolean;
+  /** 关联的面板 / SOCKS,最多一个 */
+  panel_id: number | null;
+  panel_name: string;
+  panel_deleted: boolean;
+  socks_id: number | null;
+  socks_name: string;
+  socks_deleted: boolean;
   created_at: number;
 }
 export interface EntryInput {
@@ -533,6 +544,9 @@ export interface EntryInput {
   at?: number;
   category?: string;
   note?: string;
+  customer_id?: number | null;
+  panel_id?: number | null;
+  socks_id?: number | null;
 }
 
 export interface RenewInput {

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // 续费 / 收款记录的表格:客户的续费弹窗和账本页的「收支明细」共用。
-// 账本页里还混着自己记的收入 / 支出(LedgerEntry,有 kind):客户那一列显示类别,支出前面带「−」。
+// 还混着自己记的收入 / 支出(LedgerEntry,有 kind):支出前面带「−」;客户那一列显示关联的客户(没关联显示类别),
+// 关联的面板 / SOCKS 写在「内容」里。客户的续费弹窗里没有客户那一列,类别也写在「内容」里。
 import { t } from '../i18n';
 import { fmtCost, fmtDate } from '../format';
 import { isEntry, rowAt, rowKey, type LedgerRow } from '../ledgerRows';
-import type { Payment } from '../types';
+import type { LedgerEntry, Payment } from '../types';
 
 /** busy:正在删的那一行的 rowKey */
 defineProps<{ rows: LedgerRow[]; showCustomer?: boolean; busy?: string | null }>();
@@ -12,6 +13,9 @@ const emit = defineEmits<{ remove: [r: LedgerRow] }>();
 
 const what = (p: Payment) => (p.months ? t('payments.whatMonths', { n: p.months }) : p.days ? t('payments.whatDays', { n: p.days }) : t('payments.whatPay'));
 const renewed = (p: Payment) => p.months > 0 || p.days > 0;
+/** 关联的面板 / SOCKS:没关联 = null */
+const target = (e: LedgerEntry) =>
+  e.panel_id != null ? { label: t('entry.linkPanel', { name: e.panel_name }), deleted: e.panel_deleted } : e.socks_id != null ? { label: t('entry.linkSocks', { name: e.socks_name }), deleted: e.socks_deleted } : null;
 </script>
 
 <template>
@@ -30,11 +34,20 @@ const renewed = (p: Payment) => p.months > 0 || p.days > 0;
         <tr v-for="r in rows" :key="rowKey(r)">
           <td class="date">{{ fmtDate(rowAt(r)) }}</td>
           <template v-if="isEntry(r)">
-            <td v-if="showCustomer" :class="{ muted: !r.category }">{{ r.category || '—' }}</td>
+            <td v-if="showCustomer && r.customer_id != null">
+              <div>
+                {{ r.customer_name }}<span v-if="r.customer_deleted" class="badge warn">{{ t('payments.customerDeleted') }}</span>
+              </div>
+              <div v-if="r.category" class="muted small">{{ r.category }}</div>
+            </td>
+            <td v-else-if="showCustomer" :class="{ muted: !r.category }">{{ r.category || '—' }}</td>
             <td class="num">{{ r.kind === 'expense' ? `−${fmtCost(r.amount)}` : fmtCost(r.amount) }}</td>
             <td>
               <div class="what">
-                <span>{{ r.kind === 'expense' ? t('payments.whatExpense') : t('payments.whatIncome') }}</span>
+                <span>{{ r.kind === 'expense' ? t('payments.whatExpense') : t('payments.whatIncome') }}<template v-if="!showCustomer && r.category"> · {{ r.category }}</template></span>
+                <span v-if="target(r)" class="muted small">
+                  {{ target(r)!.label }}<span v-if="target(r)!.deleted" class="badge warn">{{ t('payments.customerDeleted') }}</span>
+                </span>
                 <span v-if="r.note" class="muted small note">{{ r.note }}</span>
               </div>
             </td>

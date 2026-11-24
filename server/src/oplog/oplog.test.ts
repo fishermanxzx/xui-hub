@@ -63,6 +63,11 @@ test('操作日志:登录、客户的新建 / 修改(只写改了的,前后对�
     assert.match(summaries(db)[0], /^删除 \d{4}-\d{2}-\d{2} 的一笔支出 300\(服务器;备注「年付」\)$/);
     assert.equal((await call('POST', '/ledger', { kind: 'income', amount: 0 })).status, 400);
     assert.deepEqual([summaries(db)[0], listOpLog(db).rows[0].ok], ['记一笔收入 0', false]);
+    // 关联了客户的收入:记在这位客户名下
+    const linked = (await call('POST', '/ledger', { kind: 'income', amount: 20, customer_id: c.id, category: '安装费' })).body;
+    assert.deepEqual([summaries(db)[0], listOpLog(db).rows[0].customer_id], ['记一笔收入 20(安装费;客户「张三」)', c.id]);
+    await call('DELETE', `/ledger/${linked.id}`);
+    assert.equal(listOpLog(db).rows[0].customer_id, c.id);
     await call('POST', `/customers/${c.id}/adjust-usage`, { down: 2 * 1024 ** 3 });
     assert.equal(summaries(db)[0], '调整「张三」本期已用 +2 GB(计费用量)');
     await call('POST', `/customers/${c.id}/sub-token`);
@@ -74,7 +79,8 @@ test('操作日志:登录、客户的新建 / 修改(只写改了的,前后对�
     assert.equal(summaries(db)[0], '清零「张三」的流量(清零前已用 0 GB)');
     // 到期只改了时刻:带上时刻
     const exp = (await call('GET', '/customers')).body.find((x: any) => x.id === c.id).expire_at;
-    await call('PATCH', `/customers/${c.id}`, { expire_at: exp - 3600_000 });
+    // 往前挪 1 小时;到期在 0 点那个小时就往后挪,不跨天(不然半夜跑测试会变成两个日子)
+    await call('PATCH', `/customers/${c.id}`, { expire_at: exp + (new Date(exp).getHours() >= 1 ? -3600_000 : 3600_000) });
     assert.match(summaries(db)[0], /^修改客户「张三」:到期 \d{4}-\d{2}-\d{2} \d{2}:\d{2} → \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
 
     // 没成的:记原因
@@ -89,7 +95,7 @@ test('操作日志:登录、客户的新建 / 修改(只写改了的,前后对�
     await call('DELETE', `/customers/${c.id}`);
     assert.equal(summaries(db)[0], '删除客户「张三」(连同 0 条线路)');
     // 客户删了,他的日志还能按 id 筛出来
-    assert.equal(listOpLog(db, { customer_id: c.id }).rows.length, 11);
+    assert.equal(listOpLog(db, { customer_id: c.id }).rows.length, 13);
     assert.deepEqual(listOpLog(db, { failed: true }).rows.map((r) => r.summary), ['给「#999」续费', '记一笔收入 0', '登录']);
     assert.deepEqual(listOpLog(db, { q: '退款' }).rows.map((r) => r.summary), ['给「张三」记一笔退款 -5']);
   } finally {

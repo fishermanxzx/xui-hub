@@ -206,7 +206,7 @@ onBeforeUnmount(() => listen(false));
 </template>
 
 <style>
-/* 不加 scoped:菜单挂在 body 上;其余样式和 Select 共用 */
+/* 不加 scoped:菜单挂在 body 上;其余样式(含搜索框)和 Select 共用 */
 button.select.picked {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--rule));
 }
@@ -220,22 +220,6 @@ button.select.picked {
   border: 1.5px solid var(--rule);
   border-radius: 4px;
   background: var(--sheet);
-}
-.select-menu .search {
-  position: sticky;
-  top: -4px;
-  z-index: 1;
-  margin: -4px -4px 4px;
-  padding: 6px;
-  background: var(--sheet);
-  border-bottom: 1px solid var(--rule-soft);
-}
-.select-menu .search input {
-  width: 100%;
-  box-sizing: border-box;
-}
-.select-menu .none {
-  padding: 7px 10px;
 }
 .select-menu .opt.on .box {
   border-color: var(--accent);

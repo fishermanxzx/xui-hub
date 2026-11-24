@@ -1,14 +1,16 @@
 <script setup lang="ts">
-// 账本页的「记一笔」:自己记一笔收入或支出,不挂客户(客户付的钱在客户的「续费」里记)。
+// 账本页的「记一笔」:自己记一笔收入或支出(客户续费在客户的「续费」里记)。
+// 可以关联一块面板或一个 SOCKS,收入还可以关联客户,都可以不选。
 // 放在 Modal 里用,底部按钮用 form="ledger-entry-form" 提交。
-import { t } from '../i18n';
+import { locale, t } from '../i18n';
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../api';
+import Select, { type SelectOption } from './Select.vue';
 import { fmtCost, msToDateInput } from '../format';
 import { toast, toastError } from '../toast';
-import type { EntryKind, LedgerEntry } from '../types';
+import type { Customer, EntryKind, LedgerEntry, Panel, Socks } from '../types';
 
-const props = defineProps<{ entries: LedgerEntry[] }>();
+const props = defineProps<{ entries: LedgerEntry[]; customers: Customer[]; panels: Panel[]; socks: Socks[] }>();
 const emit = defineEmits<{ saved: [e: LedgerEntry]; saving: [busy: boolean] }>();
 
 const kind = ref<EntryKind>('expense');
@@ -17,6 +19,17 @@ const today = () => msToDateInput(Date.now());
 const day = ref(today());
 const category = ref('');
 const note = ref('');
+/** 关联的面板 / SOCKS:'' = 不关联,p<id> = 面板,s<id> = SOCKS */
+const link = ref('');
+/** 关联的客户(只有收入):0 = 不关联 */
+const customer = ref(0);
+const byName = <T extends { name: string }>(list: T[]) => [...list].sort((a, b) => a.name.localeCompare(b.name, locale.value));
+const linkOptions = computed<SelectOption<string>[]>(() => [
+  { value: '', label: t('entry.linkNone') },
+  ...byName(props.panels).map((p) => ({ value: `p${p.id}`, label: t('entry.linkPanel', { name: p.name }) })),
+  ...byName(props.socks).map((s) => ({ value: `s${s.id}`, label: t('entry.linkSocks', { name: s.name }) })),
+]);
+const customerOptions = computed<SelectOption<number>[]>(() => [{ value: 0, label: t('entry.linkNone') }, ...byName(props.customers).map((c) => ({ value: c.id, label: c.name }))]);
 const amountInput = ref<HTMLInputElement | null>(null);
 // 弹窗是后插进页面的,autofocus 不生效,打开时手动聚焦金额
 onMounted(() => amountInput.value?.focus());
@@ -46,7 +59,17 @@ async function submit() {
   saving.value = true;
   emit('saving', true);
   try {
-    const e = await api.addLedgerEntry({ kind: kind.value, amount: value.value, at: at(), category: category.value, note: note.value });
+    const id = Number(link.value.slice(1)) || null;
+    const e = await api.addLedgerEntry({
+      kind: kind.value,
+      amount: value.value,
+      at: at(),
+      category: category.value,
+      note: note.value,
+      panel_id: link.value.startsWith('p') ? id : null,
+      socks_id: link.value.startsWith('s') ? id : null,
+      customer_id: kind.value === 'income' && customer.value ? customer.value : null,
+    });
     toast(t(e.kind === 'expense' ? 'entry.savedExpense' : 'entry.savedIncome', { v: fmtCost(e.amount) }));
     emit('saved', e);
   } catch (err) {
@@ -78,6 +101,16 @@ async function submit() {
         <option v-for="c in suggestions" :key="c" :value="c" />
       </datalist>
     </label>
+    <div :class="{ two: kind === 'income' }">
+      <label class="field">
+        {{ t('entry.link') }}
+        <Select v-model="link" :options="linkOptions" searchable :search-placeholder="t('entry.searchLink')" />
+      </label>
+      <label v-if="kind === 'income'" class="field">
+        {{ t('entry.customer') }}
+        <Select v-model="customer" :options="customerOptions" searchable :search-placeholder="t('entry.searchCustomer')" />
+      </label>
+    </div>
     <label class="field">{{ t('entry.note') }}<input v-model="note" maxlength="200" /></label>
     <p class="muted small hint">{{ t('entry.hint') }}</p>
   </form>

@@ -2,7 +2,9 @@
 // 下拉选择框:代替原生 <select>(系统弹出的菜单没法改样式)。
 // 菜单挂到 body 上按触发按钮定位,所以在弹窗(有滚动、有裁剪)里也不会被截掉。
 // 键盘:上下 / Home / End 移动,回车或空格选中,Esc / Tab 关闭,直接打字跳到对应项。
+// searchable:选项多(超过 8 个)时菜单顶上有搜索框,按名字过滤;在搜索框里上下移动、回车选中(同 MultiSelect)。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { t } from '../i18n';
 import { menuPlace } from './menuPlace';
 
 export interface SelectOption<V> {
@@ -19,6 +21,8 @@ const props = defineProps<{
   ariaLabel?: string;
   /** 小号、无边框:放在顶栏这类地方 */
   quiet?: boolean;
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }>();
 const emit = defineEmits<{ 'update:modelValue': [value: T] }>();
 
@@ -31,6 +35,19 @@ const listId = `sel-${Math.random().toString(36).slice(2, 9)}`;
 
 const current = computed(() => props.options.find((o) => o.value === props.modelValue));
 
+const search = ref<HTMLInputElement | null>(null);
+const q = ref('');
+const withSearch = computed(() => props.searchable && props.options.length > 8);
+/** 搜索后还显示的选项在 options 里的下标 */
+const shown = computed(() => {
+  const k = q.value.trim().toLowerCase();
+  return props.options.map((_, i) => i).filter((i) => !k || props.options[i].label.toLowerCase().includes(k));
+});
+// 输了字:高亮第一个匹配的,回车就选它(收起时清空搜索不算)
+watch(q, () => {
+  if (open.value) active.value = shown.value.find((i) => !props.options[i].disabled) ?? -1;
+});
+
 function position(): void {
   if (trigger.value) place.value = menuPlace(trigger.value, menu.value);
 }
@@ -39,13 +56,12 @@ function scrollActive(): void {
   menu.value?.querySelector<HTMLElement>(`[data-i="${active.value}"]`)?.scrollIntoView({ block: 'nearest' });
 }
 
-function move(from: number, step: 1 | -1): void {
-  const n = props.options.length;
-  for (let k = 1; k <= n; k++) {
-    const i = from + step * k;
-    if (i < 0 || i >= n) return;
-    if (!props.options[i].disabled) {
-      active.value = i;
+/** 在显示中的选项之间移动;from 是在这个列表里的位置 */
+function move(step: 1 | -1, from = shown.value.indexOf(active.value)): void {
+  const list = shown.value;
+  for (let k = from + step; k >= 0 && k < list.length; k += step) {
+    if (!props.options[list[k]].disabled) {
+      active.value = list[k];
       void nextTick(scrollActive);
       return;
     }
@@ -60,11 +76,14 @@ async function show(): Promise<void> {
   await nextTick();
   position();
   scrollActive();
+  // 触屏上不自动弹键盘(会挡住选项),点搜索框再输
+  if (withSearch.value && window.matchMedia('(pointer: fine)').matches) search.value?.focus();
 }
 
 function hide(focus = false): void {
   if (!open.value) return;
   open.value = false;
+  q.value = '';
   if (focus) trigger.value?.focus();
 }
 
@@ -94,11 +113,13 @@ function onKey(e: KeyboardEvent): void {
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault();
     if (!open.value) return void show();
-    move(active.value < 0 && e.key === 'ArrowUp' ? props.options.length : active.value, e.key === 'ArrowDown' ? 1 : -1);
+    if (active.value < 0 && e.key === 'ArrowUp') move(-1, shown.value.length);
+    else move(e.key === 'ArrowDown' ? 1 : -1);
   } else if (e.key === 'Home' || e.key === 'End') {
     if (!open.value) return;
     e.preventDefault();
-    move(e.key === 'Home' ? -1 : props.options.length, e.key === 'Home' ? 1 : -1);
+    if (e.key === 'Home') move(1, -1);
+    else move(-1, shown.value.length);
   } else if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault();
     if (open.value) pick(active.value);
@@ -116,17 +137,27 @@ function onKey(e: KeyboardEvent): void {
   }
 }
 
+/** 搜索框里:空格、Home / End 照常输字移光标,打字不跳项,其余同按钮上 */
+function onSearchKey(e: KeyboardEvent): void {
+  if (e.key === ' ' || e.key === 'Home' || e.key === 'End') return;
+  if (e.key.length === 1) return;
+  onKey(e);
+}
+
 function onDocDown(e: MouseEvent): void {
   const target = e.target as Node;
   if (trigger.value?.contains(target) || menu.value?.contains(target)) return;
   hide();
 }
+// 在搜索框里输字时(手机弹键盘会滚页面 / 改窗口大小)跟着挪,不收起
+const typing = () => !!search.value && document.activeElement === search.value;
 function onScroll(e: Event): void {
   // 菜单自己滚动不算;页面或弹窗滚了,位置就对不上了,直接收起
   if (menu.value?.contains(e.target as Node)) return;
-  hide();
+  if (typing()) position();
+  else hide();
 }
-const onResize = (): void => hide();
+const onResize = (): void => (typing() ? position() : hide());
 
 function listen(on: boolean): void {
   const fn = on ? 'addEventListener' : 'removeEventListener';
@@ -158,23 +189,40 @@ onBeforeUnmount(() => listen(false));
     <svg class="chev" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
   </button>
   <Teleport to="body">
-    <div v-if="open" :id="listId" ref="menu" class="select-menu" :class="{ quiet }" role="listbox" :style="place" @mousedown.prevent>
-      <div
-        v-for="(o, i) in options"
-        :id="`${listId}-${i}`"
-        :key="String(o.value)"
-        class="opt"
-        :class="{ active: i === active, on: o.value === modelValue, off: o.disabled }"
-        role="option"
-        :data-i="i"
-        :aria-selected="o.value === modelValue"
-        :aria-disabled="o.disabled || undefined"
-        @mousemove="!o.disabled && (active = i)"
-        @click="pick(i)"
-      >
-        <span class="text">{{ o.label }}</span>
-        <svg v-if="o.value === modelValue" class="tick" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+    <div v-if="open" ref="menu" class="select-menu" :class="{ quiet }" :style="place" @mousedown.prevent>
+      <div v-if="withSearch" class="search">
+        <input
+          ref="search"
+          v-model="q"
+          type="search"
+          :placeholder="searchPlaceholder"
+          :aria-label="searchPlaceholder"
+          :aria-controls="listId"
+          :aria-activedescendant="active >= 0 ? `${listId}-${active}` : undefined"
+          autocomplete="off"
+          @mousedown.stop
+          @keydown="onSearchKey"
+        />
       </div>
+      <div :id="listId" role="listbox" :aria-label="ariaLabel">
+        <div
+          v-for="i in shown"
+          :id="`${listId}-${i}`"
+          :key="String(options[i].value)"
+          class="opt"
+          :class="{ active: i === active, on: options[i].value === modelValue, off: options[i].disabled }"
+          role="option"
+          :data-i="i"
+          :aria-selected="options[i].value === modelValue"
+          :aria-disabled="options[i].disabled || undefined"
+          @mousemove="!options[i].disabled && (active = i)"
+          @click="pick(i)"
+        >
+          <span class="text">{{ options[i].label }}</span>
+          <svg v-if="options[i].value === modelValue" class="tick" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </div>
+      </div>
+      <div v-if="withSearch && !shown.length" class="none muted small">{{ t('common.noMatch') }}</div>
     </div>
   </Teleport>
 </template>
@@ -283,6 +331,22 @@ button.select.quiet:hover:not(:disabled) {
 }
 .select-menu .tick {
   flex: none;
+}
+.select-menu .search {
+  position: sticky;
+  top: -4px;
+  z-index: 1;
+  margin: -4px -4px 4px;
+  padding: 6px;
+  background: var(--sheet);
+  border-bottom: 1px solid var(--rule-soft);
+}
+.select-menu .search input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.select-menu .none {
+  padding: 7px 10px;
 }
 @keyframes select-in {
   from {

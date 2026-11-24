@@ -376,6 +376,19 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX ledger_entries_at ON ledger_entries(at);
   `,
+  `
+  -- 收入 / 支出可以关联:面板或 SOCKS(二选一,收入、支出都行)、客户(只有收入)。都可以不关联(NULL)。
+  -- *_name 是记的时候的名字,删了还显示它
+  ALTER TABLE ledger_entries ADD COLUMN customer_id INTEGER;
+  ALTER TABLE ledger_entries ADD COLUMN customer_name TEXT NOT NULL DEFAULT '';
+  ALTER TABLE ledger_entries ADD COLUMN panel_id INTEGER;
+  ALTER TABLE ledger_entries ADD COLUMN panel_name TEXT NOT NULL DEFAULT '';
+  ALTER TABLE ledger_entries ADD COLUMN socks_id INTEGER;
+  ALTER TABLE ledger_entries ADD COLUMN socks_name TEXT NOT NULL DEFAULT '';
+  CREATE INDEX ledger_entries_customer ON ledger_entries(customer_id);
+  -- SOCKS 的 id 也不再复用(记录按 id 关联,删了的 SOCKS 不能串到新建的头上)
+  INSERT OR REPLACE INTO meta (key, value) SELECT 'socks_proxies_max_id', CAST(COALESCE(MAX(id), 0) AS TEXT) FROM socks_proxies;
+  `,
 ];
 
 export function openDb(file: string): DB {
@@ -408,10 +421,10 @@ export function setMeta(db: DB, key: string, value: string): void {
 }
 
 /**
- * 新客户 / 新面板的 id:比现在的和以前用过的都大。SQLite 不带 AUTOINCREMENT 的表会复用删掉的最大 id,
- * 而收款、流量统计、操作日志、拉取记录按 id 留着删掉的客户 / 面板的记录,复用了就会串到新的头上
+ * 新客户 / 面板 / 线路 / SOCKS 的 id:比现在的和以前用过的都大。SQLite 不带 AUTOINCREMENT 的表会复用删掉的最大 id,
+ * 而收款、流量统计、操作日志、拉取记录、账本按 id 留着删掉的客户 / 面板 / SOCKS 的记录,复用了就会串到新的头上
  */
-export function nextId(db: DB, table: 'customers' | 'panels' | 'lines'): number {
+export function nextId(db: DB, table: 'customers' | 'panels' | 'lines' | 'socks_proxies'): number {
   const key = `${table}_max_id`;
   const max = Math.max(Number(getMeta(db, key)) || 0, (db.prepare(`SELECT COALESCE(MAX(id), 0) AS m FROM ${table}`).get() as { m: number }).m);
   setMeta(db, key, String(max + 1));

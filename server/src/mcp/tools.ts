@@ -38,7 +38,18 @@ async function call(ctx: ToolContext, method: string, path: string, body?: unkno
 
 /** 给模型看的自己记的收入 / 支出 */
 function entryView(e: any) {
-  return { id: e.id, kind: e.kind, amount: e.amount, date: iso(e.at), category: e.category, note: e.note };
+  const link = (id: number | null, name: string, deleted: boolean) => (id == null ? undefined : { id, name, deleted: deleted || undefined });
+  return {
+    id: e.id,
+    kind: e.kind,
+    amount: e.amount,
+    date: iso(e.at),
+    category: e.category,
+    note: e.note,
+    customer: link(e.customer_id, e.customer_name, e.customer_deleted),
+    panel: link(e.panel_id, e.panel_name, e.panel_deleted),
+    socks: link(e.socks_id, e.socks_name, e.socks_deleted),
+  };
 }
 
 /** 给模型看的续费 / 收款记录 */
@@ -246,7 +257,7 @@ export const TOOLS: ToolDef[] = [
     name: 'add_ledger_entry',
     title: '记一笔收入 / 支出',
     description:
-      '在账本里自己记一笔收入或支出,不挂客户:如买服务器、域名、SOCKS 的支出,客户续费以外的收入。客户付的钱不要用这个,用 renew_customer(续费时填 amount)。kind = income(收入)或 expense(支出),amount 总是正数;date 是哪天(YYYY-MM-DD,不填 = 今天);category 是类别(如「服务器」「域名」)。',
+      '在账本里自己记一笔收入或支出:如买服务器、域名、SOCKS 的支出,续费以外的收入。客户续费不要用这个,用 renew_customer(续费时填 amount)。kind = income(收入)或 expense(支出),amount 总是正数;date 是哪天(YYYY-MM-DD,不填 = 今天);category 是类别(如「服务器」「域名」)。可以关联一块面板(panel_id)或一个 SOCKS(socks_id),二选一;收入还可以关联客户(customer_id)。都可以不填。',
     inputSchema: obj(
       {
         kind: { type: 'string', enum: ['income', 'expense'], description: 'income = 收入,expense = 支出' },
@@ -254,6 +265,9 @@ export const TOOLS: ToolDef[] = [
         date: str('哪天,YYYY-MM-DD(按服务器时区);不填 = 今天', { pattern: '^\\d{4}-\\d{2}-\\d{2}$' }),
         category: str('类别,如「服务器」「域名」,最多 20 字', { maxLength: 20 }),
         note: str('备注,最多 200 字', { maxLength: 200 }),
+        panel_id: int('关联的面板 id(list_panels 里的),和 socks_id 二选一;不填 = 不关联', { minimum: 1 }),
+        socks_id: int('关联的 SOCKS id(list_socks 里的),和 panel_id 二选一;不填 = 不关联', { minimum: 1 }),
+        customer_id: int('关联的客户 id,只有收入能填;不填 = 不关联', { minimum: 1 }),
       },
       ['kind', 'amount'],
     ),
@@ -265,18 +279,18 @@ export const TOOLS: ToolDef[] = [
         at = new Date(y, m - 1, d, 12).getTime();
         if (!Number.isFinite(at) || new Date(at).getMonth() !== m - 1 || new Date(at).getDate() !== d) throw new ToolError('date 要是 YYYY-MM-DD');
       }
-      return entryView(await call(ctx, 'POST', '/ledger', { kind: a.kind, amount: a.amount, at, category: a.category, note: a.note }));
+      return entryView(await call(ctx, 'POST', '/ledger', { kind: a.kind, amount: a.amount, at, category: a.category, note: a.note, panel_id: a.panel_id, socks_id: a.socks_id, customer_id: a.customer_id }));
     },
   },
   {
     name: 'list_ledger_entries',
     title: '自己记的收入 / 支出',
-    description: '账本里自己记的收入 / 支出(不含客户的续费 / 收款,那些用 list_payments),新的在前;days 只看最近多少天的(默认 365)。返回收入合计、支出合计和每一笔。',
-    inputSchema: obj({ days: int('最近多少天', { minimum: 1, maximum: 3650 }) }),
+    description: '账本里自己记的收入 / 支出(不含客户的续费 / 收款,那些用 list_payments),新的在前;days 只看最近多少天的(默认 365),customer_id 只看关联了这位客户的。返回收入合计、支出合计和每一笔(关联了面板 / SOCKS / 客户的带上它)。',
+    inputSchema: obj({ days: int('最近多少天', { minimum: 1, maximum: 3650 }), customer_id: int('只看关联了这位客户的', { minimum: 1 }) }),
     annotations: { readOnlyHint: true },
     run: async (a, ctx) => {
       const from = Date.now() - (Number(a.days) || 365) * 86_400_000;
-      const list = (await call(ctx, 'GET', `/ledger?from=${from}`)) as any[];
+      const list = (await call(ctx, 'GET', `/ledger?from=${from}${a.customer_id ? `&customer_id=${Number(a.customer_id)}` : ''}`)) as any[];
       const sum = (kind: string) => list.filter((e) => e.kind === kind).reduce((n, e) => n + Math.round(e.amount * 100), 0) / 100;
       return { income: sum('income'), expense: sum('expense'), entries: list.map(entryView) };
     },
@@ -533,4 +547,4 @@ export async function runTool(tool: ToolDef, args: unknown, ctx: ToolContext): P
 
 export const INSTRUCTIONS =
   'xui-hub 把多台 3x-ui 面板接到一个后台,按「客户」管理线路。一位客户有若干线路(每条是某块面板上的一个客户端)、一个总流量额度、一个到期时间和一条订阅链接。' +
-  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer(收了钱填 amount,会记成一笔收款),查收款用 list_payments;不挂客户的收入 / 支出(如买服务器)用 add_ledger_entry 记、list_ledger_entries 查。删除类操作(delete_customer、delete_line、reset_subscription_link)和换出口(change_line_exit,会重启面板的 Xray)执行前先向用户确认。';
+  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer(收了钱填 amount,会记成一笔收款),查收款用 list_payments;续费以外的收入 / 支出(如买服务器,可以关联面板 / SOCKS / 客户)用 add_ledger_entry 记、list_ledger_entries 查。删除类操作(delete_customer、delete_line、reset_subscription_link)和换出口(change_line_exit,会重启面板的 Xray)执行前先向用户确认。';
