@@ -19,6 +19,7 @@ import {
   getLine,
   lineByEmail,
   lineNodeName,
+  markLineAuto,
   linesOnPanel,
   listCustomers,
   resetSubToken,
@@ -782,6 +783,27 @@ export function apiRouter(deps: RouteDeps): Router {
       if (!lines.length) throw new InputError('没有要换出口的线路');
       const { changed, failed } = await changeLineExits(db, lines, target, deps.clientFor);
       return { changed: changed.map((l) => l.id), lines: changed, failed: failed.map(({ line, error }) => ({ id: line.id, line: lineLabel(line), error: errorText(error) })) };
+    }),
+  );
+  // 重新启用一条停着的线路(面板上被手动停的、或者本系统停了没恢复的):在面板上启用这个客户端,再读一遍面板核对。
+  // 客户超额 / 到期时不行(马上又会被停),要先续费或加额度;面板上已经没有这个客户端时报错
+  r.post(
+    '/customers/:id/lines/:lid/enable',
+    wrap(async (req) => {
+      const line = lineOf(req);
+      const c = plainCustomer(line.customer_id);
+      if (c.state !== 'active') throw new InputError(`「${c.name}」${c.state === 'expired' ? '已到期' : '已超额'},启用了也会马上被停;先续费或加额度,线路会自动恢复`);
+      const panel = getPanel(db, line.panel_id);
+      if (!panel) throw new InputError('线路所在的面板已删除');
+      if (!line.enable) {
+        await withClient(panel, (client) => client.setClientsEnabled([line.email], true));
+        markLineAuto(db, line.id, false, true);
+        // 读一遍面板:面板上没有这个客户端(启用不报错但什么也没改)时,这里会把它记回停用
+        await checkPanel(db, panel, deps.clientFor(panel));
+      }
+      const after = getLine(db, line.id)!;
+      if (!after.enable) throw new InputError(`面板「${panel.name}」上没启用成功:那边可能已经没有 ${line.email} 这个客户端了,展开面板看看`);
+      return after;
     }),
   );
   // 面板连不上 / 已经报废时删不掉面板上的 client,带 ?force=1 就只删这条记录
