@@ -88,6 +88,11 @@ const details = {
 
 // 面板 / SOCKS 上的线路数、入站能不能挂客户端,从上面的数据算出来
 const lines = customers.flatMap((x) => x.lines);
+// 面板上的客户端是哪位客户的线路(按面板 + email 对上)
+for (const [pid, d] of Object.entries(details)) for (const ib of d.inbounds) for (const cl of ib.clients) {
+  const l = lines.find((x) => x.panel_id === Number(pid) && x.email === cl.email);
+  cl.customer = l ? { id: l.customer_id, name: customers.find((x) => x.id === l.customer_id).name } : null;
+}
 // 出口规则弹窗下面列的「面板上手配的规则」(张三在香港-1 上那条线路)
 const panelRules = {
   2: [

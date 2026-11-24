@@ -102,7 +102,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/sc
 
 **面板与 SOCKS**
 
-- 接入 3x-ui 面板,每分钟同步;看版本、入站、客户端,创建 / 删除客户端,归入已有客户端。
+- 接入 3x-ui 面板,每分钟同步;看版本、入站、客户端,创建 / 删除客户端,归入已有客户端;点客户端后面的客户名跳到这位客户。
 - 面板节点名、标签;切换 Xray 内核、升级面板、重启。
 - 登记 SOCKS5 代理,测连通性、出口 IP、地区和延迟。
 - 面板和 SOCKS 可记月成本和到期日。
