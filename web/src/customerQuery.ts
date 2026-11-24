@@ -26,6 +26,8 @@ export interface CustomerQuery {
   lines: CountFilter;
   /** 落地 IP 个数(见 exitIps) */
   exits: CountFilter;
+  /** 有线路落地在这些 IP 上(任一个;按线路主出口算,见 lineExitIp) */
+  ips: string[];
   sort: CustomerSort;
   /** 反过来排 */
   reverse: boolean;
@@ -110,6 +112,20 @@ export function exitIps(c: Customer, panels: Map<number, Panel>, socks: Map<numb
   return [...new Set(c.lines.map((l) => lineExitIp(l, panels, socks)).filter(Boolean))];
 }
 
+/** 落地 IP 是谁的:面板的 IP → 面板名,SOCKS 的出口 IP → SOCKS 名(同一个 IP 可能有好几个) */
+export function exitIpOwners(panels: Iterable<Panel>, socks: Iterable<Socks>): Map<string, string[]> {
+  const owners = new Map<string, string[]>();
+  const add = (ip: string, name: string) => {
+    if (!ip) return;
+    const list = owners.get(ip) ?? [];
+    if (!list.includes(name)) list.push(name);
+    owners.set(ip, list);
+  };
+  for (const p of panels) add(panelIp(p), p.name);
+  for (const s of socks) add(socksIp(s), s.name);
+  return owners;
+}
+
 /** 带这些标签(任一个)的面板 id */
 export function panelsTagged(panels: Iterable<Panel>, tags: string[]): Set<number> {
   const want = new Set(tags);
@@ -128,6 +144,7 @@ export function queryCustomers(list: Customer[], f: CustomerQuery, now = Date.no
   const tagged = f.tags.length ? panelsTagged(ctx.panels, f.tags) : null;
   const pm = new Map(ctx.panels.map((p) => [p.id, p]));
   const sm = new Map(ctx.socks.map((s) => [s.id, s]));
+  const ips = new Set(f.ips);
   const shown = list.filter(
     (c) =>
       (!q || [c.name, c.remark, ...c.lines.flatMap((l) => [l.email, l.node_name])].some((s) => s?.toLowerCase().includes(q))) &&
@@ -135,7 +152,8 @@ export function queryCustomers(list: Customer[], f: CustomerQuery, now = Date.no
       (!tagged || usesPanel(c, tagged)) &&
       matchState(c, f.state, now) &&
       matchCount(c.lines.length, f.lines) &&
-      (!f.exits || matchCount(exitIps(c, pm, sm).length, f.exits)),
+      (!f.exits || matchCount(exitIps(c, pm, sm).length, f.exits)) &&
+      (!ips.size || exitIps(c, pm, sm).some((ip) => ips.has(ip))),
   );
   const key = KEY[f.sort];
   const flip = DESC[f.sort] !== f.reverse;
