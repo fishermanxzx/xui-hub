@@ -10,6 +10,19 @@ const clickText = (text, nth = 0) => page.evaluate((text, nth) => {
   els[nth]?.click();
   return els.length;
 }, text, nth);
+// 收在「⋯」菜单里的操作:挨个打开 rows 里的菜单,点第一个以 label 开头的项
+const pickMenu = (label, rows) => page.evaluate(async (label, rows) => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  for (const b of document.querySelectorAll(`${rows} button.more`)) {
+    b.click();
+    await wait(150);
+    const item = [...document.querySelectorAll('.action-menu .item')].find((i) => i.textContent.trim().startsWith(label));
+    if (item) return item.click(), true;
+    b.click();
+    await wait(100);
+  }
+  return false;
+}, label, rows);
 async function shot(name, { width = 1280, height = 800, hash, before } = {}) {
   await page.setViewport({ width, height, deviceScaleFactor: 2 });
   await page.goto(`${BASE}/#${hash}`, { waitUntil: 'networkidle0' });
@@ -35,7 +48,7 @@ await shot('open-line', { hash: 'customers', height: 900, before: async () => {
 } });
 // 出口规则里的 geo 分类浏览器:张三在香港-1 上那条线路的规则,打开域名框的浏览器,看 netflix 分类
 await shot('geo', { hash: 'customers', height: 800, before: async () => {
-  await clickText('出口规则(', 0);
+  await pickMenu('出口规则(', '.line');
   await sleep(300);
   await clickText('浏览 geo 分类', 0);
   await sleep(800);
@@ -43,7 +56,7 @@ await shot('geo', { hash: 'customers', height: 800, before: async () => {
   await sleep(600);
 } });
 await shot('topology', { hash: 'customers', height: 700, before: async () => {
-  await clickText('网络拓扑', 0);
+  await pickMenu('网络拓扑', '.card > .head');
   await sleep(1200);
 } });
 await page.evaluate(() => localStorage.setItem('xui-hub.openPanels', '[1]'));

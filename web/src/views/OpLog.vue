@@ -60,12 +60,15 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="toolbar">
-    <div>
-      <h2>{{ t('oplog.title') }}</h2>
-      <p class="muted small intro">{{ t('oplog.intro') }}</p>
+  <header class="page-head">
+    <div class="ph-main">
+      <h1>{{ t('oplog.title') }}</h1>
+      <details class="about">
+        <summary>{{ t('common.about') }}</summary>
+        <p>{{ t('oplog.intro') }}</p>
+      </details>
     </div>
-  </div>
+  </header>
 
   <div class="filters">
     <input v-model="q" type="search" class="search" :placeholder="t('oplog.searchPlaceholder')" :aria-label="t('oplog.search')" />

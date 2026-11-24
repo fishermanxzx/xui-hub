@@ -12,6 +12,7 @@ import LineExit from '../components/LineExit.vue';
 import CustomerRenew from '../components/CustomerRenew.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import MultiSelect from '../components/MultiSelect.vue';
+import ActionMenu, { type MenuItem } from '../components/ActionMenu.vue';
 import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, exitIps, matchCount, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort } from '../customerQuery';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
@@ -303,10 +304,13 @@ const qrFor = ref<Customer | null>(null);
 const fetchesFor = ref<{ customer: Customer; days: number; rows: SubFetch[]; devices: SubDevice[] } | null>(null);
 /** 「疑似分享」的门槛(设置页里的 IP 个数);没开这项提醒就是 0,不标 */
 const shareIps = ref(0);
+/** 用量条变黄的百分比:跟设置里「流量用到额度的 x% 时提醒」一致 */
+const warnPct = ref(80);
 onMounted(async () => {
   try {
     const s = (await api.settings()).notify;
     shareIps.value = s.sub_share ? s.sub_share_ips : 0;
+    if (s.quota_warn_pct) warnPct.value = s.quota_warn_pct;
   } catch {
     /* 取不到就不标 */
   }
@@ -944,6 +948,36 @@ function upstreamHost(url: string): string {
   }
 }
 
+// ---------- 列表的展示 ----------
+const usePct = (c: Customer) => (c.quota_bytes ? Math.min(100, (c.used / c.quota_bytes) * 100) : 0);
+const meterLevel = (c: Customer) => (!c.quota_bytes ? '' : c.used >= c.quota_bytes ? 'full' : usePct(c) >= warnPct.value ? 'warn' : '');
+/** 页头的一行概况:全部客户里超额、到期、快到期、有线路停着的各几位 */
+const summary = computed(() => {
+  const list = customers.value;
+  return {
+    over: list.filter((c) => c.state === 'over_quota').length,
+    expired: list.filter((c) => c.state === 'expired').length,
+    soon: list.filter((c) => c.state !== 'expired' && dueLevel(c.expire_at) === 'warn').length,
+    linesOff: list.filter((c) => c.state === 'active' && c.lines.some((l) => !l.enable)).length,
+  };
+});
+/** 客户的「⋯」菜单:不常用的操作 */
+const customerMenu = (c: Customer): MenuItem[] => [
+  { label: t('customers.trafficTrend'), run: () => (trafficFor.value = c) },
+  { label: t('customers.topology'), run: () => (topoFor.value = c), disabled: !c.lines.length },
+  { label: t('customers.exitAll'), run: () => (exitFor.value = { customer: c, lines: c.lines }), disabled: !c.lines.length },
+  { label: t('customers.resetUsage'), run: () => resetUsage(c), disabled: !c.lines.length, divide: true },
+  { label: t('customers.resetLink'), run: () => resetLink(c) },
+  { label: t('customers.deleteCustomer'), run: () => remove(c), danger: true, divide: true },
+];
+/** 线路的「⋯」菜单 */
+const lineMenu = (c: Customer, l: Line): MenuItem[] => [
+  { label: l.rules?.length ? t('customers.rulesCount', { n: l.rules.length }) : t('customers.rules'), run: () => openRules(l) },
+  { label: t('customers.changeExit'), run: () => (exitFor.value = { customer: c, lines: [l] }) },
+  { label: t('customers.rename'), run: () => openRename(l) },
+  { label: t('customers.deleteLine'), run: () => removeLine(l), danger: true, divide: true },
+];
+
 /** 面板上按规则分了多个出口(读到的路由规则不止一条去向) */
 const multiExit = (l: Line) => (l.routes?.length ?? 0) > 1;
 
@@ -960,79 +994,101 @@ function exitText(l: Line): string {
 </script>
 
 <template>
-  <div class="toolbar">
-    <div>
-      <h2>{{ t('customers.title') }}</h2>
-      <p class="muted small">{{ t('customers.intro') }}</p>
+  <header class="page-head">
+    <div class="ph-main">
+      <h1>{{ t('customers.title') }}</h1>
+      <p v-if="customers.length" class="ph-sum">
+        <span>{{ t('customers.sumTotal', { n: customers.length }, customers.length) }}</span>
+        <span v-if="summary.over" class="text-err">{{ t('customers.sumOver', { n: summary.over }) }}</span>
+        <span v-if="summary.expired" class="text-err">{{ t('customers.sumExpired', { n: summary.expired }) }}</span>
+        <span v-if="summary.soon" class="text-warn">{{ t('customers.sumSoon', { n: summary.soon }) }}</span>
+        <span v-if="summary.linesOff">{{ t('customers.sumLinesOff', { n: summary.linesOff }) }}</span>
+      </p>
+      <details class="about">
+        <summary>{{ t('common.about') }}</summary>
+        <p>{{ t('customers.intro') }}</p>
+      </details>
     </div>
-    <div class="row">
+    <div class="ph-actions">
       <button :disabled="syncing || !customers.length" :title="t('customers.syncHint')" @click="syncNow">{{ syncing ? t('customers.syncing') : t('customers.syncNow') }}</button>
       <button :disabled="!panels.length || !customers.length" :title="t('customers.batchHint')" @click="openBatch">{{ t('customers.batchButton') }}</button>
       <button :disabled="!customers.some((c) => c.lines.length)" :title="t('customers.bdHint')" @click="openDel">{{ t('customers.bdButton') }}</button>
       <button class="primary" @click="openForm(null)">{{ t('customers.create') }}</button>
     </div>
-  </div>
+  </header>
 
   <div v-if="customers.length" class="filters">
-    <input v-model="query.q" type="search" class="search" :placeholder="t('customers.searchPlaceholder')" :aria-label="t('customers.search')" />
-    <MultiSelect v-model="query.panels" :options="panelFilterOptions" :label="panelFilterLabel" :all-label="t('customers.allPanels')" :aria-label="t('customers.filterPanels')" />
-    <MultiSelect v-if="allTags.length" v-model="query.tags" :options="tagFilterOptions" :label="tagFilterLabel" :all-label="t('customers.allTags')" :aria-label="t('customers.filterTags')" searchable />
-    <Select v-model="query.state" :options="stateOptions" :aria-label="t('customers.filterState')" />
-    <Select v-model="query.lines" :options="linesFilterOptions" :aria-label="t('customers.filterLineCount')" />
-    <Select v-model="query.exits" :options="exitsFilterOptions" :aria-label="t('customers.filterExitCount')" />
+    <label class="search">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5" /><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
+      <input v-model="query.q" type="search" :placeholder="t('customers.searchPlaceholder')" :aria-label="t('customers.search')" />
+    </label>
+    <MultiSelect v-model="query.panels" :options="panelFilterOptions" :label="panelFilterLabel" :all-label="t('customers.allPanels')" :aria-label="t('customers.filterPanels')" :class="{ set: query.panels.length }" />
+    <MultiSelect v-if="allTags.length" v-model="query.tags" :options="tagFilterOptions" :label="tagFilterLabel" :all-label="t('customers.allTags')" :aria-label="t('customers.filterTags')" searchable :class="{ set: query.tags.length }" />
+    <Select v-model="query.state" :options="stateOptions" :aria-label="t('customers.filterState')" :class="{ set: query.state }" />
+    <Select v-model="query.lines" :options="linesFilterOptions" :aria-label="t('customers.filterLineCount')" :class="{ set: query.lines }" />
+    <Select v-model="query.exits" :options="exitsFilterOptions" :aria-label="t('customers.filterExitCount')" :class="{ set: query.exits }" />
+    <template v-if="filtering">
+      <span class="muted small">{{ t('customers.shown', { n: shown.length, total: customers.length }) }}</span>
+      <button type="button" class="link small" @click="clearFilters">{{ t('customers.clearFilters') }}</button>
+    </template>
     <span class="sort">
       <Select v-model="query.sort" :options="sortOptions" :aria-label="t('customers.sortBy')" />
       <button type="button" class="dir" :title="t('customers.sortDirHint')" :aria-pressed="query.reverse" @click="query.reverse = !query.reverse">
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 3v10M2.5 10.5 5 13l2.5-2.5M11 13V3M8.5 5.5 11 3l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>{{ sortDir }}
       </button>
+      <button v-if="!linesForced && withLines.length" type="button" class="link small" @click="toggleAllLines">{{ allLinesOpen ? t('customers.collapseAll') : t('customers.expandAll') }}</button>
     </span>
-    <span v-if="filtering" class="muted small">{{ t('customers.shown', { n: shown.length, total: customers.length }) }}</span>
-    <button v-if="filtering" type="button" class="link" @click="clearFilters">{{ t('customers.clearFilters') }}</button>
-    <button v-if="!linesForced && withLines.length" type="button" class="link" @click="toggleAllLines">{{ allLinesOpen ? t('customers.collapseAll') : t('customers.expandAll') }}</button>
   </div>
 
   <div class="cards">
     <article v-for="c in shown" :key="c.id" class="card sheet">
       <header class="head">
-        <div class="title">
-          <span class="name">{{ c.name }}</span>
-          <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
-          <span v-if="c.remark" class="muted small">{{ c.remark }}</span>
-          <span class="small" :class="{ 'text-err': c.state === 'over_quota' }">
-            {{ t('customers.used', { used: fmtBytes(c.used) }) }}<template v-if="c.quota_bytes"> / {{ fmtBytes(c.quota_bytes) }}</template><span v-else class="muted">{{ t('customers.unlimited') }}</span>
-          </span>
-          <span class="small" :class="{ 'text-warn': dueLevel(c.expire_at) === 'warn', 'text-err': dueLevel(c.expire_at) === 'err', muted: !c.expire_at }" :title="fmtDate(c.expire_at)">
-            {{ fmtDue(c.expire_at) }}
-          </span>
-          <span v-if="c.actual_used !== c.used" class="small ratio" :title="t('customers.actualHint')">{{ t('customers.actualUsed', { v: fmtBytes(c.actual_used) }) }}</span>
-          <span v-if="c.carried_up || c.carried_down" class="muted small" :title="t('customers.carriedHint')">{{ t('customers.carried', { v: fmtSignedBytes(c.carried_up + c.carried_down) }) }}</span>
-          <span v-if="c.monthly_fee != null" class="muted small">{{ t('customers.feeValue', { v: fmtCost(c.monthly_fee) }) }}</span>
-          <span v-if="c.last_payment" class="muted small">{{ t('customers.lastPaid', { date: fmtDate(c.last_payment.paid_at), v: fmtCost(c.last_payment.amount) }) }}</span>
-          <span v-if="c.sub_template" class="muted small" :title="c.sub_template">{{ t('customers.template', { name: templateName(c.sub_template) }) }}</span>
-          <span v-if="c.limit_devices" class="small" :class="c.sub_devices >= c.limit_devices ? 'text-warn' : 'muted'" :title="t('customers.devicesHint')">{{ t('customers.devices', { n: c.sub_devices, max: c.limit_devices }) }}</span>
-          <span v-if="c.next_reset_at" class="muted small" :title="c.expire_at ? t('customers.resetFollows') : t('customers.resetEveryDay', { day: c.reset_day })">{{ t('customers.nextReset', { date: fmtDate(c.next_reset_at) }) }}</span>
+        <div class="who">
+          <div class="who-top">
+            <span class="name">{{ c.name }}</span>
+            <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
+          </div>
+          <span v-if="c.remark" class="muted small remark" :title="c.remark">{{ c.remark }}</span>
+        </div>
+        <div class="usage">
+          <div class="fig" :class="{ 'text-err': c.state === 'over_quota' }">
+            <span class="figure">{{ fmtBytes(c.used) }}</span>
+            <span class="muted"> / {{ c.quota_bytes ? fmtBytes(c.quota_bytes) : t('customers.noQuota') }}</span>
+          </div>
+          <div v-if="c.quota_bytes" class="meter" :class="meterLevel(c)" role="meter" :aria-valuenow="Math.round(usePct(c))" aria-valuemin="0" aria-valuemax="100" :aria-label="t('customers.usageAria')"><span :style="{ width: usePct(c) + '%' }" /></div>
+          <div class="small muted facts">
+            <span v-if="c.actual_used !== c.used" class="ratio" :title="t('customers.actualHint')">{{ t('customers.actualUsed', { v: fmtBytes(c.actual_used) }) }}</span>
+            <span v-if="c.carried_up || c.carried_down" :title="t('customers.carriedHint')">{{ t('customers.carried', { v: fmtSignedBytes(c.carried_up + c.carried_down) }) }}</span>
+            <span v-if="c.next_reset_at" :title="c.expire_at ? t('customers.resetFollows') : t('customers.resetEveryDay', { day: c.reset_day })">{{ t('customers.nextReset', { date: fmtDate(c.next_reset_at) }) }}</span>
+          </div>
+        </div>
+        <div class="due">
+          <span :class="{ 'text-warn': dueLevel(c.expire_at) === 'warn', 'text-err': dueLevel(c.expire_at) === 'err', muted: !c.expire_at }">{{ fmtDue(c.expire_at) }}</span>
+          <span v-if="c.expire_at" class="small muted">{{ fmtDate(c.expire_at) }}</span>
+        </div>
+        <div class="money">
+          <span v-if="c.monthly_fee != null">{{ t('customers.feeValue', { v: fmtCost(c.monthly_fee) }) }}</span>
+          <span v-else class="muted">—</span>
+          <span v-if="c.last_payment" class="small muted">{{ t('customers.lastPaid', { date: fmtDate(c.last_payment.paid_at), v: fmtCost(c.last_payment.amount) }) }}</span>
         </div>
         <div class="ops">
           <button class="primary small-btn" :disabled="!panels.length" @click="openLineFor(c)">{{ t('customers.openLine') }}</button>
-          <button class="link" @click="renewFor = c">{{ t('customers.renewButton') }}</button>
-          <button class="link" :disabled="!c.lines.length" @click="topoFor = c">{{ t('customers.topology') }}</button>
-          <button class="link" @click="trafficFor = c">{{ t('customers.trafficTrend') }}</button>
-          <button class="link" :disabled="!c.lines.length" @click="exitFor = { customer: c, lines: c.lines }">{{ t('customers.exitAll') }}</button>
-          <button class="link" :disabled="!c.lines.length" @click="resetUsage(c)">{{ t('customers.resetUsage') }}</button>
-          <button class="link" @click="openForm(c)">{{ t('common.edit') }}</button>
-          <button class="link danger" @click="remove(c)">{{ t('common.delete') }}</button>
+          <button class="small-btn" @click="renewFor = c">{{ t('customers.renewButton') }}</button>
+          <button class="small-btn" @click="openForm(c)">{{ t('common.edit') }}</button>
+          <ActionMenu :items="customerMenu(c)" :aria-label="t('customers.moreFor', { name: c.name })" />
         </div>
       </header>
       <div class="sub-row">
-        <span class="muted small">{{ t('customers.sub') }}</span>
+        <span class="sub-label small muted">{{ t('customers.sub') }}</span>
         <input class="sub-input" readonly :value="subUrl(c)" :aria-label="t('customers.subAria')" @focus="($event.target as HTMLInputElement).select()" />
-        <button class="link" @click="copyText(subUrl(c), t('customers.subCopied', { name: c.name }))">{{ t('common.copy') }}</button>
-        <button class="link" @click="qrFor = c">{{ t('customers.qr') }}</button>
-        <button class="link" @click="resetLink(c)">{{ t('customers.resetLink') }}</button>
+        <button class="link small" @click="copyText(subUrl(c), t('customers.subCopied', { name: c.name }))">{{ t('common.copy') }}</button>
+        <button class="link small" @click="qrFor = c">{{ t('customers.qr') }}</button>
         <span class="muted small sub-meta" :title="c.sub_fetched_ua ?? ''">
           <template v-if="c.sub_fetched_at">{{ t('customers.lastFetch', { ago: fmtAgo(c.sub_fetched_at) }) }}<template v-if="c.sub_fetched_ua">, {{ shortUa(c.sub_fetched_ua) }}</template>{{ t('customers.fetchStats', { clients: c.sub_clients, ips: c.sub_ips }) }}</template>
           <template v-else>{{ t('customers.neverFetched') }}</template>
           <span v-if="shareIps && c.sub_ips_day >= shareIps" class="text-warn" :title="t('customers.shareHint', { n: c.sub_ips_day })">{{ t('customers.shareWarn', { n: c.sub_ips_day }) }}</span>
+          <span v-if="c.sub_template" :title="c.sub_template">{{ t('customers.template', { name: templateName(c.sub_template) }) }}</span>
+          <span v-if="c.limit_devices" :class="{ 'text-warn': c.sub_devices >= c.limit_devices }" :title="t('customers.devicesHint')">{{ t('customers.devices', { n: c.sub_devices, max: c.limit_devices }) }}</span>
           <button class="link small" @click="showFetches(c)">{{ t('customers.records') }}</button>
         </span>
         <div v-for="l in c.sub_links" :key="l" class="custom-link small">
@@ -1062,29 +1118,32 @@ function exitText(l: Line): string {
         <span v-if="!linesShown(c) && linesOff(c)" class="badge err">{{ t('customers.linesOff', { n: linesOff(c) }) }}</span>
       </button>
       <ul v-if="c.lines.length && linesShown(c)" class="lines">
-        <li v-for="l in c.lines" :key="l.id" class="line" :class="{ dim: offPanel(l) }">
+        <li v-for="l in c.lines" :key="l.id" class="line" :class="{ dim: offPanel(l), off: !l.enable }">
           <span class="chip" :class="l.kind">{{ l.kind === 'direct' ? t('customers.direct') : t('customers.relay') }}</span>
           <span class="where">
-            <a v-if="panelUrl(l.panel_id)" class="panel-link" :href="panelUrl(l.panel_id)" target="_blank" rel="noopener noreferrer" :title="t('customers.openPanelHint', { name: l.panel_name })">{{ l.panel_name }}</a>
-            <strong v-else>{{ l.panel_name }}</strong>
-            <span v-if="l.node_name" class="small node-name" :title="t('customers.nodeNameTitle')">「{{ l.node_name }}」</span>
-            <span v-else-if="l.panel_node_name" class="small node-name muted" :title="t('customers.nodeNameFromPanel')">「{{ l.panel_node_name }}」</span>
-            <span class="muted small">{{ l.inbound_remark || l.inbound_id }} · {{ proto(l.protocol) }} · {{ l.email }}</span>
+            <span class="where-top">
+              <a v-if="panelUrl(l.panel_id)" class="panel-link" :href="panelUrl(l.panel_id)" target="_blank" rel="noopener noreferrer" :title="t('customers.openPanelHint', { name: l.panel_name })">{{ l.panel_name }}</a>
+              <strong v-else>{{ l.panel_name }}</strong>
+              <span v-if="l.node_name" class="small node-name" :title="t('customers.nodeNameTitle')">「{{ l.node_name }}」</span>
+              <span v-else-if="l.panel_node_name" class="small node-name muted" :title="t('customers.nodeNameFromPanel')">「{{ l.panel_node_name }}」</span>
+            </span>
+            <span class="muted small">{{ l.inbound_remark || l.inbound_id }} · {{ proto(l.protocol) }} · <span class="mono">{{ l.email }}</span></span>
           </span>
-          <span v-if="multiExit(l)" class="small exit hops" :title="t('customers.routesTitle', { ago: fmtAgo(l.routes_at) })">
+          <span v-if="multiExit(l)" class="route small" :title="t('customers.routesTitle', { ago: fmtAgo(l.routes_at) })">
             <span v-for="(h, i) in l.routes" :key="i" class="hop" :title="routeHopText(h, socksList)">{{ routeHopText(h, socksList) }}</span>
           </span>
-          <span v-else class="small exit" :class="{ muted: exitText(l) === t('customers.direct') }" :title="l.routes ? t('customers.routesTitle', { ago: fmtAgo(l.routes_at) }) : ''">{{ exitText(l) }}</span>
-          <span class="muted small stat">
-            {{ t('customers.lineUsage', { used: fmtBytes(l.up + l.down), ago: fmtAgo(l.last_online, '—') }) }}<span v-if="l.panel_ratio !== 1" class="ratio" :title="t('customers.lineRatioHint', { v: l.panel_ratio })"> · {{ t('customers.lineBilled', { v: l.panel_ratio, used: fmtBytes(l.used_up + l.used_down) }) }}</span>
+          <span v-else class="route small" :title="l.routes ? t('customers.routesTitle', { ago: fmtAgo(l.routes_at) }) : ''">
+            <span class="hop" :class="{ plain: exitText(l) === t('customers.direct') }">{{ exitText(l) }}</span>
+          </span>
+          <span class="stat small">
+            <span class="figure-ish">{{ fmtBytes(l.up + l.down) }}</span>
+            <span v-if="l.panel_ratio !== 1" class="ratio" :title="t('customers.lineRatioHint', { v: l.panel_ratio })">{{ t('customers.lineBilled', { v: l.panel_ratio, used: fmtBytes(l.used_up + l.used_down) }) }}</span>
+            <span class="muted">{{ t('customers.lineOnline', { ago: fmtAgo(l.last_online, '—') }) }}</span>
             <span v-if="!l.enable" class="badge err">{{ l.auto_disabled ? t('customers.autoDisabled') : t('customers.panelDisabled') }}</span>
           </span>
           <span class="l-ops">
-            <button class="link" :disabled="loadingLinks === l.id" @click="showLinks(l)">{{ loadingLinks === l.id ? t('common.loading') : t('customers.links') }}</button>
-            <button class="link" @click="openRules(l)">{{ l.rules?.length ? t('customers.rulesCount', { n: l.rules.length }) : t('customers.rules') }}</button>
-            <button class="link" @click="exitFor = { customer: c, lines: [l] }">{{ t('customers.changeExit') }}</button>
-            <button class="link" @click="openRename(l)">{{ t('customers.rename') }}</button>
-            <button class="link danger" @click="removeLine(l)">{{ t('common.delete') }}</button>
+            <button class="link small" :disabled="loadingLinks === l.id" @click="showLinks(l)">{{ loadingLinks === l.id ? t('common.loading') : t('customers.links') }}</button>
+            <ActionMenu :items="lineMenu(c, l)" :aria-label="t('customers.moreForLine', { name: l.panel_name })" />
           </span>
         </li>
       </ul>
@@ -1468,47 +1527,76 @@ function exitText(l: Line): string {
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-h2 {
-  font-size: 18px;
-}
-.toolbar p {
-  margin: 4px 0 0;
-  max-width: 64ch;
-}
+/* ---------- 搜索 / 过滤 / 排序 ---------- */
 .filters {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 10px;
-  margin-bottom: 12px;
+  gap: 6px 8px;
+  margin-bottom: 14px;
 }
-.filters .search {
+.search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   flex: 1 1 220px;
-  max-width: 340px;
+  max-width: 300px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: var(--sheet);
+  color: var(--ink-faint);
 }
+.search:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+.search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  padding: 5px 0;
+  background: none;
+  outline: none;
+}
+/* 过滤器平时是灰字,选了条件的变成浅青底 */
 .filters :deep(button.select) {
-  max-width: 220px;
+  max-width: 200px;
+  padding: 5px 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-soft);
+}
+.filters :deep(button.select:hover:not(:disabled)) {
+  border-color: var(--rule);
+  background: var(--sheet);
+}
+.filters :deep(button.select.set) {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: transparent;
 }
 .sort {
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px 8px;
+  flex-wrap: wrap;
+}
+.sort :deep(button.select) {
+  color: var(--ink);
 }
 .dir {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 10px;
+  padding: 5px 8px;
   font-weight: 400;
   white-space: nowrap;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-soft);
 }
 .topo-hint {
   margin: 0 0 8px;
@@ -1526,54 +1614,122 @@ h2 {
   background: var(--fault-bg);
   color: var(--fault);
 }
-.stat .badge {
-  margin-left: 6px;
-}
+/* ---------- 客户:一行账目,五列对齐(名字 / 用量 / 到期 / 月费 / 操作) ---------- */
 .cards {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+}
+.card {
+  overflow: hidden;
 }
 .head {
+  display: grid;
+  grid-template-columns: minmax(9em, 1.1fr) minmax(13em, 1.5fr) minmax(7.5em, 0.75fr) minmax(8em, 0.85fr) auto;
+  gap: 8px 24px;
+  align-items: start;
+  padding: 14px 16px 12px;
+}
+.who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.who-top {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px 16px;
-  padding: 12px 16px;
-}
-.title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
+  gap: 4px 8px;
 }
 .name {
   font-weight: 600;
+  font-size: 16px;
+  line-height: 22px;
+}
+.remark {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding-top: 1px;
+}
+.usage .fig {
+  font-variant-numeric: tabular-nums;
+}
+.usage .fig .figure {
   font-size: 15px;
+}
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+}
+.facts:empty {
+  display: none;
+}
+.due,
+.money {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 2px;
+  font-variant-numeric: tabular-nums;
 }
 .ops {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 14px;
+  gap: 6px;
+  justify-self: end;
 }
-.small-btn {
-  padding: 4px 10px;
-  font-size: 13px;
+@media (max-width: 1000px) {
+  .head {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .ops {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
 }
+@media (max-width: 560px) {
+  .head {
+    gap: 10px 16px;
+  }
+  .who,
+  .usage {
+    grid-column: 1 / -1;
+  }
+}
+/* 订阅:浅底的一条 */
 .sub-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 10px;
-  padding: 6px 16px 10px;
+  gap: 4px 14px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--rule-soft);
+  background: var(--sunk);
 }
 .sub-input {
-  flex: 1;
-  min-width: 200px;
+  flex: 1 1 240px;
+  max-width: 460px;
+  padding: 1px 6px;
+  margin-left: -6px;
+  font-family: var(--mono);
   font-size: 12px;
-  padding: 4px 8px;
+  color: var(--ink);
+  background: transparent;
+  border-color: transparent;
+  text-overflow: ellipsis;
+}
+.sub-input:hover {
+  border-color: var(--rule);
+  background: var(--sheet);
 }
 .sec {
   margin: 12px 0 6px;
@@ -1587,6 +1743,10 @@ h2 {
 }
 .sub-meta {
   flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 12px;
 }
 .node-name {
   font-weight: 500;
@@ -1594,9 +1754,14 @@ h2 {
 .custom-link {
   flex-basis: 100%;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  gap: 2px 8px;
   min-width: 0;
+}
+.custom-link > :not(code):not(.upstream-err) {
+  flex: none;
+  white-space: nowrap;
 }
 .custom-link code {
   min-width: 0;
@@ -1645,22 +1810,11 @@ h2 {
   flex-wrap: wrap;
   gap: 6px 12px;
 }
-.hops {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.hop {
-  overflow-wrap: anywhere;
-}
 .upstream-err {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.sub-meta .link {
-  margin-left: 8px;
 }
 .lines-toggle {
   display: flex;
@@ -1671,9 +1825,8 @@ h2 {
   padding: 9px 16px;
   border: none;
   border-top: 1px solid var(--rule-soft);
-  border-radius: 0 0 12px 12px;
+  border-radius: 0;
   background: none;
-  box-shadow: none;
   font-size: 13px;
   font-weight: 500;
   color: var(--ink);
@@ -1717,12 +1870,13 @@ h2 {
   padding: 0;
   border-top: 1px solid var(--rule-soft);
 }
+/* 线路:类型 / 在哪块面板 / 从面板拉出去的线到出口 / 用量 / 操作 */
 .line {
   display: grid;
-  grid-template-columns: auto minmax(160px, 1.3fr) minmax(140px, 1fr) minmax(160px, 1fr) auto;
-  gap: 4px 12px;
+  grid-template-columns: 4.4em minmax(11em, 1.15fr) minmax(12em, 1.35fr) minmax(10em, 0.9fr) auto;
+  gap: 4px 16px;
   align-items: center;
-  padding: 8px 16px;
+  padding: 9px 16px;
   border-bottom: 1px solid var(--rule-soft);
 }
 .line:last-child {
@@ -1735,8 +1889,12 @@ h2 {
 .line.dim:focus-within {
   opacity: 1;
 }
+.line > .chip {
+  justify-self: start;
+}
 .chip.relay {
   background: var(--accent-soft);
+  border-color: transparent;
   color: var(--accent-strong);
 }
 .panel-link {
@@ -1756,10 +1914,87 @@ h2 {
 .where span {
   overflow-wrap: anywhere;
 }
+.where .mono {
+  font-size: 11.5px;
+}
+/* 出口:一个端口点,线从这里拉到每个去向;按规则分了几路就画几根分支 */
+.route {
+  --wire: color-mix(in srgb, var(--accent) 60%, transparent);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 26px;
+}
+.route::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.route .hop {
+  position: relative;
+  overflow-wrap: anywhere;
+}
+.route .hop::before {
+  content: '';
+  position: absolute;
+  left: -20px;
+  top: 9px;
+  width: 15px;
+  height: 1.5px;
+  background: var(--wire);
+}
+.route .hop + .hop::after {
+  content: '';
+  position: absolute;
+  left: -20px;
+  bottom: 9px;
+  height: calc(100% + 3px);
+  width: 1.5px;
+  background: var(--wire);
+}
+.route .hop.plain {
+  color: var(--ink-soft);
+}
+.line.off .route {
+  --wire: var(--ink-faint);
+}
+.line.off .route::before {
+  background: var(--ink-faint);
+}
+.stat {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 8px;
+}
+.figure-ish {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.stat .badge {
+  align-self: center;
+}
 .l-ops {
   display: flex;
-  gap: 12px;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+}
+@media (max-width: 900px) {
+  .line {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .line .route,
+  .line .stat {
+    grid-column: 2 / 4;
+  }
 }
 .none {
   margin: 0;

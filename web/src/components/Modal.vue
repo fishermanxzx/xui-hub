@@ -25,17 +25,18 @@ const emit = defineEmits<{ close: [] }>();
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(10, 30, 36, 0.5);
+  background: rgba(17, 22, 19, 0.46);
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 40px 16px;
+  padding: 48px 16px;
   overflow-y: auto;
   z-index: 50;
 }
 .modal {
   width: 100%;
-  max-width: 540px;
+  max-width: 560px;
+  box-shadow: var(--lift);
 }
 .modal.wide {
   max-width: 980px;
@@ -44,26 +45,30 @@ header {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  padding: 16px 20px 12px;
-  border-bottom: 1px solid var(--rule);
+  padding: 16px 20px 14px;
+  border-bottom: 1px solid var(--rule-soft);
 }
 h2 {
   flex: 1;
-  font-size: 18px;
+  font-size: 17px;
+  line-height: 24px;
 }
 .close {
-  color: var(--ink-soft);
+  font-size: 13px;
 }
 .body {
-  padding: 16px 20px;
+  padding: 18px 20px;
 }
 footer {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-  padding: 12px 20px 16px;
+  padding: 12px 20px;
   border-top: 1px solid var(--rule-soft);
+  border-radius: 0 0 10px 10px;
+  background: var(--sunk);
 }
 footer :deep(.spacer) {
   flex: 1;

@@ -101,22 +101,25 @@ async function remove(s: Socks) {
 </script>
 
 <template>
-  <div class="toolbar">
-    <div>
-      <h2>{{ t('socks.title') }}</h2>
-      <p class="muted small">{{ t('socks.intro') }}</p>
-      <p v-if="list.length" class="small summary">
+  <header class="page-head">
+    <div class="ph-main">
+      <h1>{{ t('socks.title') }}</h1>
+      <p v-if="list.length" class="ph-sum">
         <span>{{ t('cost.total', { total: fmtCost(summary.total) }) }}</span>
-        <span v-if="summary.unset" class="muted">{{ t('cost.unset', { n: summary.unset }) }}</span>
+        <span v-if="summary.unset">{{ t('cost.unset', { n: summary.unset }) }}</span>
         <span v-if="summary.soon" class="text-warn">{{ t('cost.soon', { n: summary.soon }) }}</span>
         <span v-if="summary.overdue" class="text-err">{{ t('cost.overdue', { n: summary.overdue }) }}</span>
       </p>
+      <details class="about">
+        <summary>{{ t('common.about') }}</summary>
+        <p>{{ t('socks.intro') }}</p>
+      </details>
     </div>
-    <div class="row">
+    <div class="ph-actions">
       <button :disabled="checkingAll || !list.length" @click="checkAll">{{ checkingAll ? t('socks.testing') : t('socks.testAll') }}</button>
       <button class="primary" @click="openForm(null)">{{ t('socks.add') }}</button>
     </div>
-  </div>
+  </header>
 
   <section class="sheet">
     <div class="table-wrap">
@@ -190,21 +193,6 @@ async function remove(s: Socks) {
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-h2 {
-  font-size: 18px;
-}
-.toolbar p {
-  margin: 4px 0 0;
-  max-width: 60ch;
-}
 .name {
   font-weight: 500;
   white-space: nowrap;
@@ -229,11 +217,6 @@ h2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
-}
-.summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
 }
 .nowrap {
   white-space: nowrap;

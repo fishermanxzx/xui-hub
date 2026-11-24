@@ -51,10 +51,10 @@ const customers = [
         { when: {}, to: { kind: 'socks', tag: 'socks-jp', address: 'jp1.example.com:31825', socks_id: 4 }, fallback: true },
       ] }),
     line(1, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 2, inbound_remark: 'hy2', protocol: 'hysteria', email: '张三-2', up: 0.4 * GB, down: 5.6 * GB, exit_kind: 'socks', exit_socks_id: 1, exit_socks_name: '美国家宽-ATT', exit_label: 'SOCKS 美国家宽-ATT' }),
-  ], { monthly_fee: 30 }),
+  ], { monthly_fee: 30, last_payment: { amount: 30, paid_at: now - 12 * DAY } }),
   customer(2, '李四', '流量包', 100, 40, [
     line(2, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 1, inbound_remark: 'vless-reality', protocol: 'vless', email: '李四', up: 6.2 * GB, down: 94.1 * GB, enable: false, auto_disabled: true, exit_kind: 'socks', exit_socks_id: 2, exit_socks_name: '台湾家宽', exit_label: 'SOCKS 台湾家宽' }),
-  ], { sub_fetched_ua: 'Shadowrocket/2701 CFNetwork/3826 Darwin/24.6.0', sub_clients: 1, sub_ips: 1, monthly_fee: 50 }),
+  ], { sub_fetched_ua: 'Shadowrocket/2701 CFNetwork/3826 Darwin/24.6.0', sub_clients: 1, sub_ips: 1, monthly_fee: 50, last_payment: { amount: 50, paid_at: now - 20 * DAY } }),
   customer(3, '王五', '', 0, 3, [
     line(3, { kind: 'direct', panel_id: 3, panel_name: '日本-1', inbound_id: 1, inbound_remark: 'hy2', protocol: 'hysteria', email: '王五', up: 0.8 * GB, down: 12.9 * GB }),
   ], {
@@ -86,9 +86,9 @@ const details = {
 
 // 面板 / SOCKS 上的线路数、入站能不能挂客户端,从上面的数据算出来
 const lines = customers.flatMap((x) => x.lines);
-for (const l of lines) l.panel_node_name = panels.find((x) => x.id === l.panel_id)?.node_name ?? '';
+for (const l of lines) Object.assign(l, { panel_node_name: panels.find((x) => x.id === l.panel_id)?.node_name ?? '', panel_ratio: 1, used_up: l.up, used_down: l.down });
 for (const x of panels) Object.assign(x, { line_count: lines.filter((l) => l.panel_id === x.id).length, exit_line_count: lines.filter((l) => l.exit_panel_id === x.id).length });
-for (const x of socks) x.used_by = lines.filter((l) => l.exit_socks_id === x.id).length;
+for (const x of socks) Object.assign(x, { used_by: lines.filter((l) => l.exit_socks_id === x.id).length, customers: new Set(lines.filter((l) => l.exit_socks_id === x.id).map((l) => l.customer_id)).size });
 for (const d of Object.values(details)) for (const i of d.inbounds) i.accepts_clients = i.protocol !== 'mixed';
 
 // 面板上的 geo 库(出口规则里「浏览 geo 分类」用):几个常见分类,条目只给 netflix 的
@@ -104,6 +104,35 @@ const geo = {
 const netflix = ['full:netflix.com.edgesuite.net', 'fast.com', 'netflix.ca', 'netflix.com', 'netflix.net', 'netflixinvestor.com', 'netflixtechblog.com', 'nflxext.com', 'nflximg.com', 'nflximg.net', 'nflxsearch.net', 'nflxso.net', 'nflxvideo.net', 'netflixdnstest0.com', 'netflixdnstest1.com', 'netflixdnstest2.com']
   .map((v) => (v.startsWith('full:') ? { kind: 'full', value: v.slice(5) } : { kind: 'domain', value: v }));
 
+// 账本、流量、日志、设置页用的演示数据
+const pay = (id, customer_id, customer_name, amount, ago, months, note = '', extra = {}) => ({ id, customer_id, customer_name, amount, paid_at: now - ago * DAY, months, days: 0, expire_before: now - ago * DAY, expire_after: now - ago * DAY + months * 30 * DAY, note, created_at: now - ago * DAY, ...extra });
+const payments = [
+  pay(11, 1, '张三', 30, 12, 1, '微信'),
+  pay(12, 2, '李四', 50, 20, 1, '支付宝'),
+  pay(13, 3, '王五', 45, 27, 1),
+  pay(14, 1, '张三', 30, 42, 1, '微信'),
+  pay(15, 3, '王五', 45, 58, 1),
+  pay(16, 9, '老客户 A', 120, 95, 3, '', { customer_deleted: true }),
+];
+const oplog = [
+  { id: 51, at: now - 3 * 3_600_000, actor: '后台', ip: '203.0.113.8', action: 'POST /customers/:id/lines', summary: '给「王五」开线路:日本-1 · 王五', ok: true, error: '', customer_id: 3 },
+  { id: 50, at: now - 5 * 3_600_000, actor: '令牌「发卡站」', ip: '198.51.100.140', action: 'POST /customers/:id/renew', summary: '给「张三」续费 1 个月;收款 30', ok: true, error: '', customer_id: 1 },
+  { id: 49, at: now - DAY, actor: '后台', ip: '203.0.113.8', action: 'PATCH /panels/:id', summary: '修改面板「美国-1」:标签 美国 → 美国、便宜', ok: true, error: '', customer_id: null },
+  { id: 48, at: now - DAY - 3_600_000, actor: 'MCP · 令牌「发卡站」/ Claude', ip: '203.0.113.8', action: 'POST /customers', summary: '新建客户「李四」:额度 100 GB;月费 50', ok: true, error: '', customer_id: 2 },
+  { id: 47, at: now - 2 * DAY, actor: '后台', ip: '203.0.113.8', action: 'POST /customers/:id/lines', summary: '给「王五」开线路:面板「备用-2」', ok: false, error: '连接失败:超时', customer_id: 3 },
+];
+const settings = { telegram: { token: '', chat_id: '' }, webhook: { url: '' }, feishu: { url: '', secret: '' }, notify: { panel_down: true, panel_down_after: 3, customer_disabled: true, expiring: true, expiring_days: 3, quota_warn: true, quota_warn_pct: 80, monthly_reset: true, sub_share: true, sub_share_ips: 5 }, backup: { daily: false, remote: { endpoint: '', region: '', bucket: '', access_key: '', secret_key: '', prefix: '', keep_days: 30 } } };
+function traffic(by, days, id) {
+  const dayList = Array.from({ length: days }, (_, i) => { const d = new Date(now); d.setDate(d.getDate() - (days - 1 - i)); return d.toISOString().slice(0, 10); });
+  const wave = (seed, scale) => dayList.map((_, i) => Math.round((0.55 + 0.45 * Math.sin((i + seed) * 0.9) + 0.2 * Math.sin((i + seed) * 2.3)) * scale * GB));
+  const subjects = by === 'customer'
+    ? customers.map((x, i) => ({ id: x.id, name: x.name, deleted: false, daily: wave(i * 3, [1.6, 3.4, 0.5][i]) }))
+    : panels.map((x, i) => ({ id: x.id, name: x.name, deleted: false, daily: wave(i * 5, [2.8, 1.6, 0.6][i]) }));
+  const rows = subjects.filter((r) => id == null || r.id === id).map((r) => ({ ...r, up: Math.round(r.daily.reduce((a, v) => a + v, 0) * 0.07), down: Math.round(r.daily.reduce((a, v) => a + v, 0) * 0.93) }));
+  const total = { up: dayList.map((_, i) => Math.round(rows.reduce((a, r) => a + r.daily[i], 0) * 0.07)), down: dayList.map((_, i) => Math.round(rows.reduce((a, r) => a + r.daily[i], 0) * 0.93)) };
+  return { by, id: id ?? null, days: dayList, total, rows };
+}
+
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.png': 'image/png', '.svg': 'image/svg+xml' };
 createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -113,6 +142,13 @@ createServer((req, res) => {
   if (p === '/api/customers') return json(customers);
   if (p === '/api/panels') return json(panels);
   if (p === '/api/socks') return json(socks);
+  if (p === '/api/payments') return json(payments);
+  if (p === '/api/oplog') return json({ rows: oplog, more: false });
+  if (p === '/api/settings') return json(settings);
+  if (p === '/api/traffic') return json(traffic(url.searchParams.get('by') ?? 'customer', Number(url.searchParams.get('days') ?? 30), url.searchParams.get('id') ? Number(url.searchParams.get('id')) : undefined));
+  if (p === '/api/system/version') return json({ current: '1.21.0', latest: '1.21.0', update_available: false, method: 'auto', command: '', checked_at: now - 3_600_000, error: null, state: 'idle', log: '', release_url: '' });
+  if (p === '/api/sub-templates') return json({ default: 'ACL4SSR_Online_Mini', templates: [] });
+  if (p === '/api/tokens' || p === '/api/oauth/grants') return json([]);
   let m;
   if ((m = p.match(/^\/api\/panels\/(\d+)\/inbounds$/))) return json(details[m[1]]);
   if ((m = p.match(/^\/api\/panels\/(\d+)\/versions$/))) {
