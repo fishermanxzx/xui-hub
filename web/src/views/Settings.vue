@@ -175,212 +175,229 @@ async function restore() {
 </script>
 
 <template>
-  <div class="toolbar">
-    <div>
-      <h2>{{ t('settings.title') }}</h2>
-      <p class="muted small">{{ t('settings.intro') }}</p>
+  <header class="page-head">
+    <div class="ph-main">
+      <h1>{{ t('settings.title') }}</h1>
+      <details class="about">
+        <summary>{{ t('common.about') }}</summary>
+        <p>{{ t('settings.intro') }}</p>
+      </details>
     </div>
-  </div>
+  </header>
 
   <template v-if="s">
     <section class="sheet block">
-      <h3>{{ t('settings.channels') }}</h3>
-      <p class="muted small">{{ t('settings.channelsIntro') }}</p>
-      <div class="grid">
-        <label class="field">
-          Telegram Bot token
-          <input v-model="s.telegram.token" :placeholder="t('settings.tgTokenPlaceholder')" autocomplete="off" />
-        </label>
-        <label class="field">
-          Telegram Chat ID
-          <input v-model="s.telegram.chat_id" :placeholder="t('settings.tgChatPlaceholder')" autocomplete="off" />
-        </label>
+      <div class="block-head">
+        <h3>{{ t('settings.channels') }}</h3>
+        <p class="muted small">{{ t('settings.channelsIntro') }}</p>
       </div>
-      <p class="muted small">{{ t('settings.tgNote') }}</p>
-      <div class="grid">
-        <label class="field">
-          {{ t('settings.feishu') }}
-          <input v-model="s.feishu.url" :placeholder="t('settings.feishuPlaceholder')" autocomplete="off" spellcheck="false" />
-        </label>
-        <label class="field">
-          {{ t('settings.feishuSecret') }}
-          <input v-model="s.feishu.secret" :placeholder="t('settings.feishuSecretPlaceholder')" autocomplete="off" spellcheck="false" />
-        </label>
-      </div>
-      <p class="muted small">{{ t('settings.feishuNote') }}</p>
-      <label class="field">
-        {{ t('settings.webhook') }}
-        <input v-model="s.webhook.url" :placeholder="`${t('settings.webhookPlaceholder')} { event, title, text, at }`" autocomplete="off" />
-      </label>
-    </section>
-
-    <section class="sheet block">
-      <h3>{{ t('settings.events') }}</h3>
-      <div class="checks">
-        <label class="row small"><input v-model="s.notify.panel_down" type="checkbox" /><i18n-t keypath="settings.evPanel" tag="span" scope="global"><template #n><input v-model.number="s.notify.panel_down_after" type="number" min="1" max="60" class="num" /></template></i18n-t></label>
-        <label class="row small"><input v-model="s.notify.customer_disabled" type="checkbox" />{{ t('settings.evDisabled') }}</label>
-        <label class="row small"><input v-model="s.notify.expiring" type="checkbox" /><i18n-t keypath="settings.evExpiring" tag="span" scope="global"><template #n><input v-model.number="s.notify.expiring_days" type="number" min="1" max="30" class="num" /></template></i18n-t></label>
-        <label class="row small"><input v-model="s.notify.quota_warn" type="checkbox" /><i18n-t keypath="settings.evQuota" tag="span" scope="global"><template #n><input v-model.number="s.notify.quota_warn_pct" type="number" min="50" max="99" class="num" /></template></i18n-t></label>
-        <label class="row small"><input v-model="s.notify.monthly_reset" type="checkbox" />{{ t('settings.evReset') }}</label>
-        <label class="row small"><input v-model="s.notify.sub_share" type="checkbox" /><i18n-t keypath="settings.evShare" tag="span" scope="global"><template #n><input v-model.number="s.notify.sub_share_ips" type="number" min="2" max="50" class="num" /></template></i18n-t></label>
-      </div>
-      <div class="row actions">
-        <button class="primary" :disabled="saving" @click="save">{{ saving ? t('common.saving') : t('common.save') }}</button>
-        <button :disabled="saving || testing" @click="test">{{ testing ? t('settings.sending') : t('settings.saveAndTest') }}</button>
-      </div>
-    </section>
-
-    <section class="sheet block">
-      <h3>{{ t('settings.api') }}</h3>
-      <p class="muted small">{{ t('settings.apiIntro') }}</p>
-      <form class="row actions" @submit.prevent="addToken">
-        <input v-model="tokenName" required maxlength="64" :placeholder="t('settings.tokenPlaceholder')" class="grow" />
-        <button class="primary">{{ t('settings.tokenCreate') }}</button>
-      </form>
-      <div v-if="fresh" class="fresh">
-        <p class="small"><strong>{{ t('settings.tokenFresh', { name: fresh.name }) }}</strong></p>
-        <div class="row">
-          <input readonly :value="fresh.token" class="grow mono" @focus="($event.target as HTMLInputElement).select()" />
-          <button type="button" @click="copyText(fresh.token ?? '', t('settings.tokenCopied'))">{{ t('common.copy') }}</button>
+      <div class="block-body">
+        <div class="grid">
+          <label class="field">
+            Telegram Bot token
+            <input v-model="s.telegram.token" :placeholder="t('settings.tgTokenPlaceholder')" autocomplete="off" />
+          </label>
+          <label class="field">
+            Telegram Chat ID
+            <input v-model="s.telegram.chat_id" :placeholder="t('settings.tgChatPlaceholder')" autocomplete="off" />
+          </label>
         </div>
-        <p class="muted small">{{ t('settings.tryIt') }}<code>curl -H "Authorization: Bearer {{ fresh.token }}" {{ origin }}/api/customers</code></p>
-      </div>
-      <table v-if="tokens.length" class="tokens">
-        <thead><tr><th>{{ t('settings.colName') }}</th><th>{{ t('settings.colToken') }}</th><th>{{ t('settings.colCreated') }}</th><th>{{ t('settings.colLastUsed') }}</th><th></th></tr></thead>
-        <tbody>
-          <tr v-for="tk in tokens" :key="tk.id">
-            <td>{{ tk.name }}</td>
-            <td class="mono muted">xh_…{{ tk.hint }}</td>
-            <td class="muted small">{{ fmtAgo(tk.created_at) }}</td>
-            <td class="muted small">{{ tk.last_used_at ? fmtAgo(tk.last_used_at) : t('settings.neverUsed') }}</td>
-            <td><button type="button" class="link danger" @click="removeToken(tk)">{{ t('common.delete') }}</button></td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section class="sheet block">
-      <h3>MCP</h3>
-      <p class="muted small">{{ t('settings.mcpIntro') }}</p>
-      <div class="row">
-        <input readonly :value="mcpUrl" class="grow mono" :aria-label="t('settings.mcpAria')" @focus="($event.target as HTMLInputElement).select()" />
-        <button type="button" @click="copyText(mcpUrl, t('settings.mcpCopied'))">{{ t('common.copy') }}</button>
-      </div>
-      <ul class="ways small">
-        <li><strong>{{ t('settings.mcpOauthTitle') }}</strong>{{ t('settings.mcpOauth') }}</li>
-        <li><strong>{{ t('settings.mcpTokenTitle') }}</strong>{{ t('settings.mcpToken') }}<code>claude mcp add --transport http xui-hub {{ mcpUrl }} --header "Authorization: Bearer xh_…"</code></li>
-      </ul>
-      <table v-if="grants.length" class="tokens">
-        <thead><tr><th>{{ t('settings.grantsCol') }}</th><th>{{ t('settings.grantedAt') }}</th><th>{{ t('settings.colLastUsed') }}</th><th></th></tr></thead>
-        <tbody>
-          <tr v-for="g in grants" :key="g.id">
-            <td :title="g.client_id">{{ g.client_name }}</td>
-            <td class="muted small">{{ fmtAgo(g.created_at) }}</td>
-            <td class="muted small">{{ g.last_used_at ? fmtAgo(g.last_used_at) : t('settings.neverUsed') }}</td>
-            <td><button type="button" class="link danger" @click="revoke(g)">{{ t('settings.revoke') }}</button></td>
-          </tr>
-        </tbody>
-      </table>
-      <p v-else class="muted small">{{ t('settings.noGrants') }}</p>
-    </section>
-
-    <section class="sheet block">
-      <h3>{{ t('settings.backup') }}</h3>
-      <p class="muted small">{{ t('settings.backupIntro') }}</p>
-      <div class="row actions">
-        <a class="btn" :href="api.backupUrl" download>{{ t('settings.download') }}</a>
-        <label class="row small"><input v-model="s.backup.daily" type="checkbox" @change="save" />{{ t('settings.daily') }}</label>
-      </div>
-      <div class="restore">
-        <span class="label">{{ t('settings.restore') }}</span>
-        <div class="row">
-          <input ref="fileInput" type="file" accept=".db,application/octet-stream" :disabled="restoring" @change="restore" />
-          <span class="muted small">{{ t('settings.restoreHint') }}</span>
+        <p class="muted small">{{ t('settings.tgNote') }}</p>
+        <div class="grid">
+          <label class="field">
+            {{ t('settings.feishu') }}
+            <input v-model="s.feishu.url" :placeholder="t('settings.feishuPlaceholder')" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="field">
+            {{ t('settings.feishuSecret') }}
+            <input v-model="s.feishu.secret" :placeholder="t('settings.feishuSecretPlaceholder')" autocomplete="off" spellcheck="false" />
+          </label>
         </div>
-        <p v-if="restored" class="small text-ok">{{ t('settings.restored', { panels: restored.panels, customers: restored.customers, lines: restored.lines }) }}</p>
+        <p class="muted small">{{ t('settings.feishuNote') }}</p>
+        <label class="field">
+          {{ t('settings.webhook') }}
+          <input v-model="s.webhook.url" :placeholder="`${t('settings.webhookPlaceholder')} { event, title, text, at }`" autocomplete="off" />
+        </label>
       </div>
     </section>
 
     <section class="sheet block">
-      <h3>{{ t('settings.remote') }}</h3>
-      <p class="muted small">{{ t('settings.remoteIntro') }}</p>
-      <div class="grid">
-        <label class="field">
-          {{ t('settings.remoteEndpoint') }}
-          <input v-model="s.backup.remote.endpoint" :placeholder="t('settings.remoteEndpointPlaceholder')" autocomplete="off" />
-        </label>
-        <label class="field">
-          {{ t('settings.remoteBucket') }}
-          <input v-model="s.backup.remote.bucket" autocomplete="off" />
-        </label>
-        <label class="field">
-          Access Key ID
-          <input v-model="s.backup.remote.access_key" autocomplete="off" />
-        </label>
-        <label class="field">
-          Secret Access Key
-          <input v-model="s.backup.remote.secret_key" type="password" autocomplete="new-password" />
-        </label>
-        <label class="field">
-          {{ t('settings.remotePrefix') }}
-          <input v-model="s.backup.remote.prefix" autocomplete="off" />
-        </label>
-        <label class="field">
-          {{ t('settings.remoteRegion') }}
-          <input v-model="s.backup.remote.region" autocomplete="off" />
-        </label>
-        <label class="field">
-          {{ t('settings.remoteKeep') }}
-          <input v-model.number="s.backup.remote.keep_days" type="number" min="0" max="3650" />
-        </label>
+      <div class="block-head">
+        <h3>{{ t('settings.events') }}</h3>
       </div>
-      <p class="muted small">{{ t('settings.remoteKeepHint') }}</p>
-      <div class="row actions">
-        <button :disabled="saving" @click="save">{{ saving ? t('common.saving') : t('common.save') }}</button>
-        <button :disabled="remoteBusy || saving" @click="remoteNow">{{ remoteBusy ? t('settings.remoteUploading') : t('settings.remoteNow') }}</button>
-        <template v-if="remote?.last">
-          <span v-if="remote.last.ok" class="small text-ok">{{ t('settings.remoteLastOk', { ago: fmtAgo(remote.last.at), key: remote.last.key, size: fmtBytes(remote.last.size ?? 0) }) }}</span>
-          <span v-else class="small text-err">{{ t('settings.remoteLastBad', { ago: fmtAgo(remote.last.at), error: remote.last.error }) }}</span>
+      <div class="block-body">
+        <div class="checks">
+          <label class="row small"><input v-model="s.notify.panel_down" type="checkbox" /><i18n-t keypath="settings.evPanel" tag="span" scope="global"><template #n><input v-model.number="s.notify.panel_down_after" type="number" min="1" max="60" class="num" /></template></i18n-t></label>
+          <label class="row small"><input v-model="s.notify.customer_disabled" type="checkbox" />{{ t('settings.evDisabled') }}</label>
+          <label class="row small"><input v-model="s.notify.expiring" type="checkbox" /><i18n-t keypath="settings.evExpiring" tag="span" scope="global"><template #n><input v-model.number="s.notify.expiring_days" type="number" min="1" max="30" class="num" /></template></i18n-t></label>
+          <label class="row small"><input v-model="s.notify.quota_warn" type="checkbox" /><i18n-t keypath="settings.evQuota" tag="span" scope="global"><template #n><input v-model.number="s.notify.quota_warn_pct" type="number" min="50" max="99" class="num" /></template></i18n-t></label>
+          <label class="row small"><input v-model="s.notify.monthly_reset" type="checkbox" />{{ t('settings.evReset') }}</label>
+          <label class="row small"><input v-model="s.notify.sub_share" type="checkbox" /><i18n-t keypath="settings.evShare" tag="span" scope="global"><template #n><input v-model.number="s.notify.sub_share_ips" type="number" min="2" max="50" class="num" /></template></i18n-t></label>
+        </div>
+        <div class="row actions">
+          <button class="primary" :disabled="saving" @click="save">{{ saving ? t('common.saving') : t('common.save') }}</button>
+          <button :disabled="saving || testing" @click="test">{{ testing ? t('settings.sending') : t('settings.saveAndTest') }}</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="sheet block">
+      <div class="block-head">
+        <h3>{{ t('settings.api') }}</h3>
+        <p class="muted small">{{ t('settings.apiIntro') }}</p>
+      </div>
+      <div class="block-body">
+        <form class="row actions" @submit.prevent="addToken">
+          <input v-model="tokenName" required maxlength="64" :placeholder="t('settings.tokenPlaceholder')" class="grow" />
+          <button class="primary">{{ t('settings.tokenCreate') }}</button>
+        </form>
+        <div v-if="fresh" class="fresh">
+          <p class="small"><strong>{{ t('settings.tokenFresh', { name: fresh.name }) }}</strong></p>
+          <div class="row">
+            <input readonly :value="fresh.token" class="grow mono" @focus="($event.target as HTMLInputElement).select()" />
+            <button type="button" @click="copyText(fresh.token ?? '', t('settings.tokenCopied'))">{{ t('common.copy') }}</button>
+          </div>
+          <p class="muted small">{{ t('settings.tryIt') }}<code>curl -H "Authorization: Bearer {{ fresh.token }}" {{ origin }}/api/customers</code></p>
+        </div>
+        <table v-if="tokens.length" class="tokens">
+          <thead><tr><th>{{ t('settings.colName') }}</th><th>{{ t('settings.colToken') }}</th><th>{{ t('settings.colCreated') }}</th><th>{{ t('settings.colLastUsed') }}</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="tk in tokens" :key="tk.id">
+              <td>{{ tk.name }}</td>
+              <td class="mono muted">xh_…{{ tk.hint }}</td>
+              <td class="muted small">{{ fmtAgo(tk.created_at) }}</td>
+              <td class="muted small">{{ tk.last_used_at ? fmtAgo(tk.last_used_at) : t('settings.neverUsed') }}</td>
+              <td><button type="button" class="link danger" @click="removeToken(tk)">{{ t('common.delete') }}</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="sheet block">
+      <div class="block-head">
+        <h3>MCP</h3>
+        <p class="muted small">{{ t('settings.mcpIntro') }}</p>
+      </div>
+      <div class="block-body">
+        <div class="row">
+          <input readonly :value="mcpUrl" class="grow mono" :aria-label="t('settings.mcpAria')" @focus="($event.target as HTMLInputElement).select()" />
+          <button type="button" @click="copyText(mcpUrl, t('settings.mcpCopied'))">{{ t('common.copy') }}</button>
+        </div>
+        <ul class="ways small">
+          <li><strong>{{ t('settings.mcpOauthTitle') }}</strong>{{ t('settings.mcpOauth') }}</li>
+          <li><strong>{{ t('settings.mcpTokenTitle') }}</strong>{{ t('settings.mcpToken') }}<code>claude mcp add --transport http xui-hub {{ mcpUrl }} --header "Authorization: Bearer xh_…"</code></li>
+        </ul>
+        <table v-if="grants.length" class="tokens">
+          <thead><tr><th>{{ t('settings.grantsCol') }}</th><th>{{ t('settings.grantedAt') }}</th><th>{{ t('settings.colLastUsed') }}</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="g in grants" :key="g.id">
+              <td :title="g.client_id">{{ g.client_name }}</td>
+              <td class="muted small">{{ fmtAgo(g.created_at) }}</td>
+              <td class="muted small">{{ g.last_used_at ? fmtAgo(g.last_used_at) : t('settings.neverUsed') }}</td>
+              <td><button type="button" class="link danger" @click="revoke(g)">{{ t('settings.revoke') }}</button></td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else class="muted small">{{ t('settings.noGrants') }}</p>
+      </div>
+    </section>
+
+    <section class="sheet block">
+      <div class="block-head">
+        <h3>{{ t('settings.backup') }}</h3>
+        <p class="muted small">{{ t('settings.backupIntro') }}</p>
+      </div>
+      <div class="block-body">
+        <div class="row actions">
+          <a class="btn" :href="api.backupUrl" download>{{ t('settings.download') }}</a>
+          <label class="row small"><input v-model="s.backup.daily" type="checkbox" @change="save" />{{ t('settings.daily') }}</label>
+        </div>
+        <div class="restore">
+          <span class="label">{{ t('settings.restore') }}</span>
+          <div class="row">
+            <input ref="fileInput" type="file" accept=".db,application/octet-stream" :disabled="restoring" @change="restore" />
+            <span class="muted small">{{ t('settings.restoreHint') }}</span>
+          </div>
+          <p v-if="restored" class="small text-ok">{{ t('settings.restored', { panels: restored.panels, customers: restored.customers, lines: restored.lines }) }}</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="sheet block">
+      <div class="block-head">
+        <h3>{{ t('settings.remote') }}</h3>
+        <p class="muted small">{{ t('settings.remoteIntro') }}</p>
+      </div>
+      <div class="block-body">
+        <div class="grid">
+          <label class="field">
+            {{ t('settings.remoteEndpoint') }}
+            <input v-model="s.backup.remote.endpoint" :placeholder="t('settings.remoteEndpointPlaceholder')" autocomplete="off" />
+          </label>
+          <label class="field">
+            {{ t('settings.remoteBucket') }}
+            <input v-model="s.backup.remote.bucket" autocomplete="off" />
+          </label>
+          <label class="field">
+            Access Key ID
+            <input v-model="s.backup.remote.access_key" autocomplete="off" />
+          </label>
+          <label class="field">
+            Secret Access Key
+            <input v-model="s.backup.remote.secret_key" type="password" autocomplete="new-password" />
+          </label>
+          <label class="field">
+            {{ t('settings.remotePrefix') }}
+            <input v-model="s.backup.remote.prefix" autocomplete="off" />
+          </label>
+          <label class="field">
+            {{ t('settings.remoteRegion') }}
+            <input v-model="s.backup.remote.region" autocomplete="off" />
+          </label>
+          <label class="field">
+            {{ t('settings.remoteKeep') }}
+            <input v-model.number="s.backup.remote.keep_days" type="number" min="0" max="3650" />
+          </label>
+        </div>
+        <p class="muted small">{{ t('settings.remoteKeepHint') }}</p>
+        <div class="row actions">
+          <button :disabled="saving" @click="save">{{ saving ? t('common.saving') : t('common.save') }}</button>
+          <button :disabled="remoteBusy || saving" @click="remoteNow">{{ remoteBusy ? t('settings.remoteUploading') : t('settings.remoteNow') }}</button>
+          <template v-if="remote?.last">
+            <span v-if="remote.last.ok" class="small text-ok">{{ t('settings.remoteLastOk', { ago: fmtAgo(remote.last.at), key: remote.last.key, size: fmtBytes(remote.last.size ?? 0) }) }}</span>
+            <span v-else class="small text-err">{{ t('settings.remoteLastBad', { ago: fmtAgo(remote.last.at), error: remote.last.error }) }}</span>
+          </template>
+          <span v-else class="muted small">{{ t('settings.remoteNever') }}</span>
+        </div>
+        <template v-if="remote?.enabled">
+          <div class="row remote-head">
+            <span class="label">{{ t('settings.remoteFiles') }}</span>
+            <button class="link" @click="loadRemote">{{ t('settings.remoteRefresh') }}</button>
+          </div>
+          <div v-if="remote.files.length" class="table-wrap">
+            <table class="remote-files">
+              <tbody>
+                <tr v-for="f in remote.files" :key="f.key">
+                  <td class="mono">{{ f.key }}</td>
+                  <td class="muted small">{{ fmtBytes(f.size) }}</td>
+                  <td class="muted small">{{ fmtDateTime(f.at) }}</td>
+                  <td class="right"><button class="link" :disabled="restoring" @click="remoteRestore(f.key)">{{ t('settings.remoteRestore') }}</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p v-else class="muted small">{{ t('settings.remoteNoFiles') }}</p>
         </template>
-        <span v-else class="muted small">{{ t('settings.remoteNever') }}</span>
       </div>
-      <template v-if="remote?.enabled">
-        <div class="row remote-head">
-          <span class="label">{{ t('settings.remoteFiles') }}</span>
-          <button class="link" @click="loadRemote">{{ t('settings.remoteRefresh') }}</button>
-        </div>
-        <div v-if="remote.files.length" class="table-wrap">
-          <table class="remote-files">
-            <tbody>
-              <tr v-for="f in remote.files" :key="f.key">
-                <td class="mono">{{ f.key }}</td>
-                <td class="muted small">{{ fmtBytes(f.size) }}</td>
-                <td class="muted small">{{ fmtDateTime(f.at) }}</td>
-                <td class="right"><button class="link" :disabled="restoring" @click="remoteRestore(f.key)">{{ t('settings.remoteRestore') }}</button></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p v-else class="muted small">{{ t('settings.remoteNoFiles') }}</p>
-      </template>
     </section>
   </template>
 </template>
 
 <style scoped>
-.toolbar {
-  margin-bottom: 16px;
-}
-h2 {
-  font-size: 18px;
-}
 h3 {
   font-size: 15px;
   margin: 0 0 4px;
-}
-.toolbar p {
-  margin: 4px 0 0;
-  max-width: 64ch;
 }
 code {
   font-size: 12px;
@@ -389,14 +406,33 @@ code {
   border-radius: 4px;
 }
 .block {
-  padding: 16px;
+  display: grid;
+  grid-template-columns: minmax(13em, 0.36fr) minmax(0, 1fr);
+  gap: 12px 40px;
+  padding: 20px;
   margin-bottom: 12px;
+}
+.block-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.block-head p {
+  line-height: 1.65;
+}
+.block-body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
 }
 .block p {
   margin: 0;
+}
+@media (max-width: 860px) {
+  .block {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .grid {
   display: grid;

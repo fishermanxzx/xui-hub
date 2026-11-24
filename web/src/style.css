@@ -1,11 +1,14 @@
 /*
- * 浅色数据看板(参考 Plausible / Stripe):浅灰底、白卡片、细边框,靛蓝作强调色(图表、按钮、链接)。
- * 深色模式参考 Vercel / Marzban:深底、细线、高对比。
- * 状态色只给异常:黄 = 快到期 / 快用完,红 = 已到期 / 超额 / 失败;绿只用于利润等正向数字。
+ * 配线柜:浅灰绿底、白色面板、细线分隔,深青色只当「线路 / 可以点」的信号色。
+ * 每一页都是一张对齐的账:同一类信息在同一列,扫一眼就能比较。
+ * 状态色只给异常:黄 = 快到期 / 快用完,红 = 已到期 / 超额 / 失败;绿只用于「正常」和利润等正向数字。
+ * 按钮分三级:实心(一个区域最多一个)、描边(次要)、灰字(行内操作,悬停才变色)。删除这类放进「⋯」菜单。
  */
 :root {
-  --ground: #f5f6f8;
+  --ground: #f1f2ee;
   --sheet: #ffffff;
+  /* 表头、子区域:比底色浅、比白色深一点 */
+  --sunk: #f7f8f5;
   /* 图表分类色(固定顺序,色盲可区分,已用校验脚本验过):前 7 名各一色,其余并入「其他」 */
   --series-1: #2a78d6;
   --series-2: #eb6834;
@@ -15,31 +18,38 @@
   --series-6: #008300;
   --series-7: #6250d6;
   --series-other: #898781;
-  --ink: #15181e;
-  --ink-soft: #667085;
-  --rule: #e4e7ec;
-  --rule-soft: #eef0f3;
-  --hover: #f8f9fb;
-  --accent: #5157e0;
-  --accent-soft: #eef0ff;
-  --accent-strong: #3b40c4;
-  --patch: #4b51d8;
-  --caution: #b54708;
-  --caution-mark: #f79009;
-  --caution-bg: #fffaeb;
-  --fault: #d92d20;
-  --fault-bg: #fef3f2;
-  --ok: #067647;
-  --ok-bg: #ecfdf3;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.05);
-  --font: 'Inter', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --ink: #1d2320;
+  --ink-soft: #5d6762;
+  --ink-faint: #8a938e;
+  --rule: #dce0da;
+  --rule-soft: #eaede8;
+  --hover: #f3f5f1;
+  --accent: #0b7466;
+  --on-accent: #ffffff;
+  --accent-soft: #e2f1ed;
+  --accent-strong: #075b50;
+  /* 链接 / 可以点的字 */
+  --patch: #0b7466;
+  --caution: #995700;
+  --caution-mark: #df981c;
+  --caution-bg: #fcf3e1;
+  --fault: #bd3a2b;
+  --fault-bg: #fbece9;
+  --ok: #1c7745;
+  --ok-bg: #e6f3eb;
+  --shadow: 0 1px 2px rgba(29, 35, 32, 0.04);
+  --lift: 0 14px 32px rgba(29, 35, 32, 0.14), 0 2px 6px rgba(29, 35, 32, 0.06);
+  --font: 'IBM Plex Sans', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  /* 只给机器认的字符串:订阅链接、IP、email、令牌 */
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ground: #0a0b0d;
-    --sheet: #111318;
+    --ground: #111513;
+    --sheet: #181d1a;
+    --sunk: #151a17;
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
@@ -47,23 +57,26 @@
     --series-5: #d55181;
     --series-6: #008300;
     --series-7: #9085e9;
-    --ink: #ededf0;
-    --ink-soft: #8b8f98;
-    --rule: #23262d;
-    --rule-soft: #1a1d23;
-    --hover: #16191f;
-    --accent: #8187f5;
-    --accent-soft: #1d1f3d;
-    --accent-strong: #a3a8fa;
-    --patch: #9ba0fb;
-    --caution: #fdb022;
-    --caution-mark: #fdb022;
-    --caution-bg: #2a1f05;
-    --fault: #f97066;
-    --fault-bg: #2d1210;
-    --ok: #47cd89;
-    --ok-bg: #0b2a1b;
+    --ink: #e5e9e6;
+    --ink-soft: #99a29d;
+    --ink-faint: #6f7873;
+    --rule: #2a312d;
+    --rule-soft: #212723;
+    --hover: #1e2420;
+    --accent: #43c0a4;
+    --on-accent: #062520;
+    --accent-soft: #15362f;
+    --accent-strong: #72d6bf;
+    --patch: #5ccdb3;
+    --caution: #f0b24f;
+    --caution-mark: #f0b24f;
+    --caution-bg: #31240b;
+    --fault: #f27c6d;
+    --fault-bg: #381a16;
+    --ok: #5bc98a;
+    --ok-bg: #11301e;
     --shadow: none;
+    --lift: 0 14px 34px rgba(0, 0, 0, 0.55);
     color-scheme: dark;
   }
 }
@@ -78,7 +91,6 @@ body {
   color: var(--ink);
   font: 14px/1.55 var(--font);
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: 'cv11', 'ss01';
 }
 
 h1,
@@ -86,7 +98,13 @@ h2,
 h3 {
   margin: 0;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.005em;
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 0.92em;
 }
 
 :focus-visible {
@@ -94,11 +112,11 @@ h3 {
   outline-offset: 2px;
 }
 
-/* 卡片:白底、细边框、圆角、极淡的阴影 */
+/* 面板(卡片):白底、细边框 */
 .sheet {
   background: var(--sheet);
   border: 1px solid var(--rule);
-  border-radius: 12px;
+  border-radius: 10px;
   box-shadow: var(--shadow);
 }
 
@@ -126,31 +144,33 @@ h3 {
   flex: 1;
 }
 
+/* ---------- 按钮 ---------- */
 button {
   font: inherit;
   font-weight: 500;
   border: 1px solid var(--rule);
   background: var(--sheet);
   color: var(--ink);
-  border-radius: 8px;
-  padding: 6px 12px;
+  border-radius: 7px;
+  padding: 5px 12px;
+  line-height: 20px;
   cursor: pointer;
-  box-shadow: var(--shadow);
 }
 
 button:hover:not(:disabled) {
   background: var(--hover);
+  border-color: color-mix(in srgb, var(--ink-soft) 35%, var(--rule));
 }
 
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 button.primary:hover:not(:disabled) {
@@ -162,25 +182,37 @@ button.danger {
   color: var(--fault);
 }
 
+/* 小号按钮:放在列表行里 */
+button.small-btn {
+  padding: 2px 10px;
+  font-size: 13px;
+}
+
+/* 行内操作:灰字,悬停变成信号色 */
 button.link {
   border: none;
   background: none;
-  box-shadow: none;
   padding: 0;
   font-weight: 500;
-  color: var(--patch);
+  line-height: inherit;
+  color: var(--ink-soft);
 }
 
 button.link:hover:not(:disabled) {
   background: none;
-  text-decoration: underline;
+  color: var(--accent-strong);
 }
 
+/* 行里的删除:平时灰,悬停才变红(点了还有确认框) */
 button.link.danger {
+  color: var(--ink-soft);
+}
+
+button.link.danger:hover:not(:disabled) {
   color: var(--fault);
 }
 
-/* 跳转到外部页面的链接,样式同 button.link */
+/* 跳到别处的链接:信号色 */
 a.link {
   font-weight: 500;
   color: var(--patch);
@@ -191,6 +223,7 @@ a.link:hover {
   text-decoration: underline;
 }
 
+/* ---------- 输入 ---------- */
 input,
 select,
 textarea {
@@ -198,10 +231,15 @@ textarea {
   color: var(--ink);
   background: var(--sheet);
   border: 1px solid var(--rule);
-  border-radius: 8px;
-  padding: 6px 10px;
+  border-radius: 7px;
+  padding: 5px 10px;
+  line-height: 20px;
   min-width: 0;
-  box-shadow: var(--shadow);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ink-faint);
 }
 
 input:focus,
@@ -209,19 +247,20 @@ select:focus,
 textarea:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
+  border-color: transparent;
 }
 
-input[type='checkbox'] {
+input[type='checkbox'],
+input[type='radio'] {
   width: 16px;
   height: 16px;
   accent-color: var(--accent);
-  box-shadow: none;
 }
 
 label.field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
   font-size: 12px;
   font-weight: 500;
   color: var(--ink-soft);
@@ -234,6 +273,115 @@ label.field > textarea {
   font-weight: 400;
 }
 
+/* ---------- 页头:标题 + 一行概况 + 右边的操作;长说明收在「说明」里 ---------- */
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 24px;
+  margin-bottom: 18px;
+}
+
+.page-head h1 {
+  font-size: 22px;
+  line-height: 30px;
+}
+
+.page-head .ph-main {
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.page-head .ph-sum {
+  margin: 2px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.page-head .ph-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+details.about {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+details.about > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 500;
+  user-select: none;
+}
+
+details.about > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.about > summary::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  margin-right: 2px;
+  transition: transform 0.15s;
+}
+
+details.about[open] > summary::before {
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+details.about > summary:hover {
+  color: var(--ink);
+}
+
+details.about > p {
+  margin: 6px 0 0;
+  max-width: 72ch;
+  line-height: 1.65;
+}
+
+/* ---------- 用量条 ---------- */
+.meter {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--rule-soft);
+  overflow: hidden;
+  min-width: 60px;
+}
+
+.meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.meter.warn > span {
+  background: var(--caution-mark);
+}
+
+.meter.full > span {
+  background: var(--fault);
+}
+
+/* ---------- 表格 ---------- */
 .table-wrap {
   overflow-x: auto;
 }
@@ -247,7 +395,7 @@ table {
 th,
 td {
   text-align: left;
-  padding: 11px 16px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--rule-soft);
   vertical-align: middle;
 }
@@ -257,7 +405,7 @@ th {
   font-weight: 500;
   color: var(--ink-soft);
   white-space: nowrap;
-  background: var(--hover);
+  background: var(--sunk);
   border-bottom-color: var(--rule);
 }
 
@@ -281,8 +429,8 @@ tbody tr.clickable:hover {
 /* 状态胶囊只给异常 */
 .badge {
   display: inline-block;
-  padding: 0 8px;
-  border-radius: 999px;
+  padding: 0 7px;
+  border-radius: 5px;
   font-size: 12px;
   font-weight: 500;
   line-height: 20px;
@@ -307,10 +455,10 @@ tbody tr.clickable:hover {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 0 8px;
-  line-height: 22px;
+  padding: 0 7px;
+  line-height: 20px;
   border: 1px solid var(--rule);
-  border-radius: 6px;
+  border-radius: 5px;
   font-size: 12px;
   white-space: nowrap;
   background: var(--sheet);

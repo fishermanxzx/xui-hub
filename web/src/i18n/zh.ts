@@ -1,6 +1,8 @@
 // 中文文案(基准语言)。按页面分组;en.ts 的结构必须和这里一致。
 export default {
   common: {
+    more: '更多操作',
+    about: '说明',
     close: '关闭',
     cancel: '取消',
     save: '保存',
@@ -351,7 +353,7 @@ export default {
   panels: {
     nodeName: '节点名',
     nodeNamePlaceholder: '留空 = 用面板生成的名字',
-    nodeNameHint: '客户订阅里这块面板上线路的节点名。线路没单独设节点名的就用它;单独设过的不跟着变,要统一就点卡片上的「线路都用这个节点名」。',
+    nodeNameHint: '客户订阅里这块面板上线路的节点名。线路没单独设节点名的就用它;单独设过的不跟着变,要统一就点卡片上「⋯」里的「线路都用这个节点名」。',
     tags: '标签',
     tagsPlaceholder: '如:美国, 便宜(逗号或空格分开)',
     tagsHint: '给面板分组用:面板页、客户页都能按标签筛。每个最多 20 个字,最多 20 个。',
@@ -392,6 +394,8 @@ export default {
     savingCheck: '保存并检查中…',
   },
   card: {
+    deletePanel: '删除面板',
+    moreFor: '「{name}」的更多操作',
     nodeName: '节点名「{name}」',
     nodeNameHint: '这块面板上没单独设节点名的线路,订阅里用这个名字',
     ratio: '倍率 ×{v}',
@@ -740,6 +744,18 @@ export default {
     shareWarn: '24 小时 {n} 个 IP,疑似分享',
     records: '记录',
     lineUsage: '已用 {used} · 在线 {ago}',
+    sumTotal: '{n} 位客户',
+    sumOver: '{n} 位超额',
+    sumExpired: '{n} 位已到期',
+    sumSoon: '{n} 位 7 天内到期',
+    sumLinesOff: '{n} 位有线路停着',
+    noQuota: '不限额',
+    usageAria: '已用占额度的百分比',
+    moreFor: '「{name}」的更多操作',
+    moreForLine: '{name} 这条线路的更多操作',
+    lineOnline: '在线 {ago}',
+    deleteCustomer: '删除客户',
+    deleteLine: '删除线路',
     autoDisabled: '已停用(超额 / 到期)',
     panelDisabled: '面板上已停用',
     rename: '改名',
@@ -976,7 +992,7 @@ export default {
     colResult: '结果',
     fetchesNote: '来源 IP 多、客户端杂,可能是链接被分享了;「重置链接」可以让旧链接失效。',
     topoTitle: '「{name}」的网络拓扑',
-    topoHint: '滚轮缩放,拖动画布或节点;点节点看下游路径和线上的协议 / 客户端名,点空白恢复。蓝边是面板,黄底是 SOCKS,虚线箭头是出网。',
+    topoHint: '滚轮缩放,拖动画布或节点;点节点看下游路径和线上的协议 / 客户端名,点空白恢复。青色边是面板,黄底是 SOCKS,虚线箭头是出网。',
     linksTitle: '「{email}」的链接',
   },
   subTemplates: {

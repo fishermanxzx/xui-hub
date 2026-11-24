@@ -9,6 +9,7 @@ import type { ClientProtocol, CreatedClient, Customer, Panel, PanelClient, Panel
 import ClientLinks from './ClientLinks.vue';
 import Modal from './Modal.vue';
 import Select, { type SelectOption } from './Select.vue';
+import ActionMenu, { type MenuItem } from './ActionMenu.vue';
 
 const props = defineProps<{ panel: Panel; open: boolean; /** 面板页正按这些标签筛 */ pickedTags?: string[] }>();
 /** 地址是域名时,检查时解析出的 IP;地址本身就是 IP 就不重复显示 */
@@ -38,6 +39,16 @@ async function applyLineNames() {
     renaming.value = false;
   }
 }
+
+/** 「⋯」里的操作:检查、内核、重启、打开后台、统一节点名、删除 */
+const menuItems = computed<MenuItem[]>(() => [
+  { label: checking.value ? t('card.checking') : t('card.check'), run: check, disabled: checking.value },
+  { label: t('card.xray'), run: openXray, disabled: !!props.panel.check_error },
+  { label: restarting.value ? t('card.restarting') : t('card.restart'), run: restart, disabled: restarting.value, title: t('card.restartHint') },
+  { label: t('card.openPanel'), run: () => window.open(props.panel.base_url, '_blank', 'noopener,noreferrer'), title: t('card.openPanelHint') },
+  ...(props.panel.node_name && props.panel.line_count ? [{ label: t('card.lineNames'), run: applyLineNames, disabled: renaming.value, title: t('card.lineNamesHint'), divide: true }] : []),
+  { label: t('card.deletePanel'), run: () => emit('remove'), danger: true, divide: true },
+]);
 
 const detail = ref<PanelDetail | null>(null);
 const loading = ref(false);
@@ -281,37 +292,42 @@ async function removeClient(c: PanelClient) {
   <article class="card sheet" :class="{ open, bad: panel.check_error }">
     <header class="head">
       <button class="title" :aria-expanded="open" @click="emit('toggle')">
-        <span class="caret" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
-        <span class="name">{{ panel.name }}</span>
-        <span class="muted small host">{{ hostOf(panel.base_url) }}</span>
-        <span v-if="resolvedIp" class="small ip" :title="t('card.ipHint')">{{ resolvedIp }}</span>
+        <svg class="caret" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        <span class="title-text">
+          <span class="name">{{ panel.name }}</span>
+          <span class="small addr"><span class="muted host">{{ hostOf(panel.base_url) }}</span><span v-if="resolvedIp" class="ip mono" :title="t('card.ipHint')">{{ resolvedIp }}</span></span>
+        </span>
       </button>
-      <div class="facts small">
-        <span v-if="panel.check_error" class="text-err" :title="panel.check_error">{{ t('card.down', { error: panel.check_error.slice(0, 36) }) }}</span>
+      <div class="state">
+        <span v-if="panel.check_error" class="text-err status" :title="panel.check_error"><i class="dot" />{{ t('card.down', { error: panel.check_error.slice(0, 36) }) }}</span>
         <template v-else-if="panel.check_ok_at">
-          <span class="text-ok">{{ t('card.statusOk') }}</span>
-          <span class="muted">{{ t('card.summary', { inbounds: panel.inbound_count ?? 0, clients: panel.client_count ?? 0, ago: fmtAgo(panel.check_ok_at) }) }}</span>
-          <span v-if="panel.panel_version" class="muted">{{ t('card.panelVersion', { v: panel.panel_version }) }}</span>
-          <span v-if="panel.xray_version" :class="panel.xray_state === 'running' ? 'muted' : 'text-err'" :title="panel.xray_state ?? ''">
-            {{ t('card.xrayVersion', { v: panel.xray_version }) }}<template v-if="panel.xray_state && panel.xray_state !== 'running'">({{ panel.xray_state }})</template>
-          </span>
+          <span class="status"><i class="dot ok" />{{ t('card.statusOk') }}</span>
+          <span class="small muted">{{ t('card.summary', { inbounds: panel.inbound_count ?? 0, clients: panel.client_count ?? 0, ago: fmtAgo(panel.check_ok_at) }) }}</span>
         </template>
-        <span v-else class="muted">{{ t('card.notChecked') }}</span>
+        <span v-else class="muted status"><i class="dot" />{{ t('card.notChecked') }}</span>
+      </div>
+      <div class="versions small">
+        <span v-if="panel.panel_version" class="muted">{{ t('card.panelVersion', { v: panel.panel_version }) }}</span>
+        <span v-if="panel.xray_version" :class="panel.xray_state === 'running' ? 'muted' : 'text-err'" :title="panel.xray_state ?? ''">
+          {{ t('card.xrayVersion', { v: panel.xray_version }) }}<template v-if="panel.xray_state && panel.xray_state !== 'running'">({{ panel.xray_state }})</template>
+        </span>
+      </div>
+      <div class="labels small">
         <span v-if="panel.node_name" class="node-name" :title="t('card.nodeNameHint')">{{ t('card.nodeName', { name: panel.node_name }) }}</span>
-        <button v-for="tag in panel.tags ?? []" :key="tag" type="button" class="tag" :class="{ on: pickedTags?.includes(tag) }" :title="t('card.tagHint')" @click="emit('tag', tag)">{{ tag }}</button>
-        <span v-if="panel.traffic_ratio !== 1" class="ratio" :title="t('card.ratioHint')">{{ t('card.ratio', { v: panel.traffic_ratio }) }}</span>
-        <span v-if="panel.monthly_cost != null" class="muted">{{ t('cost.value', { v: fmtCost(panel.monthly_cost) }) }}</span>
+        <span v-if="panel.tags?.length || panel.traffic_ratio !== 1" class="tags">
+          <button v-for="tag in panel.tags ?? []" :key="tag" type="button" class="tag" :class="{ on: pickedTags?.includes(tag) }" :title="t('card.tagHint')" @click="emit('tag', tag)">{{ tag }}</button>
+          <span v-if="panel.traffic_ratio !== 1" class="ratio" :title="t('card.ratioHint')">{{ t('card.ratio', { v: panel.traffic_ratio }) }}</span>
+        </span>
+      </div>
+      <div class="cost small">
+        <span v-if="panel.monthly_cost != null">{{ t('cost.value', { v: fmtCost(panel.monthly_cost) }) }}</span>
         <span v-if="panel.expire_at" :class="dueClass(panel.expire_at, 'muted')">{{ t('cost.expireOn', { date: fmtDate(panel.expire_at) }) }} · {{ fmtDue(panel.expire_at) }}</span>
+        <span v-if="panel.monthly_cost == null && !panel.expire_at" class="muted">—</span>
       </div>
       <div class="ops">
         <button class="primary small-btn" @click="openCreate">{{ t('card.createClient') }}</button>
-        <button class="link" :disabled="checking" @click="check">{{ checking ? t('card.checking') : t('card.check') }}</button>
-        <button class="link" :disabled="!!panel.check_error" @click="openXray">{{ t('card.xray') }}</button>
-        <button class="link" :disabled="restarting" :title="t('card.restartHint')" @click="restart">{{ restarting ? t('card.restarting') : t('card.restart') }}</button>
-        <a class="link" :href="panel.base_url" target="_blank" rel="noopener noreferrer" :title="t('card.openPanelHint')">{{ t('card.openPanel') }}</a>
-        <button v-if="panel.node_name && panel.line_count" class="link" :disabled="renaming" :title="t('card.lineNamesHint')" @click="applyLineNames">{{ t('card.lineNames') }}</button>
-        <button class="link" @click="emit('edit')">{{ t('common.edit') }}</button>
-        <button class="link danger" @click="emit('remove')">{{ t('common.delete') }}</button>
+        <button class="small-btn" @click="emit('edit')">{{ t('common.edit') }}</button>
+        <ActionMenu :items="menuItems" :aria-label="t('card.moreFor', { name: panel.name })" />
       </div>
     </header>
 
@@ -452,18 +468,18 @@ async function removeClient(c: PanelClient) {
 .card.bad {
   border-color: color-mix(in srgb, var(--fault) 40%, var(--rule));
 }
+/* 一块面板一行:名称地址 / 状态 / 版本 / 节点名和标签 / 成本 / 操作,各列在面板之间对齐 */
 .head {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 4px 16px;
-  padding: 12px 16px;
-  align-items: center;
+  grid-template-columns: minmax(12em, 1.25fr) minmax(10em, 1fr) minmax(8em, 0.7fr) minmax(9em, 0.95fr) minmax(9em, 0.9fr) auto;
+  gap: 8px 22px;
+  padding: 13px 16px;
+  align-items: start;
 }
 .title {
-  grid-column: 1;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 6px;
   padding: 0;
   border: none;
   background: none;
@@ -472,13 +488,34 @@ async function removeClient(c: PanelClient) {
   cursor: pointer;
   min-width: 0;
 }
+.title:hover:not(:disabled) {
+  background: none;
+}
 .caret {
+  flex: none;
+  margin-top: 4px;
   color: var(--ink-soft);
-  font-size: 12px;
+  transition: transform 0.15s;
+}
+.card.open .caret {
+  transform: rotate(90deg);
+}
+.title-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 .name {
   font-weight: 600;
-  font-size: 15px;
+  font-size: 16px;
+  line-height: 22px;
+}
+.addr {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  font-weight: 400;
+  min-width: 0;
 }
 .host {
   overflow: hidden;
@@ -488,53 +525,89 @@ async function removeClient(c: PanelClient) {
 .ip {
   flex-shrink: 0;
   color: var(--ink);
-  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
   user-select: all;
 }
-.facts .node-name {
+.state,
+.versions,
+.labels,
+.cost {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-weight: 500;
 }
-.facts .ratio {
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.dot.ok {
+  background: var(--ok);
+}
+.node-name {
+  font-weight: 500;
+}
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.ratio {
   color: var(--caution);
   font-weight: 500;
 }
-.facts .tag {
-  padding: 0 8px;
+.tag {
+  padding: 0 7px;
   border: 1px solid var(--rule);
-  border-radius: 999px;
+  border-radius: 5px;
   background: none;
   color: var(--ink-soft);
   font-size: 12px;
+  font-weight: 400;
   line-height: 18px;
-  cursor: pointer;
 }
-.facts .tag:hover {
+.tag:hover:not(:disabled) {
   border-color: var(--accent);
+  background: none;
 }
-.facts .tag.on {
+.tag.on {
   background: var(--accent-soft);
-  border-color: var(--accent);
+  border-color: transparent;
   color: var(--accent-strong);
 }
-.facts {
-  grid-column: 1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  padding-left: 20px;
-}
 .ops {
-  grid-column: 2;
-  grid-row: 1 / span 2;
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 4px 14px;
+  gap: 6px;
+  justify-self: end;
 }
-.small-btn {
-  padding: 4px 10px;
-  font-size: 13px;
+@media (max-width: 1100px) {
+  .head {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .ops {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+@media (max-width: 600px) {
+  .head {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .title {
+    grid-column: 1 / -1;
+  }
 }
 .body {
   border-top: 1px solid var(--rule-soft);

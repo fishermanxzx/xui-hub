@@ -42,7 +42,7 @@ async function submit() {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  border-top: 3px solid var(--ink);
+  border-top: 3px solid var(--accent);
 }
 h1 {
   font-size: 20px;

@@ -122,12 +122,15 @@ const costRows = computed(() =>
 </script>
 
 <template>
-  <div class="toolbar">
-    <div>
-      <h2>{{ t('ledger.title') }}</h2>
-      <p class="muted small">{{ t('ledger.intro') }}</p>
+  <header class="page-head">
+    <div class="ph-main">
+      <h1>{{ t('ledger.title') }}</h1>
+      <details class="about">
+        <summary>{{ t('common.about') }}</summary>
+        <p>{{ t('ledger.intro') }}</p>
+      </details>
     </div>
-  </div>
+  </header>
 
   <section class="tiles">
     <div class="tile sheet">

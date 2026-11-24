@@ -88,37 +88,36 @@ onMounted(checkSession);
   z-index: 20;
 }
 .topbar-inner {
-  max-width: 1240px;
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 28px;
   display: flex;
-  align-items: center;
-  gap: 32px;
-  height: 56px;
+  align-items: stretch;
+  gap: 28px;
+  height: 52px;
 }
 .mark {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   font-weight: 600;
   font-size: 15px;
-  letter-spacing: -0.01em;
 }
 /* 三条错开的线,像线路汇入一处 */
 .logo {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
   background:
-    linear-gradient(var(--sheet), var(--sheet)) 5px 6px / 9px 2px no-repeat,
-    linear-gradient(var(--sheet), var(--sheet)) 5px 10px / 12px 2px no-repeat,
-    linear-gradient(var(--sheet), var(--sheet)) 5px 14px / 7px 2px no-repeat,
+    linear-gradient(var(--sheet), var(--sheet)) 4px 5px / 8px 2px no-repeat,
+    linear-gradient(var(--sheet), var(--sheet)) 4px 9px / 12px 2px no-repeat,
+    linear-gradient(var(--sheet), var(--sheet)) 4px 13px / 6px 2px no-repeat,
     var(--accent);
 }
 nav {
   display: flex;
-  gap: 4px;
-  align-items: center;
+  gap: 2px;
+  align-items: stretch;
   /* 窄屏放不下就横着滑,不把字挤成竖排 */
   min-width: 0;
   overflow-x: auto;
@@ -129,20 +128,27 @@ nav::-webkit-scrollbar {
 }
 nav a {
   flex: none;
+  display: flex;
+  align-items: center;
   white-space: nowrap;
-  padding: 6px 12px;
-  border-radius: 8px;
+  padding: 0 11px;
   color: var(--ink-soft);
   text-decoration: none;
   font-weight: 500;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
 }
 nav a:hover {
   color: var(--ink);
-  background: var(--hover);
 }
 nav a.on {
-  color: var(--accent-strong);
-  background: var(--accent-soft);
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+.topbar-inner > :not(nav):not(.spacer) {
+  align-self: center;
+  flex: none;
+  white-space: nowrap;
 }
 .spacer {
   flex: 1;
@@ -151,9 +157,9 @@ nav a.on {
   color: var(--ink-soft);
 }
 .shell {
-  max-width: 1240px;
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 24px 24px 48px;
+  padding: 28px 28px 56px;
 }
 .toasts {
   position: fixed;
@@ -169,6 +175,7 @@ nav a.on {
   padding: 10px 14px;
   max-width: 440px;
   border-left: 3px solid var(--accent);
+  box-shadow: var(--lift);
 }
 .toast.err {
   border-left-color: var(--fault);
@@ -177,13 +184,14 @@ nav a.on {
 @media (max-width: 640px) {
   .topbar-inner {
     padding: 0 12px;
-    gap: 12px;
+    gap: 10px;
   }
   .mark {
     font-size: 0;
     gap: 0;
   }
   .shell {
-    padding: 16px 12px 32px;
+    padding: 18px 14px 32px;
   }
-}</style>
+}
+</style>

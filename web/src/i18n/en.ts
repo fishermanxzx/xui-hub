@@ -3,6 +3,8 @@ import type { Messages } from './index';
 
 const en: Messages = {
   common: {
+    more: 'More actions',
+    about: 'About this page',
     close: 'Close',
     cancel: 'Cancel',
     save: 'Save',
@@ -353,7 +355,7 @@ const en: Messages = {
   panels: {
     nodeName: 'Node name',
     nodeNamePlaceholder: 'Blank = the name the panel generates',
-    nodeNameHint: 'The node name of lines on this panel in customer subscriptions. Lines without their own name use it; lines with their own name keep it. To make them all the same, use "Use this name for all lines" on the card.',
+    nodeNameHint: 'The node name of lines on this panel in customer subscriptions. Lines without their own name use it; lines with their own name keep it. To make them all the same, use "Use this name for all lines" in the card\'s ⋯ menu.',
     tags: 'Tags',
     tagsPlaceholder: 'e.g. us, cheap (comma or space separated)',
     tagsHint: 'For grouping panels: both the Panels and Customers pages can filter by tag. Up to 20 tags, 20 characters each.',
@@ -394,6 +396,8 @@ const en: Messages = {
     savingCheck: 'Saving and checking…',
   },
   card: {
+    deletePanel: 'Delete panel',
+    moreFor: 'More actions for "{name}"',
     nodeName: 'Node name "{name}"',
     nodeNameHint: 'Lines on this panel without their own node name use this name in subscriptions',
     ratio: 'Rate ×{v}',
@@ -742,6 +746,18 @@ const en: Messages = {
     shareWarn: '{n} IPs in 24 h, possibly shared',
     records: 'Log',
     lineUsage: 'Used {used} · online {ago}',
+    sumTotal: '{n} customer | {n} customers',
+    sumOver: '{n} over quota',
+    sumExpired: '{n} expired',
+    sumSoon: '{n} expiring within 7 days',
+    sumLinesOff: '{n} with lines disabled',
+    noQuota: 'no quota',
+    usageAria: 'Share of the quota used',
+    moreFor: 'More actions for "{name}"',
+    moreForLine: 'More actions for the line on {name}',
+    lineOnline: 'online {ago}',
+    deleteCustomer: 'Delete customer',
+    deleteLine: 'Delete line',
     autoDisabled: 'Disabled (quota / expiry)',
     panelDisabled: 'Disabled on the panel',
     rename: 'Rename',
@@ -978,7 +994,7 @@ const en: Messages = {
     colResult: 'Result',
     fetchesNote: 'Many source IPs and mixed clients may mean the link was shared; "Reset link" makes the old link stop working.',
     topoTitle: 'Topology of "{name}"',
-    topoHint: 'Scroll to zoom, drag the canvas or nodes. Click a node to see its downstream path with protocol / client name on the lines; click empty space to reset. Blue border: panel; yellow: SOCKS; dashed arrow: out to the internet.',
+    topoHint: 'Scroll to zoom, drag the canvas or nodes. Click a node to see its downstream path with protocol / client name on the lines; click empty space to reset. Teal border: panel; yellow: SOCKS; dashed arrow: out to the internet.',
     linksTitle: 'Links of "{email}"',
   },
   subTemplates: {

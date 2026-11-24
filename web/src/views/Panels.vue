@@ -151,22 +151,25 @@ onUnmounted(() => clearInterval(timer));
 </script>
 
 <template>
-  <div class="toolbar">
-    <div>
-      <h2>{{ t('panels.title') }}</h2>
-      <p class="muted small">{{ t('panels.intro') }}</p>
-      <p v-if="panels.length" class="small summary">
+  <header class="page-head">
+    <div class="ph-main">
+      <h1>{{ t('panels.title') }}</h1>
+      <p v-if="panels.length" class="ph-sum">
         <span>{{ t('cost.total', { total: fmtCost(summary.total) }) }}</span>
-        <span v-if="summary.unset" class="muted">{{ t('cost.unset', { n: summary.unset }) }}</span>
+        <span v-if="summary.unset">{{ t('cost.unset', { n: summary.unset }) }}</span>
         <span v-if="summary.soon" class="text-warn">{{ t('cost.soon', { n: summary.soon }) }}</span>
         <span v-if="summary.overdue" class="text-err">{{ t('cost.overdue', { n: summary.overdue }) }}</span>
       </p>
+      <details class="about">
+        <summary>{{ t('common.about') }}</summary>
+        <p>{{ t('panels.intro') }}</p>
+      </details>
     </div>
-    <div class="row">
+    <div class="ph-actions">
       <button :disabled="checking || !panels.length" @click="checkAll">{{ checking ? t('panels.checking') : t('panels.checkAll') }}</button>
       <button class="primary" @click="openForm(null)">{{ t('panels.add') }}</button>
     </div>
-  </div>
+  </header>
 
   <div v-if="allTags.length" class="tag-filter small" role="group" :aria-label="t('panels.filterTags')">
     <span class="muted">{{ t('panels.filterTags') }}</span>
@@ -217,24 +220,10 @@ onUnmounted(() => clearInterval(timer));
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-h2 {
-  font-size: 18px;
-}
-.toolbar p {
-  margin: 4px 0 0;
-}
 .cards {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 .form {
   display: flex;
@@ -255,15 +244,19 @@ h2 {
   margin-bottom: 12px;
 }
 .tag-btn {
-  padding: 2px 10px;
-  border-radius: 999px;
+  padding: 1px 9px;
+  border-radius: 5px;
   font-size: 12px;
+  font-weight: 400;
   line-height: 20px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-soft);
 }
 .tag-btn[aria-pressed='true'] {
   background: var(--accent-soft);
-  border-color: var(--accent);
   color: var(--accent-strong);
+  font-weight: 500;
 }
 .node-hint .tag-btn {
   margin: 4px 4px 0 0;
@@ -272,10 +265,5 @@ h2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
-}
-.summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
 }
 </style>

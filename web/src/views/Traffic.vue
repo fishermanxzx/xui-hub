@@ -123,12 +123,15 @@ function open(r: TrafficRow) {
 </script>
 
 <template>
-  <div class="toolbar">
-    <div>
-      <h2>{{ t('traffic.title') }}</h2>
-      <p class="muted small">{{ t('traffic.intro') }}</p>
+  <header class="page-head">
+    <div class="ph-main">
+      <h1>{{ t('traffic.title') }}</h1>
+      <details class="about">
+        <summary>{{ t('common.about') }}</summary>
+        <p>{{ t('traffic.intro') }}</p>
+      </details>
     </div>
-  </div>
+  </header>
 
   <div class="filters">
     <div class="seg" role="group" :aria-label="t('traffic.byLabel')">
