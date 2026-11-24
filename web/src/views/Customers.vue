@@ -13,7 +13,7 @@ import CustomerRenew from '../components/CustomerRenew.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import MultiSelect from '../components/MultiSelect.vue';
 import ActionMenu, { type MenuItem } from '../components/ActionMenu.vue';
-import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, exitIps, matchCount, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort } from '../customerQuery';
+import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, exitIps, lastOnline, matchCount, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort } from '../customerQuery';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
@@ -1064,6 +1064,7 @@ function exitText(l: Line): string {
             <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
           </div>
           <span v-if="c.remark" class="muted small remark" :title="c.remark">{{ c.remark }}</span>
+          <span v-if="lastOnline(c)" class="muted small" :title="t('customers.lastOnlineHint')">{{ t('customers.lastOnline', { ago: fmtAgo(lastOnline(c)) }) }}</span>
         </div>
         <div class="usage">
           <div class="fig" :class="{ 'text-err': c.state === 'over_quota' }">

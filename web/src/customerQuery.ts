@@ -3,10 +3,10 @@
 import { dueLevel } from './format';
 import type { Customer, Line, Panel, Socks } from './types';
 
-export type CustomerSort = 'name' | 'expire' | 'used' | 'fee' | 'created' | 'fetched';
+export type CustomerSort = 'name' | 'expire' | 'used' | 'fee' | 'created' | 'fetched' | 'online';
 /** '' = 全部;soon = 7 天内到期(还没到期);lines_off = 客户正常,但有线路停着(面板上被停了、或面板上已经没这个客户端) */
 export type CustomerStateFilter = '' | 'active' | 'soon' | 'over_quota' | 'expired' | 'lines_off';
-export const CUSTOMER_SORTS: CustomerSort[] = ['name', 'expire', 'used', 'fee', 'created', 'fetched'];
+export const CUSTOMER_SORTS: CustomerSort[] = ['name', 'expire', 'used', 'fee', 'created', 'fetched', 'online'];
 export const CUSTOMER_STATES: Exclude<CustomerStateFilter, ''>[] = ['active', 'soon', 'over_quota', 'expired', 'lines_off'];
 
 /** 数量筛选:'' = 不限;'0'…'4' = 正好这么多;'5+' = 5 个及以上 */
@@ -31,9 +31,12 @@ export interface CustomerQuery {
   reverse: boolean;
 }
 
-/** 各排序默认的方向:名字 A→Z、到期日近的在前;流量 / 月费 / 新建 / 拉订阅都是大的(新的)在前 */
-const DESC: Record<CustomerSort, boolean> = { name: false, expire: false, used: true, fee: true, created: true, fetched: true };
-/** 排序用的值;null = 没有(不限期、没填月费、没拉过订阅),不管正着反着都排最后 */
+/** 客户最近一次在线:各条线路在面板上记的最近在线时间取最新的;0 = 没记到过(面板没给、或从没连过) */
+export const lastOnline = (c: Customer) => c.lines.reduce((m, l) => Math.max(m, l.last_online || 0), 0);
+
+/** 各排序默认的方向:名字 A→Z、到期日近的在前;流量 / 月费 / 新建 / 拉订阅 / 在线都是大的(新的)在前 */
+const DESC: Record<CustomerSort, boolean> = { name: false, expire: false, used: true, fee: true, created: true, fetched: true, online: true };
+/** 排序用的值;null = 没有(不限期、没填月费、没拉过订阅、没在线过),不管正着反着都排最后 */
 const KEY: Record<CustomerSort, (c: Customer) => number | string | null> = {
   name: (c) => c.name,
   expire: (c) => c.expire_at || null,
@@ -41,6 +44,7 @@ const KEY: Record<CustomerSort, (c: Customer) => number | string | null> = {
   fee: (c) => c.monthly_fee,
   created: (c) => c.created_at,
   fetched: (c) => c.sub_fetched_at || null,
+  online: (c) => lastOnline(c) || null,
 };
 
 /** 名字按中文排(汉字按拼音,字母不分大小写,数字按大小),不随浏览器语言变 */
