@@ -304,6 +304,10 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
     }
     case 'DELETE /customers/:id/lines/:lid':
       return S(`删除${cname}的线路${b.line ? ` ${lineName(b.line)}` : ''}`);
+    case 'POST /customers/:id/lines/:lid/enable':
+      // 本来就启用着、什么也没做的不记
+      if (ok && b.line?.enable) return null;
+      return S(`在面板上重新启用${cname}的线路${b.line ? ` ${lineName(b.line)}` : ''}`);
     case 'POST /lines/batch-delete': {
       const lines = b.lines ?? [];
       const owners = new Set(lines.map((l) => l.customer_id));

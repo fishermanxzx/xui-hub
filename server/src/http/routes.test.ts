@@ -1022,3 +1022,53 @@ test('同一个请求重发(同一个 Idempotency-Key)只做一次:同时来的�
     await close();
   }
 });
+
+test('重新启用停着的线路:面板上手动停的能启用,读一遍面板核对;客户超额时不让启用;面板上已经没这个客户端时报错;操作日志记一条', async () => {
+  const db = memoryDb();
+  const hk = addPanel(db, 'hk', 'https://1.1.1.1:2053/p');
+  const data = { hk: panel() };
+  const { call, close } = await serve(db, data);
+  try {
+    const c = (await call('POST', '/customers', { name: '赵六', quota_bytes: 1000 })).body;
+    const l1 = (await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: hk.id, inbound: { id: 7 } })).body.line;
+    const l2 = (await call('POST', `/customers/${c.id}/lines`, { kind: 'direct', panel_id: hk.id, inbound: { id: 7 } })).body.line;
+    // 在面板上手动停掉第一个客户端,同步后线路显示「面板上已停用」
+    data.hk.clients.find((x: any) => x.email === l1.email).enable = false;
+    await call('POST', '/sync');
+    let v = getCustomer(db, c.id)!;
+    assert.deepEqual(v.lines.map((l) => [l.enable, l.auto_disabled]), [[false, false], [true, false]]);
+
+    // 启用:面板上的客户端启用了,线路也是
+    const on = await call('POST', `/customers/${c.id}/lines/${l1.id}/enable`);
+    assert.equal(on.status, 200);
+    assert.deepEqual([on.body.id, on.body.enable, on.body.auto_disabled], [l1.id, true, false]);
+    assert.equal(data.hk.clients.find((x: any) => x.email === l1.email).enable, true);
+    assert.equal(listOpLog(db).rows[0].summary, `在面板上重新启用「赵六」的线路 hk · ${l1.email}`);
+    // 已经启用着:直接返回,不记日志
+    const again = await call('POST', `/customers/${c.id}/lines/${l1.id}/enable`);
+    assert.deepEqual([again.status, again.body.enable], [200, true]);
+    assert.equal(listOpLog(db).rows[0].summary, `在面板上重新启用「赵六」的线路 hk · ${l1.email}`);
+
+    // 面板上已经没有这个客户端:启用不报错,但读一遍面板后还是停着,报错
+    data.hk.clients = data.hk.clients.filter((x: any) => x.email !== l2.email);
+    await call('POST', '/sync');
+    const gone = await call('POST', `/customers/${c.id}/lines/${l2.id}/enable`);
+    assert.equal(gone.status, 400);
+    assert.match(gone.body.error, /没启用成功.*已经没有/);
+    assert.equal(getCustomer(db, c.id)!.lines.find((l) => l.id === l2.id)!.enable, false);
+
+    // 客户超额:不让启用
+    data.hk.clients.find((x: any) => x.email === l1.email).traffic = { up: 0, down: 2000 };
+    await call('POST', '/sync');
+    v = getCustomer(db, c.id)!;
+    assert.equal(v.state, 'over_quota');
+    const over = await call('POST', `/customers/${c.id}/lines/${l1.id}/enable`);
+    assert.equal(over.status, 400);
+    assert.match(over.body.error, /已超额/);
+    // 别的客户的线路 id:不存在
+    const other = (await call('POST', '/customers', { name: '别人' })).body;
+    assert.equal((await call('POST', `/customers/${other.id}/lines/${l1.id}/enable`)).status, 400);
+  } finally {
+    await close();
+  }
+});

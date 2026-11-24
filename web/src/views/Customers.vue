@@ -157,7 +157,7 @@ const panelFilterLabel = computed(() => {
 });
 const stateOptions = computed<SelectOption<CustomerQuery['state']>[]>(() => [
   { value: '', label: t('customers.allStates') },
-  ...CUSTOMER_STATES.map((s) => ({ value: s, label: t('customers.stateOption', { label: s === 'soon' ? t('customers.stateSoon') : stateLabel(s), n: customers.value.filter((c) => matchState(c, s)).length }) })),
+  ...CUSTOMER_STATES.map((s) => ({ value: s, label: t('customers.stateOption', { label: s === 'soon' ? t('customers.stateSoon') : s === 'lines_off' ? t('customers.stateLinesOff') : stateLabel(s), n: customers.value.filter((c) => matchState(c, s)).length }) })),
 ]);
 const sortOptions = computed<SelectOption<CustomerSort>[]>(() => CUSTOMER_SORTS.map((s) => ({ value: s, label: t(`customers.sort.${s}`) })));
 const sortDir = computed(() => t(`customers.sortDir.${query.value.sort}${query.value.reverse ? '_r' : ''}` as 'customers.sortDir.name'));
@@ -957,10 +957,24 @@ const summary = computed(() => {
   return {
     over: list.filter((c) => c.state === 'over_quota').length,
     expired: list.filter((c) => c.state === 'expired').length,
-    soon: list.filter((c) => c.state !== 'expired' && dueLevel(c.expire_at) === 'warn').length,
-    linesOff: list.filter((c) => c.state === 'active' && c.lines.some((l) => !l.enable)).length,
+    soon: list.filter((c) => matchState(c, 'soon')).length,
+    linesOff: list.filter((c) => matchState(c, 'lines_off')).length,
   };
 });
+/** 在面板上重新启用一条停着的线路;完了重读客户(面板上没有这个客户端时后端报错,线路还是停着) */
+const enabling = ref<number | null>(null);
+async function enableLine(c: Customer, l: Line) {
+  enabling.value = l.id;
+  try {
+    await api.enableLine(c.id, l.id);
+    toast(t('customers.lineEnabled', { panel: l.panel_name, email: l.email }));
+  } catch (e) {
+    toastError(e);
+  } finally {
+    enabling.value = null;
+    await load();
+  }
+}
 /** 客户的「⋯」菜单:不常用的操作 */
 const customerMenu = (c: Customer): MenuItem[] => [
   { label: t('customers.trafficTrend'), run: () => (trafficFor.value = c) },
@@ -999,10 +1013,11 @@ function exitText(l: Line): string {
       <h1>{{ t('customers.title') }}</h1>
       <p v-if="customers.length" class="ph-sum">
         <span>{{ t('customers.sumTotal', { n: customers.length }, customers.length) }}</span>
-        <span v-if="summary.over" class="text-err">{{ t('customers.sumOver', { n: summary.over }) }}</span>
-        <span v-if="summary.expired" class="text-err">{{ t('customers.sumExpired', { n: summary.expired }) }}</span>
-        <span v-if="summary.soon" class="text-warn">{{ t('customers.sumSoon', { n: summary.soon }) }}</span>
-        <span v-if="summary.linesOff">{{ t('customers.sumLinesOff', { n: summary.linesOff }) }}</span>
+        <!-- 点一下就按这一项筛 -->
+        <button v-if="summary.over" type="button" class="link sum text-err" :aria-pressed="query.state === 'over_quota'" @click="query.state = 'over_quota'">{{ t('customers.sumOver', { n: summary.over }) }}</button>
+        <button v-if="summary.expired" type="button" class="link sum text-err" :aria-pressed="query.state === 'expired'" @click="query.state = 'expired'">{{ t('customers.sumExpired', { n: summary.expired }) }}</button>
+        <button v-if="summary.soon" type="button" class="link sum text-warn" :aria-pressed="query.state === 'soon'" @click="query.state = 'soon'">{{ t('customers.sumSoon', { n: summary.soon }) }}</button>
+        <button v-if="summary.linesOff" type="button" class="link sum" :aria-pressed="query.state === 'lines_off'" @click="query.state = 'lines_off'">{{ t('customers.sumLinesOff', { n: summary.linesOff }) }}</button>
       </p>
       <details class="about">
         <summary>{{ t('common.about') }}</summary>
@@ -1139,7 +1154,8 @@ function exitText(l: Line): string {
             <span class="figure-ish">{{ fmtBytes(l.up + l.down) }}</span>
             <span v-if="l.panel_ratio !== 1" class="ratio" :title="t('customers.lineRatioHint', { v: l.panel_ratio })">{{ t('customers.lineBilled', { v: l.panel_ratio, used: fmtBytes(l.used_up + l.used_down) }) }}</span>
             <span class="muted">{{ t('customers.lineOnline', { ago: fmtAgo(l.last_online, '—') }) }}</span>
-            <span v-if="!l.enable" class="badge err">{{ l.auto_disabled ? t('customers.autoDisabled') : t('customers.panelDisabled') }}</span>
+            <span v-if="!l.enable" class="badge err" :title="l.auto_disabled ? t('customers.autoDisabledHint') : t('customers.panelDisabledHint')">{{ l.auto_disabled ? t('customers.autoDisabled') : t('customers.panelDisabled') }}</span>
+            <button v-if="!l.enable && c.state === 'active'" type="button" class="link small turn-on" :disabled="enabling === l.id" :title="t('customers.enableLineHint')" @click="enableLine(c, l)">{{ enabling === l.id ? t('customers.enablingLine') : t('customers.enableLine') }}</button>
           </span>
           <span class="l-ops">
             <button class="link small" :disabled="loadingLinks === l.id" @click="showLinks(l)">{{ loadingLinks === l.id ? t('common.loading') : t('customers.links') }}</button>
@@ -1980,6 +1996,23 @@ function exitText(l: Line): string {
 }
 .stat .badge {
   align-self: center;
+}
+.turn-on {
+  color: var(--accent-strong);
+}
+.ph-sum .sum {
+  font-weight: 400;
+}
+.ph-sum .sum.text-err {
+  color: var(--fault);
+}
+.ph-sum .sum.text-warn {
+  color: var(--caution);
+}
+.ph-sum .sum:hover:not(:disabled),
+.ph-sum .sum[aria-pressed='true'] {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .l-ops {
   display: flex;

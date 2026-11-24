@@ -93,6 +93,7 @@ Authorization: Bearer xh_……
 | POST | `/lines/batch-exit` | 批量换出口。请求体:`exit`(同上),`line_ids`(线路 id 数组,1-1000 个)或 `customer_id`(这位客户的全部线路;两个都给 = 这位客户的这几条)。同一块面板上的一起改,只连一次、Xray 只重启一次;哪块面板没成,只有那块上的线路不改。返回 `changed`(换好的线路 id)、`lines`(换好的线路)、`failed`(`id`、`line`、`error`) |
 | PUT | `/customers/:id/lines/:lineId/rules` | 设置出口规则(整组替换,空数组 = 去掉),见下。写到面板的 Xray 路由并重启 Xray,这块面板上的客户端会断几秒 |
 | PATCH | `/customers/:id/lines/:lineId` | 改自定义节点名。请求体:`node_name`(最多 64 个字符,空字符串 = 用面板生成的名字)。只改这里,面板上不动 |
+| POST | `/customers/:id/lines/:lineId/enable` | 重新启用一条停着的线路(`enable` 为 `false`:在面板上被手动停了,或本系统停了没恢复)。在面板上启用这个客户端,再读一遍这块面板核对;返回线路。客户超额或到期时回 400(启用了也会马上被停,要先续费或加额度,线路会自动恢复);面板上已经没有这个客户端时回 400;本来就启用着的直接返回 |
 | DELETE | `/customers/:id/lines/:lineId` | 删线路(面板上的客户端一起删);面板连不上时加 `?force=1` 只删记录 |
 
 开直连线路(在 1 号面板上自动选一个 vless 入站,没有就新建):

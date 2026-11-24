@@ -4,10 +4,10 @@ import { dueLevel } from './format';
 import type { Customer, Line, Panel, Socks } from './types';
 
 export type CustomerSort = 'name' | 'expire' | 'used' | 'fee' | 'created' | 'fetched';
-/** '' = 全部;soon = 7 天内到期(还没到期) */
-export type CustomerStateFilter = '' | 'active' | 'soon' | 'over_quota' | 'expired';
+/** '' = 全部;soon = 7 天内到期(还没到期);lines_off = 客户正常,但有线路停着(面板上被停了、或面板上已经没这个客户端) */
+export type CustomerStateFilter = '' | 'active' | 'soon' | 'over_quota' | 'expired' | 'lines_off';
 export const CUSTOMER_SORTS: CustomerSort[] = ['name', 'expire', 'used', 'fee', 'created', 'fetched'];
-export const CUSTOMER_STATES: Exclude<CustomerStateFilter, ''>[] = ['active', 'soon', 'over_quota', 'expired'];
+export const CUSTOMER_STATES: Exclude<CustomerStateFilter, ''>[] = ['active', 'soon', 'over_quota', 'expired', 'lines_off'];
 
 /** 数量筛选:'' = 不限;'0'…'4' = 正好这么多;'5+' = 5 个及以上 */
 export type CountFilter = '' | '0' | '1' | '2' | '3' | '4' | '5+';
@@ -51,6 +51,8 @@ export const usesPanel = (c: Customer, ids: Set<number>) => c.lines.some((l) => 
 
 export function matchState(c: Customer, state: CustomerStateFilter, now = Date.now()): boolean {
   if (state === 'soon') return c.state !== 'expired' && dueLevel(c.expire_at, now) === 'warn';
+  // 超额 / 到期的客户线路本来就是被停的,不算在这里
+  if (state === 'lines_off') return c.state === 'active' && c.lines.some((l) => !l.enable);
   return !state || c.state === state;
 }
 
