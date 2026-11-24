@@ -13,7 +13,7 @@ import CustomerRenew from '../components/CustomerRenew.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import MultiSelect from '../components/MultiSelect.vue';
 import ActionMenu, { type MenuItem } from '../components/ActionMenu.vue';
-import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, exitIps, lastOnline, matchCount, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort } from '../customerQuery';
+import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, exitIpOwners, exitIps, lastOnline, lineExitIp, matchCount, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort } from '../customerQuery';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget } from '../format';
@@ -44,7 +44,7 @@ function savedSort(): Pick<CustomerQuery, 'sort' | 'reverse'> {
   }
   return { sort: 'name', reverse: false };
 }
-const query = ref<CustomerQuery>({ q: '', panels: [], state: '', tags: [], lines: '', exits: '', ...savedSort() });
+const query = ref<CustomerQuery>({ q: '', panels: [], state: '', tags: [], lines: '', exits: '', ips: [], ...savedSort() });
 watch(
   () => [query.value.sort, query.value.reverse],
   () => {
@@ -64,17 +64,18 @@ watch(panels, (list) => {
   if (query.value.tags.some((x) => !tags.has(x))) query.value.tags = query.value.tags.filter((x) => tags.has(x));
 });
 const shown = computed(() => queryCustomers(customers.value, query.value, Date.now(), { panels: panels.value, socks: socksList.value }));
+const panelMap = computed(() => new Map(panels.value.map((p) => [p.id, p])));
+const socksMap = computed(() => new Map(socksList.value.map((s) => [s.id, s])));
 /** 每位客户的落地 IP(去重;按线路主出口算,见 lineExitIp) */
-const exitsOf = computed(() => {
-  const pm = new Map(panels.value.map((p) => [p.id, p]));
-  const sm = new Map(socksList.value.map((s) => [s.id, s]));
-  return new Map(customers.value.map((c) => [c.id, exitIps(c, pm, sm)]));
-});
+const exitsOf = computed(() => new Map(customers.value.map((c) => [c.id, exitIps(c, panelMap.value, socksMap.value)])));
 const exitCount = (c: Customer) => exitsOf.value.get(c.id)?.length ?? 0;
-/** 按面板过滤时,客户卡片里不在这些面板上的线路淡一点 */
+/** 按面板 / 落地 IP 过滤时,客户卡片里不在这些面板上、不落地在这些 IP 上的线路淡一点 */
 const pickedPanels = computed(() => new Set([...query.value.panels, ...(query.value.tags.length ? panelsTagged(panels.value, query.value.tags) : [])]));
-const offPanel = (l: Line) => pickedPanels.value.size > 0 && !pickedPanels.value.has(l.panel_id) && !(l.exit_panel_id != null && pickedPanels.value.has(l.exit_panel_id));
-const filtering = computed(() => !!query.value.q.trim() || !!query.value.panels.length || !!query.value.state || !!query.value.tags.length || !!query.value.lines || !!query.value.exits);
+const pickedIps = computed(() => new Set(query.value.ips));
+const offPanel = (l: Line) =>
+  (pickedPanels.value.size > 0 && !pickedPanels.value.has(l.panel_id) && !(l.exit_panel_id != null && pickedPanels.value.has(l.exit_panel_id))) ||
+  (pickedIps.value.size > 0 && !pickedIps.value.has(lineExitIp(l, panelMap.value, socksMap.value)));
+const filtering = computed(() => !!query.value.q.trim() || !!query.value.panels.length || !!query.value.state || !!query.value.tags.length || !!query.value.lines || !!query.value.exits || !!query.value.ips.length);
 // ---------- 线路默认收起:只留一行(条数、节点名、停用了几条),点开看详情;展开了哪些记在浏览器里 ----------
 const OPEN_LINES_KEY = 'xui-hub.openCustomerLines';
 const openLines = ref<Set<number>>(new Set());
@@ -92,8 +93,8 @@ function saveOpenLines(next: Set<number>) {
     /* 存不了就算了 */
   }
 }
-/** 搜索或按面板过滤时线路都展开(要看的就是线路),这时不显示收起 / 展开 */
-const linesForced = computed(() => !!query.value.q.trim() || query.value.panels.length > 0);
+/** 搜索、按面板或落地 IP 过滤时线路都展开(要看的就是线路),这时不显示收起 / 展开 */
+const linesForced = computed(() => !!query.value.q.trim() || query.value.panels.length > 0 || query.value.ips.length > 0);
 const linesShown = (c: Customer) => linesForced.value || openLines.value.has(c.id);
 function toggleLines(c: Customer) {
   const next = new Set(openLines.value);
@@ -123,7 +124,7 @@ const nodeNamePh = (panelId: number) => (panelNodeName(panelId) ? t('customers.f
 const linesOff = (c: Customer) => c.lines.filter((l) => !l.enable).length;
 
 function clearFilters() {
-  query.value = { ...query.value, q: '', panels: [], state: '', tags: [], lines: '', exits: '' };
+  query.value = { ...query.value, q: '', panels: [], state: '', tags: [], lines: '', exits: '', ips: [] };
 }
 /** 面板上用到的所有标签(按面板顺序出现的先后) */
 const allTags = computed(() => [...new Set(panels.value.flatMap((p) => p.tags ?? []))]);
@@ -146,6 +147,25 @@ const exitsFilterOptions = computed<SelectOption<CountFilter>[]>(() => [
   { value: '', label: t('customers.allExitCounts') },
   ...COUNT_FILTERS.map((f) => ({ value: f, label: t(f === '5+' ? 'customers.exitCountMore' : 'customers.exitCountOption', { label: f.replace('+', ''), n: customers.value.filter((c) => matchCount(exitCount(c), f)).length }) })),
 ]);
+/** 落地 IP 的选项:客户线路落地过的每个 IP,带上是哪块面板 / 哪个 SOCKS 和有几位客户;客户多的在前 */
+const ipFilterOptions = computed<SelectOption<string>[]>(() => {
+  const count = new Map<string, number>();
+  for (const ips of exitsOf.value.values()) for (const ip of ips) count.set(ip, (count.get(ip) ?? 0) + 1);
+  // 选了但现在没有客户落地在上面的(面板换了 IP 之类)也留着,能取消
+  for (const ip of query.value.ips) if (!count.has(ip)) count.set(ip, 0);
+  const owners = exitIpOwners(panels.value, socksList.value);
+  return [...count]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], undefined, { numeric: true }))
+    .map(([ip, n]) => {
+      const who = owners.get(ip)?.join('、');
+      return { value: ip, label: who ? t('customers.exitIpOption', { ip, who, n }) : t('customers.exitIpOptionBare', { ip, n }) };
+    });
+});
+const ipFilterLabel = computed(() => {
+  const picked = query.value.ips;
+  if (!picked.length) return t('customers.allExitIps');
+  return picked.length === 1 ? picked[0] : t('customers.exitIpsPicked', { n: picked.length });
+});
 const panelFilterOptions = computed<SelectOption<number>[]>(() =>
   panels.value.map((p) => ({ value: p.id, label: t('customers.panelOption', { name: p.name, n: customers.value.filter((c) => usesPanel(c, new Set([p.id]))).length }) })),
 );
@@ -1042,6 +1062,18 @@ function exitText(l: Line): string {
     <Select v-model="query.state" :options="stateOptions" :aria-label="t('customers.filterState')" :class="{ set: query.state }" />
     <Select v-model="query.lines" :options="linesFilterOptions" :aria-label="t('customers.filterLineCount')" :class="{ set: query.lines }" />
     <Select v-model="query.exits" :options="exitsFilterOptions" :aria-label="t('customers.filterExitCount')" :class="{ set: query.exits }" />
+    <MultiSelect
+      v-if="ipFilterOptions.length"
+      v-model="query.ips"
+      :options="ipFilterOptions"
+      :label="ipFilterLabel"
+      :all-label="t('customers.allExitIps')"
+      :aria-label="t('customers.filterExitIp')"
+      :title="t('customers.filterExitIpHint')"
+      searchable
+      :search-placeholder="t('customers.searchExitIp')"
+      :class="{ set: query.ips.length }"
+    />
     <template v-if="filtering">
       <span class="muted small">{{ t('customers.shown', { n: shown.length, total: customers.length }) }}</span>
       <button type="button" class="link small" @click="clearFilters">{{ t('customers.clearFilters') }}</button>
