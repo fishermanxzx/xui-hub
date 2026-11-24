@@ -44,6 +44,7 @@ import { listGrants, revokeGrant } from '../mcp/oauth';
 import { enforceCustomers } from '../lines/enforce';
 import { applyLineRules, changeLineExits, openLine, parseExitTarget, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
 import { validRules } from '../lines/rules';
+import { adoptPanelRule, deletePanelRule, panelRulesOf } from '../lines/panelRules';
 import { checkSocks } from '../socks/check';
 import { allSocks, createSocks, deleteSocks, getSocks, getSocksView, listSocks, planSocksUpdate, saveCheck, updateSocks } from '../socks/repo';
 import { trafficReport } from '../traffic/daily';
@@ -735,6 +736,16 @@ export function apiRouter(deps: RouteDeps): Router {
       return applyLineRules(db, line, validRules(db, req.body?.rules), deps.clientFor);
     }),
   );
+  // 面板上手配的、点名这条线路的规则(不带 xui-hub: 标记,见 lines/panelRules.ts):读面板列出来;
+  // 只点名这个客户端的可以删(DELETE),条件和出口对得上的还能接管成出口规则(POST …/adopt)。都会重启这块面板的 Xray
+  const ruleKeyParam = (req: Request) => {
+    const key = String(req.params.key ?? '');
+    if (!/^[0-9a-f]{16}$/.test(key)) throw new InputError('规则的 key 不对');
+    return key;
+  };
+  r.get('/customers/:id/lines/:lid/panel-rules', wrap((req) => panelRulesOf(db, lineOf(req), deps.clientFor)));
+  r.delete('/customers/:id/lines/:lid/panel-rules/:key', wrap((req) => deletePanelRule(db, lineOf(req), ruleKeyParam(req), deps.clientFor)));
+  r.post('/customers/:id/lines/:lid/panel-rules/:key/adopt', wrap((req) => adoptPanelRule(db, lineOf(req), ruleKeyParam(req), deps.clientFor)));
   // 批量删线路:line_ids 里的线路,面板上的 client 和出口规则一起删(同一块面板只连一次、Xray 最多重启一次),
   // 删成了的再删记录(本期流量结转到客户身上)。面板上没删成的留着记录、带原因返回;force = true 时不管面板删没删成都删记录
   r.post(

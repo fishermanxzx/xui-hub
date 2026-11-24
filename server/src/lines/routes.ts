@@ -4,8 +4,10 @@
 // - 最后没被这些规则接住的流量走哪(第一条接住这个入站的兜底规则;都没有就是 Xray 的第一个出站)。
 // 不点名客户端、带条件的全局规则(如屏蔽 bittorrent、私有 IP)对谁都一样,不列。
 // 出口是 SOCKS 页登记过的(地址、端口对得上)就认成那个 SOCKS。
+// 点名这个客户端的规则还标上归谁管(origin):xui-hub 写的、面板上手配只点名他的、点名了多个客户端的。
 
 import { decodeJson } from '../xui/json';
+import { MANAGED } from './relay';
 
 /** 规则里会限定流量的条件(user 和 inboundTag 单独看) */
 const CONDITION_KEYS = ['domain', 'ip', 'port', 'sourcePort', 'source', 'protocol', 'attrs', 'network'] as const;
@@ -23,12 +25,20 @@ export interface RouteTarget {
   socks_id?: number;
 }
 
+/**
+ * 点名这个客户端的规则归谁管:xui = xui-hub 写的(带 xui-hub: 标记的出口规则,或换出口写的「入站 + 客户端 → 出站」);
+ * own = 面板上手配、只点名他的(出口规则弹窗里能删 / 接管);shared = 点名了多个客户端的(只能在 3x-ui 里改)
+ */
+export type HopOrigin = 'xui' | 'own' | 'shared';
+
 export interface RouteHop {
   /** 这一跳的条件;空 = 其余所有流量 */
   when: Partial<Record<ConditionKey, string[]>>;
   to: RouteTarget;
   /** 兜底(其余所有流量) */
   fallback: boolean;
+  /** 点名这个客户端的规则才有;入站的兜底规则、Xray 的第一个出站没有 */
+  origin?: HopOrigin;
 }
 
 export interface KnownSocks {
@@ -37,7 +47,7 @@ export interface KnownSocks {
   port: number;
 }
 
-const list = (v: unknown): string[] => {
+export const list = (v: unknown): string[] => {
   if (v == null || v === '') return [];
   if (Array.isArray(v)) return v.map(String).filter(Boolean);
   if (typeof v === 'object') return Object.entries(v as Record<string, unknown>).map(([k, x]) => `${k}=${x}`);
@@ -47,7 +57,7 @@ const list = (v: unknown): string[] => {
     .filter(Boolean);
 };
 
-function conditionsOf(rule: any): Partial<Record<ConditionKey, string[]>> {
+export function conditionsOf(rule: any): Partial<Record<ConditionKey, string[]>> {
   const out: Partial<Record<ConditionKey, string[]>> = {};
   for (const k of CONDITION_KEYS) {
     const v = list(rule?.[k]);
@@ -65,7 +75,7 @@ function addressOf(o: any): { host: string; port: number } | undefined {
   return undefined;
 }
 
-function targetOf(xray: any, rule: any, socks: KnownSocks[]): RouteTarget {
+export function targetOf(xray: any, rule: any, socks: KnownSocks[]): RouteTarget {
   if (!rule?.outboundTag && rule?.balancerTag) return { kind: 'balancer', tag: String(rule.balancerTag) };
   const tag = String(rule?.outboundTag ?? '');
   const o = (Array.isArray(xray?.outbounds) ? xray.outbounds : []).find((x: any) => x?.tag === tag);
@@ -86,8 +96,18 @@ function outboundTarget(o: any, tag: string, socks: KnownSocks[]): RouteTarget {
   return { kind: 'proxy', tag, ...(address ? { address } : {}) };
 }
 
-const enabled = (r: any) => r && r.enabled !== false;
-const hasInbound = (r: any, inboundTag: string) => !list(r.inboundTag).length || list(r.inboundTag).includes(inboundTag);
+export const enabled = (r: any) => r && r.enabled !== false;
+export const hasInbound = (r: any, inboundTag: string) => !list(r.inboundTag).length || list(r.inboundTag).includes(inboundTag);
+
+/** 点名这个客户端的规则归谁管(见 HopOrigin) */
+function originOf(r: any, inboundTag: string, users: string[], conditional: boolean): HopOrigin {
+  if (users.length > 1) return 'shared';
+  if (typeof r.ruleTag === 'string' && r.ruleTag.startsWith(MANAGED)) return 'xui';
+  // 换出口写的那条:只限这个入站、没有别的条件(relay.ts 的 isUserRule,换出口时会换掉它)
+  const inbounds = list(r.inboundTag);
+  if (!conditional && inbounds.length === 1 && inbounds[0] === inboundTag) return 'xui';
+  return 'own';
+}
 
 /**
  * 某个入站上某个客户端的出口,按规则顺序。读不到配置时返回空数组
@@ -104,7 +124,7 @@ export function routesForClient(xray: any, inboundTag: string, email: string, so
     const conditional = Object.keys(when).length > 0;
     if (users.length) {
       // 点名这个客户端的规则:带条件的列出来接着看;不带条件的就是他的兜底,后面的规则轮不到
-      hops.push({ when, to: targetOf(xray, r, socks), fallback: !conditional });
+      hops.push({ when, to: targetOf(xray, r, socks), fallback: !conditional, origin: originOf(r, inboundTag, users, conditional) });
       if (!conditional) return hops;
     } else if (!conditional) {
       // 接住这个入站全部流量的规则:其余流量都走它

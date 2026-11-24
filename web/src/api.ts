@@ -1,4 +1,4 @@
-import type { EntryInput, LedgerEntry, OpLog, Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, RatioPreview, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
+import type { PanelRule, EntryInput, LedgerEntry, OpLog, Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, RatioPreview, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
 import { locale } from './i18n';
 
 let onUnauthorized: (() => void) | null = null;
@@ -134,6 +134,10 @@ export const api = {
   lineLinks: (id: number, lineId: number) => call<{ links: string[] }>('GET', `/api/customers/${id}/lines/${lineId}/links`),
   renameLine: (id: number, lineId: number, node_name: string) => call<Line>('PATCH', `/api/customers/${id}/lines/${lineId}`, { node_name }),
   setLineRules: (id: number, lineId: number, rules: LineRule[]) => call<Line>('PUT', `/api/customers/${id}/lines/${lineId}/rules`, { rules }),
+  // 面板上手配的、点名这条线路的规则:列出来、删掉、接管成出口规则(后两个会重启这块面板的 Xray)
+  panelRules: (id: number, lineId: number) => call<PanelRule[]>('GET', `/api/customers/${id}/lines/${lineId}/panel-rules`),
+  deletePanelRule: (id: number, lineId: number, key: string) => call<{ rule: PanelRule; line: Line }>('DELETE', `/api/customers/${id}/lines/${lineId}/panel-rules/${key}`),
+  adoptPanelRule: (id: number, lineId: number, key: string) => call<{ rule: PanelRule; line: Line }>('POST', `/api/customers/${id}/lines/${lineId}/panel-rules/${key}/adopt`),
   // 面板的 geo 库(3x-ui 3.7.0 起有接口;supported = false 是面板太老)
   geoFiles: (panelId: number) => call<{ supported: boolean; files?: GeoFile[] }>('GET', `/api/panels/${panelId}/geodata/files`),
   geoCategories: (panelId: number, file: string) => call<{ supported: boolean; items?: GeoCategory[] }>('GET', `/api/panels/${panelId}/geodata/categories?${new URLSearchParams({ file })}`),

@@ -95,6 +95,9 @@ Authorization: Bearer xh_……
 | PUT | `/customers/:id/lines/:lineId/exit` | 原地换出口。请求体:`exit`,`{ "kind": "socks", "socks_id": 3 }`(SOCKS 页登记的代理)或 `{ "kind": "direct" }`(直出,从线路所在的面板出去)。不删线路、面板上的客户端和 UUID 不变,客户不用更新订阅;换掉这个客户端的「入站 + user → 出站」规则(直出就去掉它),写回并重启这块面板的 Xray,读回核对后才改记录,并马上刷新实际出口(`routes`)。已经是这个出口就不动、不重启。线路上带条件的出口规则和面板上手配的规则不碰。返回线路;面板连不上回 502 |
 | POST | `/lines/batch-exit` | 批量换出口。请求体:`exit`(同上),`line_ids`(线路 id 数组,1-1000 个)或 `customer_id`(这位客户的全部线路;两个都给 = 这位客户的这几条)。同一块面板上的一起改,只连一次、Xray 只重启一次;哪块面板没成,只有那块上的线路不改。返回 `changed`(换好的线路 id)、`lines`(换好的线路)、`failed`(`id`、`line`、`error`) |
 | PUT | `/customers/:id/lines/:lineId/rules` | 设置出口规则(整组替换,空数组 = 去掉),见下。写到面板的 Xray 路由并重启 Xray,这块面板上的客户端会断几秒 |
+| GET | `/customers/:id/lines/:lineId/panel-rules` | 读面板,列出面板上手配的、点名这条线路的规则(不归 xui-hub 管的),见下 |
+| DELETE | `/customers/:id/lines/:lineId/panel-rules/:key` | 删掉其中一条(只点名这个客户端的才能删);出站没人用了一起删。重启 Xray,读回核对,没成就改回去。返回 `{ rule, line }` |
+| POST | `/customers/:id/lines/:lineId/panel-rules/:key/adopt` | 接管其中一条:换成同样条件和出口、带 `ruleTag` 的出口规则,按原来的顺序存进线路的 `rules`,以后用上面的 PUT 改。重启 Xray,读回核对,没成就改回去。返回 `{ rule, line }` |
 | PATCH | `/customers/:id/lines/:lineId` | 改自定义节点名。请求体:`node_name`(最多 64 个字符,空字符串 = 用面板生成的名字)。只改这里,面板上不动 |
 | POST | `/customers/:id/lines/:lineId/enable` | 重新启用一条停着的线路(`enable` 为 `false`:在面板上被手动停了,或本系统停了没恢复)。在面板上启用这个客户端,再读一遍这块面板核对;返回线路。客户超额或到期时回 400(启用了也会马上被停,要先续费或加额度,线路会自动恢复);面板上已经没有这个客户端时回 400;本来就启用着的直接返回 |
 | DELETE | `/customers/:id/lines/:lineId` | 删线路(面板上的客户端一起删);面板连不上时加 `?force=1` 只删记录 |
@@ -136,11 +139,22 @@ Authorization: Bearer xh_……
 
 - `when`:条件,如 `{ "domain": ["geosite:netflix"] }`,键有 `domain` / `ip` / `port` / `sourcePort` / `source` / `protocol` / `attrs` / `network`;
 - `to`:去向,`kind` 是 `direct`(直出)/ `block`(拦截)/ `socks`(SOCKS 页登记过的,带 `socks_id`)/ `proxy`(面板上别的出站)/ `balancer`(负载均衡)/ `unknown`(规则指向的出站面板上没有),另有 `tag`(出站名)和 `address`(出站连的地址);
-- `fallback`:`true` 表示这是其余流量的去向(最后一项)。
+- `fallback`:`true` 表示这是其余流量的去向(最后一项);
+- `origin`:点名这个客户端的规则才有,归谁管:`xui`(xui-hub 写的出口规则,或换出口写的那条)、`own`(面板上手配、只点名他的)、`shared`(点名了多个客户端的,只能在 3x-ui 里改)。
 
 只列点名了这个客户端的规则和最后的兜底;不点名客户端、带条件的全局规则(如屏蔽 bittorrent)对谁都一样,不列。
 
 返回 `{ "line": {…}, "links": ["vless://…"], "created": {…} }`。
+
+**面板上手配的规则**(`GET …/panel-rules`):面板 Xray 路由里点名这个客户端、没有 `xui-hub:` 标记的规则,按顺序,每条:
+
+- `key`:规则内容的指纹,删除 / 接管时放在地址里;面板上的规则改过就对不上,要重新读;
+- `when`、`to`:同上面的 `routes`;
+- `active`:排在接住这个客户端全部流量的规则后面的为 `false`(轮不到它);
+- `users`:点名了几个客户端;`own`:只点名他、入站不限或只限这条线路的入站,这种能删;
+- `takeover`:能接管时是接管后的出口规则(格式同上),不能接管为 `null`,原因在 `why`。能接管要:带条件且只用域名、IP、端口、网络,出口是 SOCKS 页登记的代理(地址和账号都对得上)、面板上第一个直出或拦截出站,线路的出口规则没满 20 条。
+
+对所有客户端都生效的全局规则不列。
 
 ## 其它
 

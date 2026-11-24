@@ -142,6 +142,26 @@ export interface RouteHop {
   when: Record<string, string[]>;
   to: { kind: 'direct' | 'block' | 'socks' | 'proxy' | 'balancer' | 'unknown'; tag: string; address?: string; socks_id?: number };
   fallback: boolean;
+  /** 点名这个客户端的规则归谁管:xui = xui-hub 写的;own = 面板上手配、只点名他的;shared = 点名了多个客户端的。入站的兜底没有 */
+  origin?: 'xui' | 'own' | 'shared';
+}
+
+/** 面板上手配的、点名某条线路的规则(不归 xui-hub 管),出口规则弹窗里列出来 */
+export interface PanelRule {
+  /** 认这条规则用的指纹,删除 / 接管时带上 */
+  key: string;
+  when: Record<string, string[]>;
+  to: RouteHop['to'];
+  /** 排在接住他全部流量的规则后面的不生效 */
+  active: boolean;
+  /** 点名了几个客户端 */
+  users: number;
+  /** 只点名他的:能删 */
+  own: boolean;
+  /** 能接管时,接管后变成的出口规则 */
+  takeover: LineRule | null;
+  /** 不能接管(或不能删)的原因 */
+  why: string;
 }
 
 /** 在 xui-hub 里给线路配的出口规则(写到面板的 Xray 路由) */

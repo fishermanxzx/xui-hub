@@ -43,12 +43,14 @@ const customers = [
     line(1, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 1, inbound_remark: 'vless-reality', protocol: 'vless', email: '张三', up: 1.3 * GB, down: 22.4 * GB, exit_kind: 'socks', exit_socks_id: 4, exit_socks_name: '日本-1 自建', exit_label: 'SOCKS 日本-1 自建', node_name: '日本 01',
       // 在 xui-hub 里配的出口规则:流媒体走美国家宽
       rules: [{ domain: ['geosite:netflix', 'geosite:disney'], ip: [], port: '', network: '', to: { kind: 'socks', socks_id: 1 } }],
-      // 面板上按规则分了多个出口:流媒体走美国家宽(上面的规则),OpenAI 走面板上手配的出站,其余走日本
+      // 面板上按规则分了多个出口:流媒体走美国家宽(上面的规则),Google、OpenAI 走面板上手配的规则,Telegram 被多人共用的规则拦截,其余走日本
       routes_at: now - 50_000,
       routes: [
-        { when: { domain: ['geosite:netflix', 'geosite:disney'] }, to: { kind: 'socks', tag: 'socks-us', address: 'isp-us.example.net:10002', socks_id: 1 }, fallback: false },
-        { when: { domain: ['geosite:openai'] }, to: { kind: 'proxy', tag: 'sg-vless', address: 'sg.example.com:443' }, fallback: false },
-        { when: {}, to: { kind: 'socks', tag: 'socks-jp', address: 'jp1.example.com:31825', socks_id: 4 }, fallback: true },
+        { when: { domain: ['geosite:netflix', 'geosite:disney'] }, to: { kind: 'socks', tag: 'socks-us', address: 'isp-us.example.net:10002', socks_id: 1 }, fallback: false, origin: 'xui' },
+        { when: { domain: ['geosite:google'] }, to: { kind: 'socks', tag: 'socks-us', address: 'isp-us.example.net:10002', socks_id: 1 }, fallback: false, origin: 'own' },
+        { when: { domain: ['geosite:openai'] }, to: { kind: 'proxy', tag: 'sg-vless', address: 'sg.example.com:443' }, fallback: false, origin: 'own' },
+        { when: { ip: ['geoip:telegram'] }, to: { kind: 'block', tag: 'blocked' }, fallback: false, origin: 'shared' },
+        { when: {}, to: { kind: 'socks', tag: 'socks-jp', address: 'jp1.example.com:31825', socks_id: 4 }, fallback: true, origin: 'xui' },
       ] }),
     line(1, { kind: 'relay', panel_id: 1, panel_name: '香港-1', inbound_id: 2, inbound_remark: 'hy2', protocol: 'hysteria', email: '张三-2', up: 0.4 * GB, down: 5.6 * GB, exit_kind: 'socks', exit_socks_id: 1, exit_socks_name: '美国家宽-ATT', exit_label: 'SOCKS 美国家宽-ATT' }),
   ], { monthly_fee: 30, last_payment: { amount: 30, paid_at: now - 12 * DAY } }),
@@ -86,6 +88,14 @@ const details = {
 
 // 面板 / SOCKS 上的线路数、入站能不能挂客户端,从上面的数据算出来
 const lines = customers.flatMap((x) => x.lines);
+// 出口规则弹窗下面列的「面板上手配的规则」(张三在香港-1 上那条线路)
+const panelRules = {
+  2: [
+    { key: '1a2b3c4d5e6f7081', when: { domain: ['geosite:google'] }, to: { kind: 'socks', tag: 'socks-us', address: 'isp-us.example.net:10002', socks_id: 1 }, active: true, users: 1, own: true, takeover: { domain: ['geosite:google'], ip: [], port: '', network: '', to: { kind: 'socks', socks_id: 1 } }, why: '' },
+    { key: '2b3c4d5e6f708192', when: { domain: ['geosite:openai'] }, to: { kind: 'proxy', tag: 'sg-vless', address: 'sg.example.com:443' }, active: true, users: 1, own: true, takeover: null, why: '出站「sg-vless」是 vless 协议,xui-hub 的规则只支持 SOCKS、直出、拦截' },
+    { key: '3c4d5e6f708192a3', when: { ip: ['geoip:telegram'] }, to: { kind: 'block', tag: 'blocked' }, active: true, users: 3, own: false, takeover: null, why: '点名了 3 个客户端,只能去 3x-ui 里改' },
+  ],
+};
 for (const l of lines) Object.assign(l, { panel_node_name: panels.find((x) => x.id === l.panel_id)?.node_name ?? '', panel_ratio: 1, used_up: l.up, used_down: l.down });
 for (const x of panels) Object.assign(x, { line_count: lines.filter((l) => l.panel_id === x.id).length, exit_line_count: lines.filter((l) => l.exit_panel_id === x.id).length });
 for (const x of socks) Object.assign(x, { used_by: lines.filter((l) => l.exit_socks_id === x.id).length, customers: new Set(lines.filter((l) => l.exit_socks_id === x.id).map((l) => l.customer_id)).size });
@@ -158,6 +168,18 @@ createServer((req, res) => {
   if (p === '/api/sub-templates') return json({ default: 'ACL4SSR_Online_Mini', templates: [] });
   if (p === '/api/tokens' || p === '/api/oauth/grants') return json([]);
   let m;
+  if ((m = p.match(/^\/api\/customers\/\d+\/lines\/(\d+)\/panel-rules(?:\/([0-9a-f]{16})(\/adopt)?)?$/))) {
+    const l = lines.find((x) => x.id === Number(m[1]));
+    const list = panelRules[m[1]] ?? [];
+    if (!m[2]) return json(list);
+    const [rule] = list.splice(list.findIndex((r) => r.key === m[2]), 1);
+    const hop = l.routes?.find((h) => JSON.stringify(h.when) === JSON.stringify(rule.when));
+    if (m[3]) {
+      l.rules.unshift(rule.takeover);
+      if (hop) hop.origin = 'xui';
+    } else if (hop) l.routes.splice(l.routes.indexOf(hop), 1);
+    return json({ rule, line: l });
+  }
   if ((m = p.match(/^\/api\/panels\/(\d+)\/inbounds$/))) return json(details[m[1]]);
   if ((m = p.match(/^\/api\/panels\/(\d+)\/versions$/))) {
     const pn = panels.find((x) => x.id === Number(m[1]));
