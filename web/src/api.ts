@@ -1,4 +1,4 @@
-import type { OpLog, Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, RatioPreview, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
+import type { EntryInput, LedgerEntry, OpLog, Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, RatioPreview, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
 import { locale } from './i18n';
 
 let onUnauthorized: (() => void) | null = null;
@@ -103,6 +103,9 @@ export const api = {
   addPayment: (id: number, body: { amount: number; paid_at?: number; note?: string }) => call<Payment>('POST', `/api/customers/${id}/payments`, body),
   payments: (from?: number, to?: number) => call<Payment[]>('GET', `/api/payments?${from != null ? `from=${from}` : ''}${to != null ? `&to=${to}` : ''}`),
   deletePayment: (id: number) => call<{ ok: true }>('DELETE', `/api/payments/${id}`),
+  ledger: () => call<LedgerEntry[]>('GET', '/api/ledger'),
+  addLedgerEntry: (body: EntryInput) => call<LedgerEntry>('POST', '/api/ledger', body),
+  deleteLedgerEntry: (id: number) => call<{ ok: true }>('DELETE', `/api/ledger/${id}`),
   oplog: (q: { before?: number; customer_id?: number; q?: string; failed?: boolean }) => {
     const p = new URLSearchParams();
     if (q.before) p.set('before', String(q.before));

@@ -98,6 +98,14 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
     assert.deepEqual([ledger.total, ledger.payments.map((p: any) => p.amount)], [30, [30, null]]);
     assert.equal(toolJson(await call('list_payments', { customer_id: c.id })).payments.length, 2);
     assert.equal((await call('renew_customer', { customer_id: c.id })).body.result.isError, true);
+    // 自己记的收入 / 支出
+    const spent = toolJson(await call('add_ledger_entry', { kind: 'expense', amount: 300, date: '2026-11-20', category: '服务器' }));
+    assert.deepEqual([spent.kind, spent.amount, spent.category, new Date(spent.date).getDate()], ['expense', 300, '服务器', 20]);
+    toolJson(await call('add_ledger_entry', { kind: 'income', amount: 50 }));
+    assert.equal((await call('add_ledger_entry', { kind: 'income', amount: 1, date: '2026-02-30' })).body.result.isError, true);
+    const own = toolJson(await call('list_ledger_entries', { days: 3650 }));
+    assert.deepEqual([own.income, own.expense, own.entries.length], [50, 300, 2]);
+    assert.equal(toolJson(await call('list_payments', {})).total, 30);
     // 操作日志:记成「MCP · 令牌「名字」」,IP 是调 MCP 的那台
     const logs = listOpLog(db).rows;
     assert.ok(logs.some((l) => l.actor === 'MCP · 令牌「mcp」' && l.summary.startsWith('新建客户「小王」') && l.ip === '127.0.0.1'), JSON.stringify(logs.slice(0, 3)));

@@ -1,37 +1,51 @@
 <script setup lang="ts">
-// 「账本」页:收款、月费、成本放在一起。
-// 汇总(本月 / 上月 / 近 12 个月实收、月费合计、月成本、每月结余)→ 每月实收 → 待续费(快到期 / 已到期的客户,能直接续费)→
-// 收款明细(按月份、客户、类型筛)→ 月成本明细(面板和 SOCKS)。
+// 「账本」页:收支、月费、成本放在一起。收入 = 客户的续费 / 收款(退款算负数)+ 自己记的收入;支出 = 自己记的(如买服务器)。
+// 汇总(本月 / 上月 / 近 12 个月净收入、月费合计、月成本、每月结余)→ 每月收支 → 待续费(快到期 / 已到期的客户,能直接续费)→
+// 收支明细(按月份、客户 / 类别、类型筛)→ 月成本明细(面板和 SOCKS)。右上角「记一笔」自己记收入 / 支出。
 import { locale, t } from '../i18n';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
 import CustomerRenew from '../components/CustomerRenew.vue';
+import LedgerEntryForm from '../components/LedgerEntryForm.vue';
 import Modal from '../components/Modal.vue';
 import PaymentRows from '../components/PaymentRows.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import { costSummary, dueClass, feeSummary, fmtCost, fmtDate, fmtDue, monthStart, stateLabel } from '../format';
+import { isEntry, rowAt, rowCents, rowKey, type LedgerRow } from '../ledgerRows';
 import { toastError } from '../toast';
-import type { Customer, Panel, Payment, Socks } from '../types';
+import type { Customer, LedgerEntry, Panel, Payment, Socks } from '../types';
 
 const DAY = 86_400_000;
 const customers = ref<Customer[]>([]);
 const panels = ref<Panel[]>([]);
 const socksList = ref<Socks[]>([]);
 const payments = ref<Payment[] | null>(null);
+const entries = ref<LedgerEntry[] | null>(null);
 
 async function load() {
   try {
-    [customers.value, panels.value, socksList.value, payments.value] = await Promise.all([api.customers(), api.panels(), api.socks(), api.payments()]);
+    [customers.value, panels.value, socksList.value, payments.value, entries.value] = await Promise.all([api.customers(), api.panels(), api.socks(), api.payments(), api.ledger()]);
   } catch (e) {
     toastError(e);
   }
 }
 onMounted(load);
 
-/** 按分加,不出 0.1 + 0.2 那种小数 */
-const cents = (list: Payment[]) => list.reduce((sum, p) => sum + Math.round((p.amount ?? 0) * 100), 0) / 100;
-const paidCount = (list: Payment[]) => list.filter((p) => p.amount != null).length;
-const between = (from: number, to: number) => (payments.value ?? []).filter((p) => p.paid_at >= from && p.paid_at < to);
+/** 客户的收款和自己记的收入 / 支出合在一起,新的在前 */
+const rows = computed<LedgerRow[] | null>(() => (payments.value && entries.value ? [...payments.value, ...entries.value].sort((a, b) => rowAt(b) - rowAt(a) || b.created_at - a.created_at) : null));
+/** 收入 / 支出 / 净收入,按分加(不出 0.1 + 0.2 那种小数);退款算负的收入。n = 笔数(只续期没记钱的不算) */
+function sums(list: LedgerRow[]) {
+  let income = 0;
+  let expense = 0;
+  let n = 0;
+  for (const r of list) {
+    if (isEntry(r) && r.kind === 'expense') expense -= rowCents(r);
+    else income += rowCents(r);
+    if (isEntry(r) || r.amount != null) n++;
+  }
+  return { income: income / 100, expense: expense / 100, net: (income - expense) / 100, n };
+}
+const between = (from: number, to: number) => (rows.value ?? []).filter((r) => rowAt(r) >= from && rowAt(r) < to);
 const monthLabel = (from: number) => {
   const d = new Date(from);
   return t('payments.month', { y: d.getFullYear(), m: d.getMonth() + 1, mm: String(d.getMonth() + 1).padStart(2, '0') });
@@ -39,25 +53,31 @@ const monthLabel = (from: number) => {
 
 // ---------- 汇总 ----------
 const now = Date.now();
-const thisMonth = computed(() => between(monthStart(now), monthStart(now, 1)));
-const lastMonth = computed(() => between(monthStart(now, -1), monthStart(now)));
-const lastYear = computed(() => between(monthStart(now, -11), monthStart(now, 1)));
+const periods = computed(() => [
+  { key: 'this', label: t('ledger.thisMonth'), ...sums(between(monthStart(now), monthStart(now, 1))) },
+  { key: 'last', label: t('ledger.lastMonth'), ...sums(between(monthStart(now, -1), monthStart(now))) },
+  { key: 'year', label: t('ledger.year'), ...sums(between(monthStart(now, -11), monthStart(now, 1))) },
+]);
 const fees = computed(() => feeSummary(customers.value, [...panels.value, ...socksList.value]));
 const costs = computed(() => costSummary([...panels.value, ...socksList.value]));
 
-// ---------- 每月实收:最近 12 个月,点哪个月下面的明细就只看那个月 ----------
+// ---------- 每月收支:最近 12 个月,点哪个月下面的明细就只看那个月 ----------
 const months = computed(() =>
   Array.from({ length: 12 }, (_, i) => {
     const from = monthStart(now, -i);
-    const list = between(from, monthStart(now, -i + 1));
-    return { from, label: monthLabel(from), paid: paidCount(list), total: cents(list) };
+    return { from, label: monthLabel(from), ...sums(between(from, monthStart(now, -i + 1))) };
   }),
 );
-const maxMonth = computed(() => Math.max(1, ...months.value.map((m) => m.total)));
+/** 这 12 个月记过支出才画支出的条 */
+const hasExpense = computed(() => months.value.some((m) => m.expense > 0));
+const maxMonth = computed(() => Math.max(1, ...months.value.map((m) => Math.max(m.income, m.expense))));
+const pct = (v: number) => `${(Math.max(0, v) / maxMonth.value) * 100}%`;
 
-// ---------- 收款明细 ----------
-type Kind = '' | 'renew' | 'pay' | 'refund' | 'free';
-const kindOf = (p: Payment): Kind => (p.amount == null ? 'free' : p.amount < 0 ? 'refund' : p.months || p.days ? 'renew' : 'pay');
+// ---------- 收支明细 ----------
+type Kind = '' | 'renew' | 'pay' | 'refund' | 'free' | 'income' | 'expense';
+const kindOf = (r: LedgerRow): Kind => (isEntry(r) ? r.kind : r.amount == null ? 'free' : r.amount < 0 ? 'refund' : r.months || r.days ? 'renew' : 'pay');
+/** 搜索比对的文字:客户名(自己记的是类别)和备注 */
+const textOf = (r: LedgerRow) => `${isEntry(r) ? r.category : r.customer_name}\n${r.note}`.toLowerCase();
 /** 0 = 全部月份,否则是那个月 1 号 0 点 */
 const month = ref(0);
 const q = ref('');
@@ -66,7 +86,7 @@ const PAGE = 100;
 const limit = ref(PAGE);
 /** 有记录的月份,新的在前(超过 12 个月的也能选) */
 const monthOptions = computed<SelectOption<number>[]>(() => {
-  const seen = new Set<number>((payments.value ?? []).map((p) => monthStart(p.paid_at)));
+  const seen = new Set<number>((rows.value ?? []).map((r) => monthStart(rowAt(r))));
   for (const m of months.value) seen.add(m.from);
   return [{ value: 0, label: t('ledger.allMonths') }, ...[...seen].sort((a, b) => b - a).map((from) => ({ value: from, label: monthLabel(from) }))];
 });
@@ -76,23 +96,27 @@ const kindOptions = computed<SelectOption<Kind>[]>(() => [
   { value: 'pay', label: t('ledger.kindPay') },
   { value: 'refund', label: t('ledger.kindRefund') },
   { value: 'free', label: t('ledger.kindFree') },
+  { value: 'income', label: t('ledger.kindIncome') },
+  { value: 'expense', label: t('ledger.kindExpense') },
 ]);
 const filtered = computed(() => {
   const k = q.value.trim().toLowerCase();
   const end = month.value ? monthStart(month.value, 1) : 0;
-  return (payments.value ?? []).filter((p) => (!month.value || (p.paid_at >= month.value && p.paid_at < end)) && (!k || p.customer_name.toLowerCase().includes(k)) && (!kind.value || kindOf(p) === kind.value));
+  return (rows.value ?? []).filter((r) => (!month.value || (rowAt(r) >= month.value && rowAt(r) < end)) && (!k || textOf(r).includes(k)) && (!kind.value || kindOf(r) === kind.value));
 });
+const filteredSums = computed(() => sums(filtered.value));
 const filtering = computed(() => !!month.value || !!q.value.trim() || !!kind.value);
 watch([month, q, kind], () => (limit.value = PAGE));
 function pickMonth(from: number) {
   month.value = month.value === from ? 0 : from;
 }
-const busy = ref<number | null>(null);
-async function remove(p: Payment) {
-  if (!confirm(t('payments.confirmDelete', { date: fmtDate(p.paid_at) }))) return;
-  busy.value = p.id;
+const busy = ref<string | null>(null);
+async function remove(r: LedgerRow) {
+  const ask = isEntry(r) ? t('ledger.confirmDeleteEntry', { date: fmtDate(r.at), what: t(r.kind === 'expense' ? 'entry.expense' : 'entry.income'), v: fmtCost(r.amount) }) : t('payments.confirmDelete', { date: fmtDate(r.paid_at) });
+  if (!confirm(ask)) return;
+  busy.value = rowKey(r);
   try {
-    await api.deletePayment(p.id);
+    await (isEntry(r) ? api.deleteLedgerEntry(r.id) : api.deletePayment(r.id));
     await load();
   } catch (e) {
     toastError(e);
@@ -108,6 +132,14 @@ const renewFor = ref<Customer | null>(null);
 async function onRenewed() {
   await load();
   if (renewFor.value) renewFor.value = customers.value.find((c) => c.id === renewFor.value!.id) ?? null;
+}
+
+// ---------- 记一笔:自己记的收入 / 支出 ----------
+const adding = ref(false);
+const addSaving = ref(false);
+async function onAdded() {
+  adding.value = false;
+  await load();
 }
 
 // ---------- 月成本明细:填了月成本或到期日的面板和 SOCKS ----------
@@ -130,23 +162,16 @@ const costRows = computed(() =>
         <p>{{ t('ledger.intro') }}</p>
       </details>
     </div>
+    <div class="ph-actions">
+      <button class="primary" @click="adding = true">{{ t('ledger.add') }}</button>
+    </div>
   </header>
 
   <section class="tiles">
-    <div class="tile sheet">
-      <span class="muted small">{{ t('ledger.thisMonth') }}</span>
-      <strong>{{ fmtCost(cents(thisMonth)) }}</strong>
-      <span class="muted small">{{ t('ledger.count', { n: paidCount(thisMonth) }) }}</span>
-    </div>
-    <div class="tile sheet">
-      <span class="muted small">{{ t('ledger.lastMonth') }}</span>
-      <strong>{{ fmtCost(cents(lastMonth)) }}</strong>
-      <span class="muted small">{{ t('ledger.count', { n: paidCount(lastMonth) }) }}</span>
-    </div>
-    <div class="tile sheet">
-      <span class="muted small">{{ t('ledger.year') }}</span>
-      <strong>{{ fmtCost(cents(lastYear)) }}</strong>
-      <span class="muted small">{{ t('ledger.count', { n: paidCount(lastYear) }) }}</span>
+    <div v-for="p in periods" :key="p.key" class="tile sheet" :title="t('ledger.netHint')">
+      <span class="muted small">{{ p.label }}</span>
+      <strong :class="{ 'text-err': p.net < 0 }">{{ fmtCost(p.net) }}</strong>
+      <span class="muted small">{{ t('ledger.inOut', { i: fmtCost(p.income), e: fmtCost(p.expense) }) }}</span>
     </div>
     <div class="tile sheet" :title="t('ledger.feeHint')">
       <span class="muted small">{{ t('ledger.monthlyFee') }}</span>
@@ -169,15 +194,19 @@ const costRows = computed(() =>
 
   <div class="two-col">
     <section class="sheet block">
-      <h3>{{ t('ledger.perMonth') }}</h3>
+      <h3>
+        {{ t('ledger.perMonth') }}
+        <span v-if="hasExpense" class="legend muted small" aria-hidden="true"><i class="sw in" />{{ t('ledger.colIncome') }}<i class="sw out" />{{ t('ledger.colExpense') }}</span>
+      </h3>
       <div class="table-wrap">
         <table class="months">
           <thead>
             <tr>
               <th>{{ t('payments.colMonth') }}</th>
-              <th class="wide"><span class="sr-only">{{ t('payments.colTotal') }}</span></th>
-              <th class="num">{{ t('payments.colCount') }}</th>
-              <th class="num">{{ t('payments.colTotal') }}</th>
+              <th class="wide"><span class="sr-only">{{ t('ledger.colIncome') }}</span></th>
+              <th class="num">{{ t('ledger.colIncome') }}</th>
+              <th class="num">{{ t('ledger.colExpense') }}</th>
+              <th class="num">{{ t('ledger.colNet') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -186,10 +215,14 @@ const costRows = computed(() =>
                 <button class="link" :aria-pressed="m.from === month" :title="t('ledger.pickMonth')" @click="pickMonth(m.from)">{{ m.label }}</button>
               </td>
               <td class="wide">
-                <span class="meter"><i :style="{ width: `${(Math.max(0, m.total) / maxMonth) * 100}%` }" /></span>
+                <span class="bars" :class="{ two: hasExpense }">
+                  <span class="meter"><i :style="{ width: pct(m.income) }" /></span>
+                  <span v-if="hasExpense" class="meter out"><i :style="{ width: pct(m.expense) }" /></span>
+                </span>
               </td>
-              <td class="num muted">{{ m.paid }}</td>
-              <td class="num" :class="{ 'text-err': m.total < 0, muted: !m.paid && !m.total }">{{ fmtCost(m.total) }}</td>
+              <td class="num" :class="{ muted: !m.income, 'text-err': m.income < 0 }" :title="t('ledger.count', { n: m.n })">{{ fmtCost(m.income) }}</td>
+              <td class="num" :class="{ muted: !m.expense }">{{ fmtCost(m.expense) }}</td>
+              <td class="num" :class="{ 'text-err': m.net < 0, muted: !m.n }">{{ fmtCost(m.net) }}</td>
             </tr>
           </tbody>
         </table>
@@ -244,7 +277,9 @@ const costRows = computed(() =>
   <section class="sheet block">
     <h3>
       {{ t('ledger.details') }}
-      <span v-if="payments" class="muted small">{{ t('ledger.filteredTotal', { v: fmtCost(cents(filtered)), n: paidCount(filtered) }) }}</span>
+      <span v-if="rows" class="muted small">
+        {{ filteredSums.expense ? t('ledger.filteredInOut', { i: fmtCost(filteredSums.income), e: fmtCost(filteredSums.expense), v: fmtCost(filteredSums.net), n: filteredSums.n }) : t('ledger.filteredTotal', { v: fmtCost(filteredSums.income), n: filteredSums.n }) }}
+      </span>
     </h3>
     <div class="filters">
       <Select v-model="month" :options="monthOptions" :aria-label="t('ledger.monthLabel')" />
@@ -252,8 +287,8 @@ const costRows = computed(() =>
       <Select v-model="kind" :options="kindOptions" :aria-label="t('ledger.kindLabel')" />
       <button v-if="filtering" type="button" class="link" @click="(month = 0), (q = ''), (kind = '')">{{ t('ledger.clear') }}</button>
     </div>
-    <p v-if="!payments" class="muted small">{{ t('common.loading') }}</p>
-    <p v-else-if="!filtered.length" class="muted small">{{ payments.length ? t('ledger.emptyFiltered') : t('ledger.empty') }}</p>
+    <p v-if="!rows" class="muted small">{{ t('common.loading') }}</p>
+    <p v-else-if="!filtered.length" class="muted small">{{ rows.length ? t('ledger.emptyFiltered') : t('ledger.empty') }}</p>
     <template v-else>
       <PaymentRows :rows="filtered.slice(0, limit)" show-customer :busy="busy" @remove="remove" />
       <div v-if="filtered.length > limit" class="row more">
@@ -292,6 +327,15 @@ const costRows = computed(() =>
       </table>
     </div>
   </section>
+
+  <Modal v-if="adding" :title="t('entry.title')" @close="adding = false">
+    <LedgerEntryForm :entries="entries ?? []" @saved="onAdded" @saving="(b) => (addSaving = b)" />
+    <template #footer>
+      <span class="spacer" />
+      <button @click="adding = false">{{ t('common.cancel') }}</button>
+      <button class="primary" form="ledger-entry-form" :disabled="addSaving">{{ addSaving ? t('common.saving') : t('entry.submit') }}</button>
+    </template>
+  </Modal>
 
   <Modal v-if="renewFor" :title="t('payments.title', { name: renewFor.name })" wide @close="renewFor = null">
     <CustomerRenew :customer="renewFor" @changed="onRenewed" />
@@ -371,6 +415,37 @@ const costRows = computed(() =>
   border-radius: 3px;
   background: var(--series-1);
 }
+/* 有支出时收入、支出两根细条叠着,中间留 2px */
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bars.two .meter {
+  height: 4px;
+}
+.meter.out i {
+  background: var(--series-2);
+}
+.legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 400;
+}
+.sw {
+  display: inline-block;
+  width: 10px;
+  height: 4px;
+  border-radius: 2px;
+  margin-left: 6px;
+}
+.sw.in {
+  background: var(--series-1);
+}
+.sw.out {
+  background: var(--series-2);
+}
 .date {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -412,7 +487,8 @@ const costRows = computed(() =>
 }
 @media (max-width: 640px) {
   .wide,
-  .opt {
+  .opt,
+  .legend {
     display: none;
   }
   .block {

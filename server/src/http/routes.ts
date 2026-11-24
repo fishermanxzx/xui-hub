@@ -29,6 +29,7 @@ import {
   type Line,
 } from '../customers/repo';
 import { deletePayment, insertPayment, lastPayments, listPayments, renewedExpire, renewSpan, validAmount, validNote, validPaidAt } from '../customers/payments';
+import { deleteEntry, insertEntry, listEntries, validEntry } from '../ledger/entries';
 import { importClients } from '../lines/import';
 import { resetCustomerUsage } from '../lines/reset';
 import { broadcast, channelsFor } from '../notify/send';
@@ -108,6 +109,15 @@ function wrap(fn: Handler) {
       next(e);
     }
   };
+}
+
+/** 查询参数里的毫秒时间戳:不给 = undefined */
+function msQuery(req: Request, k: string): number | undefined {
+  const v = req.query[k];
+  if (v === undefined || v === '') return undefined;
+  const n = Number(v);
+  if (!Number.isSafeInteger(n) || n < 0) throw new InputError(`${k} 要是毫秒时间戳`);
+  return n;
 }
 
 function idParam(req: Request): number {
@@ -597,21 +607,13 @@ export function apiRouter(deps: RouteDeps): Router {
     }),
   );
   // 全部客户的续费 / 收款记录:from / to(毫秒)= 收款日期在 [from, to) 里的,不给就是全部
-  r.get(
-    '/payments',
-    wrap((req) => {
-      const ms = (k: string) => {
-        const v = req.query[k];
-        if (v === undefined || v === '') return undefined;
-        const n = Number(v);
-        if (!Number.isSafeInteger(n) || n < 0) throw new InputError(`${k} 要是毫秒时间戳`);
-        return n;
-      };
-      return listPayments(db, { from: ms('from'), to: ms('to') });
-    }),
-  );
+  r.get('/payments', wrap((req) => listPayments(db, { from: msQuery(req, 'from'), to: msQuery(req, 'to') })));
   // 删一笔记录(记错了):只删记录,到期日不变
   r.delete('/payments/:id', wrap((req) => void deletePayment(db, idParam(req))));
+  // 自己记的收入 / 支出(不挂客户,如买服务器、域名):from / to 同上;记一笔(kind、amount 必填);删一笔
+  r.get('/ledger', wrap((req) => listEntries(db, { from: msQuery(req, 'from'), to: msQuery(req, 'to') })));
+  r.post('/ledger', wrap((req) => insertEntry(db, validEntry(req.body ?? {}))));
+  r.delete('/ledger/:id', wrap((req) => void deleteEntry(db, idParam(req))));
   // 清零已用:把各线路客户端在面板上的流量清零,超额停掉的随之恢复
   r.post(
     '/customers/:id/reset-usage',

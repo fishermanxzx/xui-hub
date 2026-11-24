@@ -1072,3 +1072,27 @@ test('重新启用停着的线路:面板上手动停的能启用,读一遍面板
     await close();
   }
 });
+
+test('自己记的收入 / 支出:记一笔、按日期区间查、删;金额不对 / kind 不对报 400;客户的收款不混进来', async () => {
+  const db = memoryDb();
+  const { call, close } = await serve(db);
+  try {
+    const a = await call('POST', '/ledger', { kind: 'expense', amount: 300, at: 1_000, category: '服务器', note: '年付' });
+    assert.deepEqual([a.status, a.body.kind, a.body.amount, a.body.at, a.body.category, a.body.note], [200, 'expense', 300, 1_000, '服务器', '年付']);
+    const b = (await call('POST', '/ledger', { kind: 'income', amount: '20.5', at: 3_000 })).body;
+    for (const bad of [{ kind: 'expense', amount: -1 }, { kind: 'x', amount: 1 }, { kind: 'income' }]) assert.equal((await call('POST', '/ledger', bad)).status, 400, JSON.stringify(bad));
+    const c = (await call('POST', '/customers', { name: 'li' })).body;
+    await call('POST', `/customers/${c.id}/payments`, { amount: 30 });
+
+    assert.deepEqual((await call('GET', '/ledger')).body.map((e: any) => [e.kind, e.amount]), [['income', 20.5], ['expense', 300]]);
+    assert.deepEqual((await call('GET', '/ledger?from=2000&to=4000')).body.map((e: any) => e.id), [b.id]);
+    assert.equal((await call('GET', '/ledger?from=abc')).status, 400);
+    assert.equal((await call('GET', '/payments')).body.length, 1);
+
+    assert.equal((await call('DELETE', `/ledger/${a.body.id}`)).status, 200);
+    assert.equal((await call('DELETE', `/ledger/${a.body.id}`)).status, 400);
+    assert.deepEqual((await call('GET', '/ledger')).body.map((e: any) => e.id), [b.id]);
+  } finally {
+    await close();
+  }
+});

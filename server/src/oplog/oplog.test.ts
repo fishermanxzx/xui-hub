@@ -56,6 +56,13 @@ test('操作日志:登录、客户的新建 / 修改(只写改了的,前后对�
     const pay = (await call('GET', `/customers/${c.id}/payments`)).body[0];
     await call('DELETE', `/payments/${pay.id}`);
     assert.match(summaries(db)[0], /^删除「张三」\d{4}-\d{2}-\d{2} 的一笔记录\(金额 -5,只记收款;到期日不变\)$/);
+    // 自己记的收入 / 支出:不挂客户
+    const entry = (await call('POST', '/ledger', { kind: 'expense', amount: 300, category: '服务器', note: '年付' })).body;
+    assert.deepEqual([summaries(db)[0], listOpLog(db).rows[0].customer_id], ['记一笔支出 300(服务器;备注「年付」)', null]);
+    await call('DELETE', `/ledger/${entry.id}`);
+    assert.match(summaries(db)[0], /^删除 \d{4}-\d{2}-\d{2} 的一笔支出 300\(服务器;备注「年付」\)$/);
+    assert.equal((await call('POST', '/ledger', { kind: 'income', amount: 0 })).status, 400);
+    assert.deepEqual([summaries(db)[0], listOpLog(db).rows[0].ok], ['记一笔收入 0', false]);
     await call('POST', `/customers/${c.id}/adjust-usage`, { down: 2 * 1024 ** 3 });
     assert.equal(summaries(db)[0], '调整「张三」本期已用 +2 GB(计费用量)');
     await call('POST', `/customers/${c.id}/sub-token`);
@@ -83,7 +90,7 @@ test('操作日志:登录、客户的新建 / 修改(只写改了的,前后对�
     assert.equal(summaries(db)[0], '删除客户「张三」(连同 0 条线路)');
     // 客户删了,他的日志还能按 id 筛出来
     assert.equal(listOpLog(db, { customer_id: c.id }).rows.length, 11);
-    assert.deepEqual(listOpLog(db, { failed: true }).rows.map((r) => r.summary), ['给「#999」续费', '登录']);
+    assert.deepEqual(listOpLog(db, { failed: true }).rows.map((r) => r.summary), ['给「#999」续费', '记一笔收入 0', '登录']);
     assert.deepEqual(listOpLog(db, { q: '退款' }).rows.map((r) => r.summary), ['给「张三」记一笔退款 -5']);
   } finally {
     await close();

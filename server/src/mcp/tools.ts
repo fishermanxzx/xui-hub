@@ -36,6 +36,11 @@ async function call(ctx: ToolContext, method: string, path: string, body?: unkno
   return res.body;
 }
 
+/** 给模型看的自己记的收入 / 支出 */
+function entryView(e: any) {
+  return { id: e.id, kind: e.kind, amount: e.amount, date: iso(e.at), category: e.category, note: e.note };
+}
+
 /** 给模型看的续费 / 收款记录 */
 function paymentView(p: any) {
   return {
@@ -235,6 +240,45 @@ export const TOOLS: ToolDef[] = [
       const rows = a.customer_id ? await call(ctx, 'GET', `/customers/${Number(a.customer_id)}/payments`) : await call(ctx, 'GET', `/payments?from=${from}`);
       const list = (rows as any[]).filter((p) => p.paid_at >= from).map(paymentView);
       return { total: Math.round(list.reduce((sum, p) => sum + (p.amount ?? 0), 0) * 100) / 100, payments: list };
+    },
+  },
+  {
+    name: 'add_ledger_entry',
+    title: '记一笔收入 / 支出',
+    description:
+      '在账本里自己记一笔收入或支出,不挂客户:如买服务器、域名、SOCKS 的支出,客户续费以外的收入。客户付的钱不要用这个,用 renew_customer(续费时填 amount)。kind = income(收入)或 expense(支出),amount 总是正数;date 是哪天(YYYY-MM-DD,不填 = 今天);category 是类别(如「服务器」「域名」)。',
+    inputSchema: obj(
+      {
+        kind: { type: 'string', enum: ['income', 'expense'], description: 'income = 收入,expense = 支出' },
+        amount: { type: 'number', exclusiveMinimum: 0, maximum: 100_000_000, description: '金额,正数(支出也填正数)' },
+        date: str('哪天,YYYY-MM-DD(按服务器时区);不填 = 今天', { pattern: '^\\d{4}-\\d{2}-\\d{2}$' }),
+        category: str('类别,如「服务器」「域名」,最多 20 字', { maxLength: 20 }),
+        note: str('备注,最多 200 字', { maxLength: 200 }),
+      },
+      ['kind', 'amount'],
+    ),
+    annotations: { destructiveHint: false },
+    run: async (a, ctx) => {
+      let at: number | undefined;
+      if (a.date) {
+        const [y, m, d] = String(a.date).split('-').map(Number);
+        at = new Date(y, m - 1, d, 12).getTime();
+        if (!Number.isFinite(at) || new Date(at).getMonth() !== m - 1 || new Date(at).getDate() !== d) throw new ToolError('date 要是 YYYY-MM-DD');
+      }
+      return entryView(await call(ctx, 'POST', '/ledger', { kind: a.kind, amount: a.amount, at, category: a.category, note: a.note }));
+    },
+  },
+  {
+    name: 'list_ledger_entries',
+    title: '自己记的收入 / 支出',
+    description: '账本里自己记的收入 / 支出(不含客户的续费 / 收款,那些用 list_payments),新的在前;days 只看最近多少天的(默认 365)。返回收入合计、支出合计和每一笔。',
+    inputSchema: obj({ days: int('最近多少天', { minimum: 1, maximum: 3650 }) }),
+    annotations: { readOnlyHint: true },
+    run: async (a, ctx) => {
+      const from = Date.now() - (Number(a.days) || 365) * 86_400_000;
+      const list = (await call(ctx, 'GET', `/ledger?from=${from}`)) as any[];
+      const sum = (kind: string) => list.filter((e) => e.kind === kind).reduce((n, e) => n + Math.round(e.amount * 100), 0) / 100;
+      return { income: sum('income'), expense: sum('expense'), entries: list.map(entryView) };
     },
   },
   {
@@ -489,4 +533,4 @@ export async function runTool(tool: ToolDef, args: unknown, ctx: ToolContext): P
 
 export const INSTRUCTIONS =
   'xui-hub 把多台 3x-ui 面板接到一个后台,按「客户」管理线路。一位客户有若干线路(每条是某块面板上的一个客户端)、一个总流量额度、一个到期时间和一条订阅链接。' +
-  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer(收了钱填 amount,会记成一笔收款),查收款用 list_payments。删除类操作(delete_customer、delete_line、reset_subscription_link)和换出口(change_line_exit,会重启面板的 Xray)执行前先向用户确认。';
+  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer(收了钱填 amount,会记成一笔收款),查收款用 list_payments;不挂客户的收入 / 支出(如买服务器)用 add_ledger_entry 记、list_ledger_entries 查。删除类操作(delete_customer、delete_line、reset_subscription_link)和换出口(change_line_exit,会重启面板的 Xray)执行前先向用户确认。';

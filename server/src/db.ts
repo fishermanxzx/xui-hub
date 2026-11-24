@@ -362,6 +362,20 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE customers ADD COLUMN carried_used_down INTEGER NOT NULL DEFAULT 0;
   UPDATE customers SET carried_used_up = CAST(ROUND(carried_up * traffic_ratio) AS INTEGER), carried_used_down = CAST(ROUND(carried_down * traffic_ratio) AS INTEGER);
   `,
+  `
+  -- 自己记的收入 / 支出(不挂客户,如买服务器、域名):kind = income / expense,amount 总是正数,at 是日期;
+  -- 客户的续费 / 收款还在 payments 里,账本页两边合起来算
+  CREATE TABLE ledger_entries (
+    id         INTEGER PRIMARY KEY,
+    kind       TEXT NOT NULL CHECK (kind IN ('income', 'expense')),
+    amount     REAL NOT NULL,
+    at         INTEGER NOT NULL,
+    category   TEXT NOT NULL DEFAULT '',
+    note       TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX ledger_entries_at ON ledger_entries(at);
+  `,
 ];
 
 export function openDb(file: string): DB {

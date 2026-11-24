@@ -5,6 +5,7 @@
 import { getCustomer, getLine, lineByEmail, type CustomerView, type Line } from '../customers/repo';
 import { getPayment, type Payment } from '../customers/payments';
 import type { DB } from '../db';
+import { getEntry, type LedgerEntry } from '../ledger/entries';
 import { getPanel, type Panel } from '../panels/repo';
 import { getSettings, type Settings } from '../settings';
 import { getSocks, type SocksProxy } from '../socks/repo';
@@ -31,6 +32,7 @@ export interface Before {
   panel?: Panel;
   socks?: SocksProxy;
   payment?: Payment;
+  entry?: LedgerEntry;
   /** 令牌 / MCP 授权的名字 */
   name?: string;
   settings?: Settings;
@@ -59,6 +61,11 @@ const money = (n: number | null) => (n == null ? '没填' : String(n));
 const onOff = (v: unknown) => (v ? '开' : '关');
 const lineName = (l: Line) => `${l.panel_name} · ${l.email}`;
 const span = (p: Payment) => (p.months ? `${p.months} 个月` : `${p.days} 天`);
+/** 「 300(服务器;备注「…」)」 */
+const entryText = (e: Partial<LedgerEntry>) => {
+  const extra = [e.category, e.note ? `备注「${e.note}」` : ''].filter(Boolean);
+  return `${e.amount != null ? ` ${e.amount}` : ''}${extra.length ? `(${extra.join(';')})` : ''}`;
+};
 const exitOf = (l: Line) => (l.kind === 'direct' ? '直出' : l.exit_label || '走代理');
 
 function decode(s: string): string {
@@ -93,6 +100,9 @@ export function snapshot(db: DB, path: string, body: unknown): Before {
       break;
     case 'payments':
       if (id(1)) b.payment = getPayment(db, id(1));
+      break;
+    case 'ledger':
+      if (id(1)) b.entry = getEntry(db, id(1));
       break;
     case 'tokens':
       if (id(1)) b.name = (db.prepare('SELECT name FROM api_tokens WHERE id = ?').get(id(1)) as { name: string } | undefined)?.name;
@@ -263,6 +273,14 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
       if (!p) return S('删除一笔续费 / 收款记录', null);
       const what = [p.amount != null ? `金额 ${p.amount}` : '没记钱', p.months || p.days ? `续 ${span(p)}` : '只记收款'];
       return S(`删除「${p.customer_name}」${date(p.paid_at)} 的一笔记录(${what.join(',')};到期日不变)`, p.customer_id);
+    }
+    case 'POST /ledger': {
+      const e: Partial<LedgerEntry> = ok ? result : body;
+      return S(`记一笔${e.kind === 'expense' ? '支出' : '收入'}${entryText(e)}`, null);
+    }
+    case 'DELETE /ledger/:id': {
+      const e = b.entry;
+      return S(e ? `删除 ${date(e.at)} 的一笔${e.kind === 'expense' ? '支出' : '收入'}${entryText(e)}` : '删除一笔收入 / 支出记录', null);
     }
     case 'POST /customers/:id/reset-usage':
       return S(`清零${cname}的流量${c ? `(清零前已用 ${used(c.used)})` : ''}`);
