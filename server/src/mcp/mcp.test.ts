@@ -105,6 +105,11 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
     assert.equal((await call('add_ledger_entry', { kind: 'income', amount: 1, date: '2026-02-30' })).body.result.isError, true);
     const own = toolJson(await call('list_ledger_entries', { days: 3650 }));
     assert.deepEqual([own.income, own.expense, own.entries.length], [50, 300, 2]);
+    // 关联面板 / 客户
+    const tied = toolJson(await call('add_ledger_entry', { kind: 'income', amount: 5, panel_id: 1, customer_id: c.id }));
+    assert.deepEqual([tied.panel?.id, tied.customer?.name, tied.socks], [1, '小王', undefined]);
+    assert.equal((await call('add_ledger_entry', { kind: 'expense', amount: 5, customer_id: c.id })).body.result.isError, true);
+    assert.deepEqual(toolJson(await call('list_ledger_entries', { customer_id: c.id })).entries.map((e: any) => e.id), [tied.id]);
     assert.equal(toolJson(await call('list_payments', {})).total, 30);
     // 操作日志:记成「MCP · 令牌「名字」」,IP 是调 MCP 的那台
     const logs = listOpLog(db).rows;

@@ -61,9 +61,10 @@ const money = (n: number | null) => (n == null ? '没填' : String(n));
 const onOff = (v: unknown) => (v ? '开' : '关');
 const lineName = (l: Line) => `${l.panel_name} · ${l.email}`;
 const span = (p: Payment) => (p.months ? `${p.months} 个月` : `${p.days} 天`);
-/** 「 300(服务器;备注「…」)」 */
+/** 「 300(服务器;面板「…」;客户「…」;备注「…」)」;失败的请求里只有 id */
 const entryText = (e: Partial<LedgerEntry>) => {
-  const extra = [e.category, e.note ? `备注「${e.note}」` : ''].filter(Boolean);
+  const link = (what: string, id: number | null | undefined, name: string | undefined) => (id == null ? '' : `${what}「${name || `#${id}`}」`);
+  const extra = [e.category, link('面板', e.panel_id, e.panel_name), link('SOCKS', e.socks_id, e.socks_name), link('客户', e.customer_id, e.customer_name), e.note ? `备注「${e.note}」` : ''].filter(Boolean);
   return `${e.amount != null ? ` ${e.amount}` : ''}${extra.length ? `(${extra.join(';')})` : ''}`;
 };
 const exitOf = (l: Line) => (l.kind === 'direct' ? '直出' : l.exit_label || '走代理');
@@ -276,11 +277,11 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
     }
     case 'POST /ledger': {
       const e: Partial<LedgerEntry> = ok ? result : body;
-      return S(`记一笔${e.kind === 'expense' ? '支出' : '收入'}${entryText(e)}`, null);
+      return S(`记一笔${e.kind === 'expense' ? '支出' : '收入'}${entryText(e)}`, ok ? (e.customer_id ?? null) : null);
     }
     case 'DELETE /ledger/:id': {
       const e = b.entry;
-      return S(e ? `删除 ${date(e.at)} 的一笔${e.kind === 'expense' ? '支出' : '收入'}${entryText(e)}` : '删除一笔收入 / 支出记录', null);
+      return S(e ? `删除 ${date(e.at)} 的一笔${e.kind === 'expense' ? '支出' : '收入'}${entryText(e)}` : '删除一笔收入 / 支出记录', e?.customer_id ?? null);
     }
     case 'POST /customers/:id/reset-usage':
       return S(`清零${cname}的流量${c ? `(清零前已用 ${used(c.used)})` : ''}`);

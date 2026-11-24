@@ -1092,6 +1092,18 @@ test('自己记的收入 / 支出:记一笔、按日期区间查、删;金额不
     assert.equal((await call('DELETE', `/ledger/${a.body.id}`)).status, 200);
     assert.equal((await call('DELETE', `/ledger/${a.body.id}`)).status, 400);
     assert.deepEqual((await call('GET', '/ledger')).body.map((e: any) => e.id), [b.id]);
+
+    // 关联:收入关联客户 + 面板;支出关联 SOCKS;不存在的 / 支出关联客户 / 面板和 SOCKS 都给报 400;按客户查
+    const p = addPanel(db, 'hk');
+    const s = (await call('POST', '/socks', { name: 'isp', address: '1.2.3.4:1080' })).body;
+    const linked = await call('POST', '/ledger', { kind: 'income', amount: 8, customer_id: c.id, panel_id: p.id });
+    assert.deepEqual([linked.status, linked.body.customer_name, linked.body.panel_name, linked.body.socks_id], [200, 'li', 'hk', null]);
+    assert.equal((await call('POST', '/ledger', { kind: 'expense', amount: 8, socks_id: s.id })).body.socks_name, 'isp');
+    for (const bad of [{ kind: 'expense', amount: 1, customer_id: c.id }, { kind: 'income', amount: 1, panel_id: p.id, socks_id: s.id }, { kind: 'income', amount: 1, customer_id: 999 }]) {
+      assert.equal((await call('POST', '/ledger', bad)).status, 400, JSON.stringify(bad));
+    }
+    assert.deepEqual((await call('GET', `/ledger?customer_id=${c.id}`)).body.map((e: any) => e.id), [linked.body.id]);
+    assert.equal((await call('GET', '/ledger?customer_id=x')).status, 400);
   } finally {
     await close();
   }

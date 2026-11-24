@@ -1,6 +1,6 @@
 // SOCKS 代理的存取(开线路时可选作出口)。账号密码只在服务端使用,对外视图不含密码。
 
-import type { DB } from '../db';
+import { nextId, type DB } from '../db';
 import { InputError, validCost, validExpire } from '../panels/repo';
 
 export interface SocksEndpoint {
@@ -154,10 +154,12 @@ export function createSocks(db: DB, input: SocksInput, now = Date.now()): number
   const n = name(input.name);
   assertNameFree(db, n);
   const ep = parseSocksAddress(String(input.address ?? ''));
-  const info = db
-    .prepare('INSERT INTO socks_proxies (name, host, port, username, password, remark, monthly_cost, expire_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(n, ep.host, ep.port, ep.username, ep.password, String(input.remark ?? '').trim(), validCost(input.monthly_cost), validExpire(input.expire_at), now, now);
-  return Number(info.lastInsertRowid);
+  const values = [n, ep.host, ep.port, ep.username, ep.password, String(input.remark ?? '').trim(), validCost(input.monthly_cost), validExpire(input.expire_at), now, now] as const;
+  return db.transaction(() => {
+    const id = nextId(db, 'socks_proxies');
+    db.prepare('INSERT INTO socks_proxies (id, name, host, port, username, password, remark, monthly_cost, expire_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, ...values);
+    return id;
+  })();
 }
 
 /**

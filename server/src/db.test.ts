@@ -7,6 +7,7 @@ import { test, type TestContext } from 'node:test';
 import { MIGRATIONS, getMeta, openDb, setMeta } from './db';
 import { createCustomer, deleteCustomer } from './customers/repo';
 import { createPanel, deletePanel } from './panels/repo';
+import { createSocks, deleteSocks } from './socks/repo';
 
 /** 一个测完就删的临时库文件(放在还不存在的子目录里) */
 function tempFile(t: TestContext): string {
@@ -129,4 +130,19 @@ test('迁移 29:倍率搬到面板上;客户上原来的倍率不再用,已经�
     { id: 2, carried_used_up: 0, carried_used_down: 0 },
   ]);
   assert.equal((old.prepare('SELECT traffic_ratio FROM panels WHERE id = 1').get() as { traffic_ratio: number }).traffic_ratio, 1);
+});
+
+test('迁移 31:账本记录加上关联(老记录都是没关联);SOCKS 的 id 从升级时最大的往上数,删掉最新的再建也不复用', () => {
+  const old = new Database(':memory:');
+  const last = 30; // 迁移 31 在数组里是第 30 个
+  for (let i = 0; i < last; i++) old.exec(MIGRATIONS[i]);
+  old.pragma(`user_version = ${last}`);
+  old.prepare("INSERT INTO socks_proxies (id, name, host, port, created_at, updated_at) VALUES (3, 's', 'h', 1, 0, 0)").run();
+  old.prepare("INSERT INTO ledger_entries (kind, amount, at, created_at) VALUES ('expense', 5, 1, 1)").run();
+  old.exec(MIGRATIONS[last]);
+  assert.deepEqual(old.prepare('SELECT customer_id, customer_name, panel_id, panel_name, socks_id, socks_name FROM ledger_entries').get(), { customer_id: null, customer_name: '', panel_id: null, panel_name: '', socks_id: null, socks_name: '' });
+  const a = createSocks(old as any, { name: 'a', address: '1.2.3.4:1' });
+  assert.equal(a, 4);
+  deleteSocks(old as any, a);
+  assert.equal(createSocks(old as any, { name: 'b', address: '1.2.3.4:2' }), 5);
 });

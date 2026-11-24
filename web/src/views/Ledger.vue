@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 「账本」页:收支、月费、成本放在一起。收入 = 客户的续费 / 收款(退款算负数)+ 自己记的收入;支出 = 自己记的(如买服务器)。
 // 汇总(本月 / 上月 / 近 12 个月净收入、月费合计、月成本、每月结余)→ 每月收支 → 待续费(快到期 / 已到期的客户,能直接续费)→
-// 收支明细(按月份、客户 / 类别、类型筛)→ 月成本明细(面板和 SOCKS)。右上角「记一笔」自己记收入 / 支出。
+// 收支明细(按月份、客户 / 面板 / 类别、类型筛)→ 月成本明细(面板和 SOCKS)。右上角「记一笔」自己记收入 / 支出。
 import { locale, t } from '../i18n';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
@@ -76,8 +76,8 @@ const pct = (v: number) => `${(Math.max(0, v) / maxMonth.value) * 100}%`;
 // ---------- 收支明细 ----------
 type Kind = '' | 'renew' | 'pay' | 'refund' | 'free' | 'income' | 'expense';
 const kindOf = (r: LedgerRow): Kind => (isEntry(r) ? r.kind : r.amount == null ? 'free' : r.amount < 0 ? 'refund' : r.months || r.days ? 'renew' : 'pay');
-/** 搜索比对的文字:客户名(自己记的是类别)和备注 */
-const textOf = (r: LedgerRow) => `${isEntry(r) ? r.category : r.customer_name}\n${r.note}`.toLowerCase();
+/** 搜索比对的文字:客户名、备注;自己记的还有类别、关联的客户 / 面板 / SOCKS 的名字 */
+const textOf = (r: LedgerRow) => (isEntry(r) ? [r.category, r.customer_name, r.panel_name, r.socks_name, r.note] : [r.customer_name, r.note]).join('\n').toLowerCase();
 /** 0 = 全部月份,否则是那个月 1 号 0 点 */
 const month = ref(0);
 const q = ref('');
@@ -329,7 +329,7 @@ const costRows = computed(() =>
   </section>
 
   <Modal v-if="adding" :title="t('entry.title')" @close="adding = false">
-    <LedgerEntryForm :entries="entries ?? []" @saved="onAdded" @saving="(b) => (addSaving = b)" />
+    <LedgerEntryForm :entries="entries ?? []" :customers="customers" :panels="panels" :socks="socksList" @saved="onAdded" @saving="(b) => (addSaving = b)" />
     <template #footer>
       <span class="spacer" />
       <button @click="adding = false">{{ t('common.cancel') }}</button>

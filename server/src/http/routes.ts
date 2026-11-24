@@ -610,8 +610,17 @@ export function apiRouter(deps: RouteDeps): Router {
   r.get('/payments', wrap((req) => listPayments(db, { from: msQuery(req, 'from'), to: msQuery(req, 'to') })));
   // 删一笔记录(记错了):只删记录,到期日不变
   r.delete('/payments/:id', wrap((req) => void deletePayment(db, idParam(req))));
-  // 自己记的收入 / 支出(不挂客户,如买服务器、域名):from / to 同上;记一笔(kind、amount 必填);删一笔
-  r.get('/ledger', wrap((req) => listEntries(db, { from: msQuery(req, 'from'), to: msQuery(req, 'to') })));
+  // 自己记的收入 / 支出(如买服务器、域名):from / to 同上,customer_id = 只要关联了这位客户的;
+  // 记一笔(kind、amount 必填,可以关联面板或 SOCKS,收入还可以关联客户);删一笔
+  r.get(
+    '/ledger',
+    wrap((req) => {
+      const c = req.query.customer_id;
+      const customer_id = c === undefined || c === '' ? undefined : Number(c);
+      if (customer_id !== undefined && (!Number.isSafeInteger(customer_id) || customer_id <= 0)) throw new InputError('customer_id 要是客户 id');
+      return listEntries(db, { from: msQuery(req, 'from'), to: msQuery(req, 'to'), customer_id });
+    }),
+  );
   r.post('/ledger', wrap((req) => insertEntry(db, validEntry(req.body ?? {}))));
   r.delete('/ledger/:id', wrap((req) => void deleteEntry(db, idParam(req))));
   // 清零已用:把各线路客户端在面板上的流量清零,超额停掉的随之恢复

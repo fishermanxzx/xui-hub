@@ -114,8 +114,13 @@ const payments = [
   pay(15, 3, '王五', 45, 58, 1),
   pay(16, 9, '老客户 A', 120, 95, 3, '', { customer_deleted: true }),
 ];
-const entry = (id, kind, amount, ago, category, note = '') => ({ id, kind, amount, at: now - ago * DAY, category, note, created_at: now - ago * DAY });
-const entries = [entry(21, 'expense', 45, 4, '服务器', '美国-1 月付'), entry(22, 'income', 20, 16, '其它', '介绍费'), entry(23, 'expense', 12, 33, '域名')];
+const noLink = { customer_id: null, customer_name: '', customer_deleted: false, panel_id: null, panel_name: '', panel_deleted: false, socks_id: null, socks_name: '', socks_deleted: false };
+const entry = (id, kind, amount, ago, category, note = '', link = {}) => ({ id, kind, amount, at: now - ago * DAY, category, note, ...noLink, ...link, created_at: now - ago * DAY });
+const entries = [
+  entry(21, 'expense', 45, 4, '服务器', '月付', { panel_id: 2, panel_name: '美国-1' }),
+  entry(22, 'income', 20, 16, '安装费', '', { customer_id: 2, customer_name: '李四' }),
+  entry(23, 'expense', 12, 33, '域名'),
+];
 const oplog = [
   { id: 51, at: now - 3 * 3_600_000, actor: '后台', ip: '203.0.113.8', action: 'POST /customers/:id/lines', summary: '给「王五」开线路:日本-1 · 王五', ok: true, error: '', customer_id: 3 },
   { id: 50, at: now - 5 * 3_600_000, actor: '令牌「发卡站」', ip: '198.51.100.140', action: 'POST /customers/:id/renew', summary: '给「张三」续费 1 个月;收款 30', ok: true, error: '', customer_id: 1 },
@@ -145,7 +150,7 @@ createServer((req, res) => {
   if (p === '/api/panels') return json(panels);
   if (p === '/api/socks') return json(socks);
   if (p === '/api/payments') return json(payments);
-  if (p === '/api/ledger') return json(entries);
+  if (p === '/api/ledger') { const c = Number(url.searchParams.get('customer_id')); return json(c ? entries.filter((e) => e.customer_id === c) : entries); }
   if (p === '/api/oplog') return json({ rows: oplog, more: false });
   if (p === '/api/settings') return json(settings);
   if (p === '/api/traffic') return json(traffic(url.searchParams.get('by') ?? 'customer', Number(url.searchParams.get('days') ?? 30), url.searchParams.get('id') ? Number(url.searchParams.get('id')) : undefined));

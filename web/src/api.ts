@@ -103,7 +103,8 @@ export const api = {
   addPayment: (id: number, body: { amount: number; paid_at?: number; note?: string }) => call<Payment>('POST', `/api/customers/${id}/payments`, body),
   payments: (from?: number, to?: number) => call<Payment[]>('GET', `/api/payments?${from != null ? `from=${from}` : ''}${to != null ? `&to=${to}` : ''}`),
   deletePayment: (id: number) => call<{ ok: true }>('DELETE', `/api/payments/${id}`),
-  ledger: () => call<LedgerEntry[]>('GET', '/api/ledger'),
+  /** customerId:只要关联了这位客户的 */
+  ledger: (customerId?: number) => call<LedgerEntry[]>('GET', customerId ? `/api/ledger?customer_id=${customerId}` : '/api/ledger'),
   addLedgerEntry: (body: EntryInput) => call<LedgerEntry>('POST', '/api/ledger', body),
   deleteLedgerEntry: (id: number) => call<{ ok: true }>('DELETE', `/api/ledger/${id}`),
   oplog: (q: { before?: number; customer_id?: number; q?: string; failed?: boolean }) => {
