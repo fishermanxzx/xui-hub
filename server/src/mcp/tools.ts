@@ -181,8 +181,8 @@ const customerFields = {
     description:
       '外部订阅(整组替换,空数组 = 清空):别处的订阅链接(如出口代理商给的),内容可以是节点链接 / base64、Clash 配置或 sing-box 配置。只取那边的节点,分组和规则用本系统的;客户拉自己的订阅时那边的节点也在里面,每种格式都有,取不到时用上次取到的',
   },
-  upstream_mode: { type: 'string', enum: ['merge', 'replace'], description: '外部订阅的用法:merge = 和自己线路的节点一起给(默认);replace = 只给外部订阅的节点' },
-  upstream_userinfo: { type: 'boolean', description: 'true = 订阅里的流量和到期(subscription-userinfo)用外部订阅给的;false = 用客户在 xui-hub 里的(默认)' },
+  upstream_mode: { type: 'string', enum: ['merge', 'replace', 'own'], description: '外部订阅的用法:merge = 和自己线路的节点一起给(默认);replace = 只给外部订阅的节点;own = 只给自己线路的节点(外部订阅留着先不用,也不取)' },
+  upstream_userinfo: { type: 'boolean', description: 'true = 订阅里的流量和到期(subscription-userinfo)用外部订阅给的;false = 用客户在 xui-hub 里的(默认);upstream_mode = own 时不起作用' },
 };
 
 export const TOOLS: ToolDef[] = [

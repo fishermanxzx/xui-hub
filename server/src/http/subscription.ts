@@ -101,12 +101,13 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
   const r = Router();
 
   /**
-   * 客户的节点:自己各线路的,加上外部订阅的(upstream = false 时不带外部订阅:请求来自别处的 xui-hub 拉外部订阅,见 HOP_HEADER)。
+   * 客户的节点:自己各线路的,加上外部订阅的(upstream = false 时不带外部订阅:请求来自别处的 xui-hub 拉外部订阅,见 HOP_HEADER;
+   * 客户设了只给自己线路的(own)也不带)。
    * 外部订阅 60 秒内取过就用存着的,取不到也用上次成功的
    */
   const nodes = async (c: CustomerView, upstream = true) => {
     if (c.state !== 'active') return [];
-    const withUpstream = upstream && c.upstreams.length > 0;
+    const withUpstream = upstream && usesUpstream(c);
     const [lines] = await Promise.all([
       withUpstream && c.upstream_mode === 'replace' ? [] : collectLinks(db, c.id, deps.fetcher),
       withUpstream ? refreshUpstreams(db, c.id, upstreamFetcher) : undefined,
@@ -119,12 +120,15 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
     return uniqueNames([...new Set([...mergeLinks(lines), ...up.links])]);
   };
 
+  /** 这位客户的订阅用不用外部订阅:配了,且没设成只给自己线路的 */
+  const usesUpstream = (c: CustomerView) => c.upstreams.length > 0 && c.upstream_mode !== 'own';
+
   /** 请求来自别处 xui-hub 拉外部订阅:只给自己线路的节点 */
   const isHop = (req: Request) => !!req.get(HOP_HEADER);
 
   /** 订阅里的流量和到期:客户设了用外部订阅的、那边也给了,就用那边的;否则用自己的 */
   const userinfoOf = (c: CustomerView, upstream: boolean) => {
-    const theirs = upstream && c.upstream_userinfo && c.upstreams.length ? cachedUpstream(db, c.id).userinfo : null;
+    const theirs = upstream && c.upstream_userinfo && usesUpstream(c) ? cachedUpstream(db, c.id).userinfo : null;
     return theirs ? userinfoText(theirs) : userinfoHeader(c);
   };
 
@@ -174,13 +178,13 @@ export function subscriptionRouter(deps: SubscriptionDeps): Router {
     const upstream = !isHop(req);
     // 外部订阅先取一遍(60 秒内取过的不取):流量头、自助页和节点都用这一份
     const refresh = async () => {
-      if (upstream && customer.state === 'active' && customer.upstreams.length) await refreshUpstreams(db, customer.id, upstreamFetcher);
+      if (upstream && customer.state === 'active' && usesUpstream(customer)) await refreshUpstreams(db, customer.id, upstreamFetcher);
     };
     // 浏览器直接打开(没指定格式):给客户看的自助页。?target=base64 仍然拿节点
     if (req.query.target === undefined && isBrowserUA(ua) && (req.get('accept') ?? '').includes('text/html')) {
       const base = deps.subBaseUrl || `${req.protocol}://${req.get('host')}`;
       await refresh();
-      const up = customer.upstreams.length ? cachedUpstream(db, customer.id) : null;
+      const up = usesUpstream(customer) ? cachedUpstream(db, customer.id) : null;
       res.set({ 'Cache-Control': 'no-store', 'Content-Type': 'text/html; charset=utf-8' });
       res.send(
         renderSubPage({

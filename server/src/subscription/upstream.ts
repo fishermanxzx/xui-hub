@@ -1,5 +1,5 @@
 // 外部订阅:给客户配上别处的订阅地址(比如出口代理商给的),客户拉我们的订阅时把那边的节点一起给出去,
-// 或者只给那边的(upstream_mode = replace)。客户手里的订阅链接不用换。
+// 或者只给那边的(upstream_mode = replace);own = 先不给那边的,只给自己线路的(外部订阅留着,不取也不用)。客户手里的订阅链接不用换。
 // - 那边的内容可以是节点链接(明文 / base64)、Clash 配置或 sing-box 配置,解析见 upstreamParse.ts;
 //   解析成节点链接后和客户自己线路的节点走同一套输出,所以每种订阅格式都支持。
 // - 每次取到就存下来:那边取不到时用上次成功的结果,客户端不会被一份空订阅冲掉。
@@ -27,7 +27,8 @@ export const UPSTREAM_UA = 'v2rayN/7.10.5';
  */
 export const HOP_HEADER = 'X-Xui-Hub-Upstream';
 
-export type UpstreamMode = 'merge' | 'replace';
+/** merge = 和自己线路的一起给;replace = 只给外部订阅的;own = 只给自己线路的(外部订阅先停着:不取、不出节点、流量和到期也不用那边的) */
+export type UpstreamMode = 'merge' | 'replace' | 'own';
 
 /** subscription-userinfo:upload / download / total 是字节,expire 是秒,0 = 不限 */
 export interface Userinfo {
@@ -59,8 +60,8 @@ export interface UpstreamView {
 
 export function validUpstreamMode(value: unknown): UpstreamMode {
   if (value == null || value === '' || value === 'merge') return 'merge';
-  if (value === 'replace') return 'replace';
-  throw new InputError('upstream_mode 只能是 merge(和自己线路的节点一起给)或 replace(只给外部订阅的节点)');
+  if (value === 'replace' || value === 'own') return value;
+  throw new InputError('upstream_mode 只能是 merge(和自己线路的节点一起给)、replace(只给外部订阅的节点)或 own(只给自己线路的节点)');
 }
 
 export interface UpstreamInput {
