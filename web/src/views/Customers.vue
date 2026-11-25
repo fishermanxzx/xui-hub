@@ -1228,7 +1228,7 @@ function exitText(l: Line): string {
           <span v-if="u.error" class="text-warn upstream-err" :title="u.error">{{ t('customers.upstreamErr', { error: u.error }) }}</span>
         </div>
         <div v-if="c.upstreams.length" class="custom-link small">
-          <span :class="c.upstream_mode === 'own' ? 'text-warn' : 'muted'">{{ t(UPSTREAM_MODE_TEXT[c.upstream_mode]) }}<template v-if="c.upstream_userinfo && c.upstream_mode !== 'own'"> · {{ t('customers.upstreamUserinfoOn') }}</template></span>
+          <span class="muted">{{ t(UPSTREAM_MODE_TEXT[c.upstream_mode]) }}<template v-if="c.upstream_userinfo && c.upstream_mode !== 'own'"> · {{ t('customers.upstreamUserinfoOn') }}</template></span>
           <button class="link" :disabled="refreshing === c.id" @click="refreshUpstreams(c)">{{ refreshing === c.id ? t('customers.upstreamRefreshing') : t('customers.upstreamRefresh') }}</button>
         </div>
       </div>
