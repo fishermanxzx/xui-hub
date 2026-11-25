@@ -28,8 +28,8 @@ import {
   type CustomerView,
   type Line,
 } from '../customers/repo';
-import { deletePayment, insertPayment, lastPayments, listPayments, renewedExpire, renewSpan, validAmount, validNote, validPaidAt } from '../customers/payments';
-import { deleteEntry, insertEntry, listEntries, validEntry } from '../ledger/entries';
+import { deletePayment, insertPayment, lastPayments, listPayments, renewedExpire, renewSpan, updatePayment, validAmount, validNote, validPaidAt } from '../customers/payments';
+import { deleteEntry, insertEntry, listEntries, updateEntry, validEntry } from '../ledger/entries';
 import { importClients } from '../lines/import';
 import { resetCustomerUsage } from '../lines/reset';
 import { broadcast, channelsFor } from '../notify/send';
@@ -609,10 +609,11 @@ export function apiRouter(deps: RouteDeps): Router {
   );
   // 全部客户的续费 / 收款记录:from / to(毫秒)= 收款日期在 [from, to) 里的,不给就是全部
   r.get('/payments', wrap((req) => listPayments(db, { from: msQuery(req, 'from'), to: msQuery(req, 'to') })));
-  // 删一笔记录(记错了):只删记录,到期日不变
+  // 改一笔记录(金额、收款日期、备注,只给要改的)/ 删一笔记录(记错了):都只动记录,到期日不变
+  r.patch('/payments/:id', wrap((req) => updatePayment(db, idParam(req), req.body ?? {})));
   r.delete('/payments/:id', wrap((req) => void deletePayment(db, idParam(req))));
   // 自己记的收入 / 支出(如买服务器、域名):from / to 同上,customer_id = 只要关联了这位客户的;
-  // 记一笔(kind、amount 必填,可以关联面板或 SOCKS,收入还可以关联客户);删一笔
+  // 记一笔(kind、amount 必填,可以关联面板或 SOCKS,收入还可以关联客户);改一笔(只给要改的字段);删一笔
   r.get(
     '/ledger',
     wrap((req) => {
@@ -623,6 +624,7 @@ export function apiRouter(deps: RouteDeps): Router {
     }),
   );
   r.post('/ledger', wrap((req) => insertEntry(db, validEntry(req.body ?? {}))));
+  r.patch('/ledger/:id', wrap((req) => updateEntry(db, idParam(req), req.body ?? {})));
   r.delete('/ledger/:id', wrap((req) => void deleteEntry(db, idParam(req))));
   // 清零已用:把各线路客户端在面板上的流量清零,超额停掉的随之恢复
   r.post(

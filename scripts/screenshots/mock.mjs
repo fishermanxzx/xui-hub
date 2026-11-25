@@ -160,13 +160,27 @@ createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   const json = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
   const p = url.pathname;
+  let m0;
   if (p === '/api/session') return json({ auth_required: true, logged_in: true });
   if (p === '/api/customers') return json(customers);
   if (p === '/api/panels') return json(panels);
   if (p === '/api/socks') return json(socks);
   if (p === '/api/payments') return json(payments);
+  if ((m0 = p.match(/^\/api\/customers\/(\d+)\/payments$/))) return json(payments.filter((x) => x.customer_id === Number(m0[1])));
   if (p === '/api/ledger') { const c = Number(url.searchParams.get('customer_id')); return json(c ? entries.filter((e) => e.customer_id === c) : entries); }
   if (p === '/api/oplog') return json({ rows: oplog, more: false });
+  // 改一笔收支:把请求体并进去(演示用,不校验)
+  if (req.method === 'PATCH' && (m0 = p.match(/^\/api\/(ledger|payments)\/(\d+)$/))) {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      const list = m0[1] === 'ledger' ? entries : payments;
+      const row = list.find((x) => x.id === Number(m0[2]));
+      if (row) Object.assign(row, Object.fromEntries(Object.entries(JSON.parse(raw || '{}')).filter(([, v]) => v !== undefined)));
+      json(row ?? {});
+    });
+    return;
+  }
   if (p === '/api/settings') return json(settings);
   if (p === '/api/traffic') return json(traffic(url.searchParams.get('by') ?? 'customer', Number(url.searchParams.get('days') ?? 30), url.searchParams.get('id') ? Number(url.searchParams.get('id')) : undefined));
   if (p === '/api/system/version') return json({ current: '1.21.0', latest: '1.21.0', update_available: false, method: 'auto', command: '', checked_at: now - 3_600_000, error: null, state: 'idle', log: '', release_url: '' });

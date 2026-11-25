@@ -5,7 +5,8 @@ const emit = defineEmits<{ close: [] }>();
 </script>
 
 <template>
-  <div class="overlay" @mousedown.self="emit('close')" @keydown.esc="emit('close')">
+  <!-- Esc 不往外冒:弹窗里再开一个弹窗时,按 Esc 只关里面这个 -->
+  <div class="overlay" @mousedown.self="emit('close')" @keydown.esc.stop="emit('close')">
     <div class="modal sheet" :class="{ wide }" role="dialog" aria-modal="true" :aria-label="title">
       <header>
         <h2>{{ title }}</h2>

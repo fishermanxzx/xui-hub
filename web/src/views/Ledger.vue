@@ -8,6 +8,7 @@ import { api } from '../api';
 import CustomerRenew from '../components/CustomerRenew.vue';
 import LedgerEntryForm from '../components/LedgerEntryForm.vue';
 import Modal from '../components/Modal.vue';
+import PaymentEditForm from '../components/PaymentEditForm.vue';
 import PaymentRows from '../components/PaymentRows.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import { costSummary, dueClass, feeSummary, fmtCost, fmtDate, fmtDue, monthStart, stateLabel } from '../format';
@@ -123,6 +124,14 @@ async function remove(r: LedgerRow) {
   } finally {
     busy.value = null;
   }
+}
+
+// ---------- 改一笔:自己记的收入 / 支出改全部字段,续费 / 收款改金额、日期、备注 ----------
+const editing = ref<LedgerRow | null>(null);
+const editSaving = ref(false);
+async function onEdited() {
+  editing.value = null;
+  await load();
 }
 
 // ---------- 待续费:7 天内到期、已经到期的客户(没设到期日的不算),先到期的在前 ----------
@@ -290,7 +299,7 @@ const costRows = computed(() =>
     <p v-if="!rows" class="muted small">{{ t('common.loading') }}</p>
     <p v-else-if="!filtered.length" class="muted small">{{ rows.length ? t('ledger.emptyFiltered') : t('ledger.empty') }}</p>
     <template v-else>
-      <PaymentRows :rows="filtered.slice(0, limit)" show-customer :busy="busy" @remove="remove" />
+      <PaymentRows :rows="filtered.slice(0, limit)" show-customer :busy="busy" @edit="(r) => (editing = r)" @remove="remove" />
       <div v-if="filtered.length > limit" class="row more">
         <button @click="limit += PAGE">{{ t('ledger.more', { n: filtered.length - limit }) }}</button>
       </div>
@@ -334,6 +343,16 @@ const costRows = computed(() =>
       <span class="spacer" />
       <button @click="adding = false">{{ t('common.cancel') }}</button>
       <button class="primary" form="ledger-entry-form" :disabled="addSaving">{{ addSaving ? t('common.saving') : t('entry.submit') }}</button>
+    </template>
+  </Modal>
+
+  <Modal v-if="editing" :title="isEntry(editing) ? t('entry.editTitle') : t('payments.editTitle', { name: editing.customer_name })" @close="editing = null">
+    <LedgerEntryForm v-if="isEntry(editing)" :entry="editing" :entries="entries ?? []" :customers="customers" :panels="panels" :socks="socksList" @saved="onEdited" @saving="(b) => (editSaving = b)" />
+    <PaymentEditForm v-else :payment="editing" @saved="onEdited" @saving="(b) => (editSaving = b)" />
+    <template #footer>
+      <span class="spacer" />
+      <button @click="editing = null">{{ t('common.cancel') }}</button>
+      <button class="primary" :form="isEntry(editing) ? 'ledger-entry-form' : 'payment-edit-form'" :disabled="editSaving">{{ editSaving ? t('common.saving') : t('common.save') }}</button>
     </template>
   </Modal>
 

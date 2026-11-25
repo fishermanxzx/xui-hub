@@ -4,7 +4,7 @@ import { createCustomer, deleteCustomer } from '../customers/repo';
 import { deletePanel } from '../panels/repo';
 import { createSocks, deleteSocks } from '../socks/repo';
 import { addPanel, memoryDb } from '../testUtil';
-import { deleteEntry, getEntry, insertEntry, listEntries, validEntry } from './entries';
+import { deleteEntry, getEntry, insertEntry, listEntries, updateEntry, validEntry } from './entries';
 
 const none = { customer_id: null, panel_id: null, socks_id: null };
 /** 没关联时 getEntry 多出来的字段 */
@@ -71,4 +71,40 @@ test('关联的客户 / 面板 / SOCKS:要存在;显示现在的名字,删了显
   const s2 = createSocks(db, { name: 'isp2', address: '1.2.3.4:1081' });
   assert.notEqual(s2, s);
   assert.equal(getEntry(db, b.id)!.socks_deleted, true);
+});
+
+test('改一笔:只给要改的字段;日期不给不变;改成支出去掉客户,换关联去掉另一个;原来关联的删了、没改它就留着', () => {
+  const db = memoryDb();
+  const p = addPanel(db, 'hk');
+  const p2 = addPanel(db, 'jp');
+  const s = createSocks(db, { name: 'isp', address: '1.2.3.4:1080' });
+  const c = createCustomer(db, { name: '小王' });
+  const e = insertEntry(db, { kind: 'income', amount: 10, at: 100, category: '安装费', note: '', customer_id: c, panel_id: p.id }, 1);
+
+  let u = updateEntry(db, e.id, { amount: '12.5', note: ' 补差价 ' });
+  assert.deepEqual([u.kind, u.amount, u.at, u.category, u.note, u.customer_id, u.panel_id, u.created_at], ['income', 12.5, 100, '安装费', '补差价', c, p.id, 1]);
+  u = updateEntry(db, e.id, { at: 500, category: '' });
+  assert.deepEqual([u.at, u.category], [500, '']);
+  // 关联 SOCKS:原来的面板去掉;两个都给 → 报错
+  u = updateEntry(db, e.id, { socks_id: s });
+  assert.deepEqual([u.panel_id, u.panel_name, u.socks_id, u.socks_name], [null, '', s, 'isp']);
+  assert.throws(() => updateEntry(db, e.id, { panel_id: p2.id, socks_id: s }), /只能关联一个/);
+  u = updateEntry(db, e.id, { panel_id: p2.id });
+  assert.deepEqual([u.panel_id, u.panel_name, u.socks_id], [p2.id, 'jp', null]);
+  // 改成支出:客户自动去掉;明说了客户 → 报错
+  assert.throws(() => updateEntry(db, e.id, { kind: 'expense', customer_id: c }), /只有收入能关联客户/);
+  u = updateEntry(db, e.id, { kind: 'expense' });
+  assert.deepEqual([u.kind, u.customer_id, u.customer_name], ['expense', null, '']);
+  // 原来关联的面板删了:改别的照样留着(记的时候的名字);换成不存在的报错;取消关联可以
+  deletePanel(db, p2.id, true);
+  u = updateEntry(db, e.id, { note: '' });
+  assert.deepEqual([u.panel_id, u.panel_name, u.panel_deleted], [p2.id, 'jp', true]);
+  assert.throws(() => updateEntry(db, e.id, { panel_id: 999 }), /面板不存在/);
+  u = updateEntry(db, e.id, { panel_id: null });
+  assert.equal(u.panel_id, null);
+  // 校验和记一笔一样;不存在的报错
+  assert.throws(() => updateEntry(db, e.id, { amount: 0 }), /金额/);
+  assert.throws(() => updateEntry(db, e.id, { kind: 'refund' }), /kind/);
+  assert.throws(() => updateEntry(db, 999, { amount: 1 }), /不存在/);
+  assert.deepEqual(listEntries(db).map((x) => x.id), [e.id]);
 });
