@@ -102,10 +102,12 @@ export const api = {
   customerPayments: (id: number) => call<Payment[]>('GET', `/api/customers/${id}/payments`),
   addPayment: (id: number, body: { amount: number; paid_at?: number; note?: string }) => call<Payment>('POST', `/api/customers/${id}/payments`, body),
   payments: (from?: number, to?: number) => call<Payment[]>('GET', `/api/payments?${from != null ? `from=${from}` : ''}${to != null ? `&to=${to}` : ''}`),
+  updatePayment: (id: number, body: { amount?: number | null; paid_at?: number; note?: string }) => call<Payment>('PATCH', `/api/payments/${id}`, body),
   deletePayment: (id: number) => call<{ ok: true }>('DELETE', `/api/payments/${id}`),
   /** customerId:只要关联了这位客户的 */
   ledger: (customerId?: number) => call<LedgerEntry[]>('GET', customerId ? `/api/ledger?customer_id=${customerId}` : '/api/ledger'),
   addLedgerEntry: (body: EntryInput) => call<LedgerEntry>('POST', '/api/ledger', body),
+  updateLedgerEntry: (id: number, body: EntryInput) => call<LedgerEntry>('PATCH', `/api/ledger/${id}`, body),
   deleteLedgerEntry: (id: number) => call<{ ok: true }>('DELETE', `/api/ledger/${id}`),
   oplog: (q: { before?: number; customer_id?: number; q?: string; failed?: boolean }) => {
     const p = new URLSearchParams();

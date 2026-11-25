@@ -9,7 +9,7 @@ import type { LedgerEntry, Payment } from '../types';
 
 /** busy:正在删的那一行的 rowKey */
 defineProps<{ rows: LedgerRow[]; showCustomer?: boolean; busy?: string | null }>();
-const emit = defineEmits<{ remove: [r: LedgerRow] }>();
+const emit = defineEmits<{ edit: [r: LedgerRow]; remove: [r: LedgerRow] }>();
 
 const what = (p: Payment) => (p.months ? t('payments.whatMonths', { n: p.months }) : p.days ? t('payments.whatDays', { n: p.days }) : t('payments.whatPay'));
 const renewed = (p: Payment) => p.months > 0 || p.days > 0;
@@ -27,7 +27,7 @@ const target = (e: LedgerEntry) =>
           <th v-if="showCustomer">{{ t('payments.colCustomerOrCategory') }}</th>
           <th class="num">{{ t('payments.colAmount') }}</th>
           <th>{{ t('payments.colWhat') }}</th>
-          <th class="act"><span class="sr-only">{{ t('common.delete') }}</span></th>
+          <th class="act"><span class="sr-only">{{ t('common.actions') }}</span></th>
         </tr>
       </thead>
       <tbody>
@@ -69,6 +69,7 @@ const target = (e: LedgerEntry) =>
             </td>
           </template>
           <td class="act">
+            <button class="link small" :disabled="busy === rowKey(r)" @click="emit('edit', r)">{{ t('common.edit') }}</button>
             <button class="link danger small" :disabled="busy === rowKey(r)" @click="emit('remove', r)">{{ t('common.delete') }}</button>
           </td>
         </tr>
@@ -99,6 +100,9 @@ const target = (e: LedgerEntry) =>
   text-align: right;
   white-space: nowrap;
 }
+.act button + button {
+  margin-left: 10px;
+}
 .badge {
   margin-left: 6px;
 }
@@ -113,6 +117,14 @@ const target = (e: LedgerEntry) =>
   }
   .what {
     min-width: 6em;
+  }
+  /* 窄屏上「编辑」「删除」上下排,不把表格撑出横向滚动 */
+  .act button {
+    display: block;
+    margin-left: auto;
+  }
+  .act button + button {
+    margin: 6px 0 0 auto;
   }
 }
 .sr-only {

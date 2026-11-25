@@ -1,5 +1,5 @@
 // 续费和收款记录。续费(POST /customers/:id/renew)每次记一笔,填了金额就是一笔收款;也可以单独记收款(不续期)。
-// 记录只用来记账,删掉一笔不会改回到期日。客户删了记录还在,显示记的时候的名字。
+// 记录只用来记账,改 / 删一笔都不会动到期日(改只能改金额、日期、备注)。客户删了记录还在,显示记的时候的名字。
 
 import type { DB } from '../db';
 import { InputError } from '../panels/repo';
@@ -120,6 +120,21 @@ export function listPayments(db: DB, opts: { customer_id?: number; from?: number
   if (opts.to != null) where.push('p.paid_at < @to');
   const sql = `${SELECT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY p.paid_at DESC, p.id DESC`;
   return (db.prepare(sql).all({ customer_id: opts.customer_id ?? null, from: opts.from ?? null, to: opts.to ?? null }) as Row[]).map(toPayment);
+}
+
+/**
+ * 改一笔:金额、收款日期、备注,只给要改的,没给的照旧;续了多久、前后的到期是当时的记录,不能改,到期日也不会跟着变。
+ * 只记收款(没续期)的那种金额不能空,和单独记收款时一样
+ */
+export function updatePayment(db: DB, id: number, body: Record<string, unknown>): Payment {
+  const cur = getPayment(db, id);
+  if (!cur) throw new InputError('这笔记录不存在');
+  const amount = body.amount === undefined ? cur.amount : validAmount(body.amount);
+  if (amount == null && !cur.months && !cur.days) throw new InputError('要填金额');
+  const paid_at = body.paid_at == null || body.paid_at === '' ? cur.paid_at : validPaidAt(body.paid_at);
+  const note = body.note === undefined ? cur.note : validNote(body.note);
+  db.prepare('UPDATE payments SET amount = ?, paid_at = ?, note = ? WHERE id = ?').run(amount, paid_at, note, id);
+  return getPayment(db, id)!;
 }
 
 export function deletePayment(db: DB, id: number): void {

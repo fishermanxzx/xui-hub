@@ -1,9 +1,12 @@
 <script setup lang="ts">
 // 客户的「续费」弹窗:按月 / 按天续期,顺手记一笔收款;也可以只记收款(或退款)。
-// 下面是这位客户的续费 / 收款记录,账本里关联了这位客户的收入也在里面。
+// 下面是这位客户的续费 / 收款记录,账本里关联了这位客户的收入也在里面;每一笔都能改(再开一个弹窗)/ 删。
 import { t } from '../i18n';
 import { computed, ref, watch } from 'vue';
 import { api } from '../api';
+import LedgerEntryForm from './LedgerEntryForm.vue';
+import Modal from './Modal.vue';
+import PaymentEditForm from './PaymentEditForm.vue';
 import PaymentRows from './PaymentRows.vue';
 import { isEntry, rowAt, rowCents, rowKey, type LedgerRow } from '../ledgerRows';
 import Select, { type SelectOption } from './Select.vue';
@@ -114,6 +117,13 @@ const paidTotal = computed(() => {
   const list = (rows.value ?? []).filter((p) => isEntry(p) || p.amount != null);
   return { n: list.length, v: list.reduce((sum, p) => sum + rowCents(p), 0) / 100 };
 });
+const editing = ref<LedgerRow | null>(null);
+const editSaving = ref(false);
+async function onEdited() {
+  editing.value = null;
+  emit('changed');
+  await load();
+}
 async function remove(p: LedgerRow) {
   const ask = isEntry(p) ? t('ledger.confirmDeleteEntry', { date: fmtDate(p.at), what: t('entry.income'), v: fmtCost(p.amount) }) : t('payments.confirmDelete', { date: fmtDate(p.paid_at) });
   if (!confirm(ask)) return;
@@ -173,8 +183,18 @@ async function remove(p: LedgerRow) {
     <span v-if="paidTotal.n" class="muted small">{{ t('payments.total', { v: fmtCost(paidTotal.v), n: paidTotal.n }) }}</span>
   </h4>
   <p v-if="rows && !rows.length" class="muted small">{{ t('payments.empty') }}</p>
-  <PaymentRows v-else-if="rows" :rows="rows" :busy="busy" @remove="remove" />
+  <PaymentRows v-else-if="rows" :rows="rows" :busy="busy" @edit="(r) => (editing = r)" @remove="remove" />
   <p v-else class="muted small">{{ t('common.loading') }}</p>
+
+  <Modal v-if="editing" :title="isEntry(editing) ? t('entry.editTitle') : t('payments.editTitle', { name: editing.customer_name })" @close="editing = null">
+    <LedgerEntryForm v-if="isEntry(editing)" :entry="editing" @saved="onEdited" @saving="(b) => (editSaving = b)" />
+    <PaymentEditForm v-else :payment="editing" @saved="onEdited" @saving="(b) => (editSaving = b)" />
+    <template #footer>
+      <span class="spacer" />
+      <button @click="editing = null">{{ t('common.cancel') }}</button>
+      <button class="primary" :form="isEntry(editing) ? 'ledger-entry-form' : 'payment-edit-form'" :disabled="editSaving">{{ editSaving ? t('common.saving') : t('common.save') }}</button>
+    </template>
+  </Modal>
 </template>
 
 <style scoped>

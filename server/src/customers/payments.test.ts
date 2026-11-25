@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createCustomer, deleteCustomer } from './repo';
 import { memoryDb } from '../testUtil';
-import { addMonths, deletePayment, insertPayment, lastPayments, listPayments, renewedExpire, renewSpan, validAmount, validNote, validPaidAt } from './payments';
+import { addMonths, deletePayment, getPayment, insertPayment, lastPayments, listPayments, renewedExpire, renewSpan, updatePayment, validAmount, validNote, validPaidAt } from './payments';
 
 const DAY = 86_400_000;
 const at = (y: number, m: number, d: number) => new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
@@ -66,4 +66,22 @@ test('记录:新的在前、按客户 / 日期筛;客户删了记录还在,显�
   deletePayment(db, p1.id);
   assert.equal(listPayments(db).length, 3);
   assert.throws(() => deletePayment(db, p1.id), /不存在/);
+});
+
+test('改一笔记录:金额、日期、备注,只给要改的;续了多久和前后的到期不变;只记收款的金额不能空', () => {
+  const db = memoryDb();
+  const a = createCustomer(db, { name: '小王' });
+  const renew = insertPayment(db, { customer_id: a, customer_name: '小王', amount: null, paid_at: 1000, months: 1, expire_before: 10, expire_after: 20, note: '' });
+  const pay = insertPayment(db, { customer_id: a, customer_name: '小王', amount: 30, paid_at: 2000, expire_before: 20, expire_after: 20, note: '微信' });
+
+  let u = updatePayment(db, renew.id, { amount: '29.999', note: ' 补记 ' });
+  assert.deepEqual([u.amount, u.paid_at, u.note, u.months, u.expire_before, u.expire_after], [30, 1000, '补记', 1, 10, 20]);
+  u = updatePayment(db, renew.id, { amount: null, paid_at: 1500 });
+  assert.deepEqual([u.amount, u.paid_at, u.note], [null, 1500, '补记']);
+  u = updatePayment(db, pay.id, { amount: -10, note: '' });
+  assert.deepEqual([u.amount, u.paid_at, u.note], [-10, 2000, '']);
+  assert.throws(() => updatePayment(db, pay.id, { amount: '' }), /要填金额/);
+  assert.throws(() => updatePayment(db, pay.id, { paid_at: -1 }), /日期/);
+  assert.throws(() => updatePayment(db, 999, { amount: 1 }), /不存在/);
+  assert.equal(getPayment(db, pay.id)!.amount, -10);
 });
