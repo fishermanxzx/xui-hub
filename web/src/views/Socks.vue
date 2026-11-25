@@ -3,6 +3,7 @@
 import { t } from '../i18n';
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../api';
+import AssetRenew from '../components/AssetRenew.vue';
 import Modal from '../components/Modal.vue';
 import { costSummary, dateInputToMs, dueClass, fmtAgo, fmtCost, fmtDate, fmtDue, msToDateInput, region } from '../format';
 import { toast, toastError } from '../toast';
@@ -21,6 +22,14 @@ async function load() {
   }
 }
 onMounted(load);
+
+// 续费:顺延到期日,付了钱在账本记一笔支出
+const renewFor = ref<Socks | null>(null);
+const renewSaving = ref(false);
+async function onRenewed() {
+  renewFor.value = null;
+  await load();
+}
 
 async function checkOne(s: Socks) {
   checking.value.add(s.id);
@@ -159,6 +168,7 @@ async function remove(s: Socks) {
             <td class="num">
               <div class="ops">
                 <button class="link" :disabled="checking.has(s.id)" @click="checkOne(s)">{{ t('socks.test') }}</button>
+                <button class="link" @click="renewFor = s">{{ t('assetRenew.button') }}</button>
                 <button class="link" @click="openForm(s)">{{ t('common.edit') }}</button>
                 <button class="link danger" @click="remove(s)">{{ t('common.delete') }}</button>
               </div>
@@ -188,6 +198,15 @@ async function remove(s: Socks) {
       <span class="spacer" />
       <button @click="showForm = false">{{ t('common.cancel') }}</button>
       <button class="primary" form="socks-form" :disabled="saving">{{ saving ? t('common.saving') : t('common.save') }}</button>
+    </template>
+  </Modal>
+
+  <Modal v-if="renewFor" :title="t('assetRenew.titleSocks', { name: renewFor.name })" @close="renewFor = null">
+    <AssetRenew kind="socks" :item="renewFor" @saved="onRenewed" @saving="(b) => (renewSaving = b)" />
+    <template #footer>
+      <span class="spacer" />
+      <button @click="renewFor = null">{{ t('common.cancel') }}</button>
+      <button class="primary" form="asset-renew-form" :disabled="renewSaving">{{ renewSaving ? t('common.saving') : t('assetRenew.button') }}</button>
     </template>
   </Modal>
 </template>

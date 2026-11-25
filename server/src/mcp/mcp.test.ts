@@ -117,6 +117,10 @@ test('MCP 握手协议 + API 令牌:initialize、tools/list、建客户开线路
     assert.equal((await call('update_ledger_entry', { id: tied.id, kind: 'expense', customer_id: c.id })).body.result.isError, true);
     const repaid = toolJson(await call('update_payment', { id: paid.payment.id, amount: 35, note: '' }));
     assert.deepEqual([repaid.amount, repaid.note, repaid.months], [35, undefined, 1]);
+    // 面板续费:顺延到期日,付了钱记一笔关联它的支出(类别「服务器」,备注写续了多久)
+    const renewedPanel = toolJson(await call('renew_panel', { id: 1, months: 2, amount: 90 }));
+    assert.deepEqual([renewedPanel.expire_before, typeof renewedPanel.expire_after, renewedPanel.expense.panel.id, renewedPanel.expense.category, renewedPanel.expense.note], [null, 'string', 1, '服务器', '续 2 个月']);
+    assert.equal((await call('renew_socks', { id: 999, months: 1 })).body.result.isError, true);
     // 操作日志:记成「MCP · 令牌「名字」」,IP 是调 MCP 的那台
     const logs = listOpLog(db).rows;
     assert.ok(logs.some((l) => l.actor === 'MCP · 令牌「mcp」' && l.summary.startsWith('新建客户「小王」') && l.ip === '127.0.0.1'), JSON.stringify(logs.slice(0, 3)));

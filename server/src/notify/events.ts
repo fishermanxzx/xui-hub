@@ -1,10 +1,11 @@
-// 每轮同步后看看有什么要提醒的:面板掉线 / 恢复、客户被停用 / 恢复、快到期、流量快用完、按月清零。
+// 每轮同步后看看有什么要提醒的:面板掉线 / 恢复、客户被停用 / 恢复、快到期、流量快用完、按月清零、面板 / SOCKS 快到期。
 // 同一件事只提醒一次(notified 表记 key);面板掉线记成 panel_down:<id>,恢复时清掉。
 
 import { type CustomerView, listCustomers } from '../customers/repo';
 import type { DB } from '../db';
 import type { EnforceResult } from '../lines/enforce';
-import type { Panel } from '../panels/repo';
+import { listPanels, type Panel } from '../panels/repo';
+import { listSocks } from '../socks/repo';
 import type { Settings } from '../settings';
 import { subIpsSince } from '../subscription/fetchLog';
 import type { Message } from './send';
@@ -132,6 +133,45 @@ export function thresholdEvents(db: DB, s: Settings['notify'], now: number, cust
         out.push({ event: 'customer_quota', title: `客户「${c.name}」流量已用 ${Math.floor((c.used / c.quota_bytes) * 100)}%`, text: `已用 ${gb(c.used)} / ${gb(c.quota_bytes)}`, at: now });
       }
     }
+  }
+  return out;
+}
+
+/** 「3 天后到期」「今天到期」「已过期 2 天」:按日历日算(服务器时区) */
+function dueText(expireAt: number, now: number): string {
+  const day0 = (ms: number) => new Date(new Date(ms).setHours(0, 0, 0, 0)).getTime();
+  const days = Math.round((day0(expireAt) - day0(now)) / 86_400_000);
+  return days > 0 ? `${days} 天后到期` : days === 0 ? '今天到期' : `已过期 ${-days} 天`;
+}
+
+/**
+ * 面板 / SOCKS 快到期(只管填了到期日的):提前 asset_expiring_days 天,每个到期日提醒一次;续费后到期日变了会再提醒。
+ * 写上会影响多少条线路 / 几位客户,忘了续费这些客户会一起断
+ */
+export function assetEvents(db: DB, s: Settings['notify'], now: number): Message[] {
+  if (!s.asset_expiring) return [];
+  const within = (at: number) => at > 0 && at - now <= s.asset_expiring_days * 86_400_000;
+  const owners = db.prepare('SELECT COUNT(DISTINCT customer_id) AS n FROM lines WHERE panel_id = @id OR exit_panel_id = @id');
+  const lineCount = db.prepare('SELECT (SELECT COUNT(*) FROM lines WHERE panel_id = @id) AS own, (SELECT COUNT(*) FROM lines WHERE exit_panel_id = @id) AS exit');
+  const cost = (n: number | null) => (n != null ? `,月成本 ${n}` : '');
+  const out: Message[] = [];
+  for (const p of listPanels(db)) {
+    if (!within(p.expire_at)) continue;
+    const key = `asset_expiring:panel:${p.id}:${p.expire_at}`;
+    if (alreadyNotified(db, key)) continue;
+    markNotified(db, key, now);
+    const { own, exit } = lineCount.get({ id: p.id }) as { own: number; exit: number };
+    const { n } = owners.get({ id: p.id }) as { n: number };
+    const use = own + exit ? `${own} 条线路${exit ? `,另有 ${exit} 条线路从它出` : ''}(${n} 位客户)` : '上面还没有线路';
+    out.push({ event: 'panel_expiring', title: `面板${panelLabel(p)}${dueText(p.expire_at, now)}`, text: `到期日 ${fmtDate(p.expire_at)}${cost(p.monthly_cost)};${use}\n续了以后在后台点「续费」顺延到期日`, at: now });
+  }
+  for (const x of listSocks(db)) {
+    if (!within(x.expire_at)) continue;
+    const key = `asset_expiring:socks:${x.id}:${x.expire_at}`;
+    if (alreadyNotified(db, key)) continue;
+    markNotified(db, key, now);
+    const use = x.used_by ? `${x.used_by} 条线路拿它当出口(${x.customers} 位客户)` : '还没有线路用它';
+    out.push({ event: 'socks_expiring', title: `SOCKS「${x.name}」${dueText(x.expire_at, now)}`, text: `到期日 ${fmtDate(x.expire_at)}${cost(x.monthly_cost)};${use}\n续了以后在后台点「续费」顺延到期日`, at: now });
   }
   return out;
 }

@@ -1,4 +1,4 @@
-import type { PanelRule, EntryInput, LedgerEntry, OpLog, Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, RatioPreview, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
+import type { AssetRenewal, AssetRenewInput, PanelRule, EntryInput, LedgerEntry, OpLog, Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, RatioPreview, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
 import { locale } from './i18n';
 
 let onUnauthorized: (() => void) | null = null;
@@ -73,6 +73,7 @@ export const api = {
   panelRatioPreview: (id: number, ratio: number) => call<RatioPreview>('GET', `/api/panels/${id}/ratio-preview?${new URLSearchParams({ ratio: String(ratio) })}`),
   /** 一键改名:这块面板上的线路都用面板的节点名(清掉各自设的),只改订阅里显示的名字 */
   panelLineNames: (id: number) => call<{ changed: number; panel: Panel }>('POST', `/api/panels/${id}/line-names`),
+  renewPanel: (id: number, body: AssetRenewInput) => call<AssetRenewal & { panel: Panel }>('POST', `/api/panels/${id}/renew`, body),
   /** 面板上还记着客户线路时要 force,线路记录一并删掉 */
   deletePanel: (id: number, force = false) => call('DELETE', `/api/panels/${id}${force ? '?force=1' : ''}`),
   checkPanels: () => call<Panel[]>('POST', '/api/panels/check'),
@@ -191,5 +192,6 @@ export const api = {
   updateSocks: (id: number, body: SocksInput) => call<Socks>('PATCH', `/api/socks/${id}`, body),
   deleteSocks: (id: number) => call('DELETE', `/api/socks/${id}`),
   checkSocks: (id: number) => call<Socks>('POST', `/api/socks/${id}/check`),
+  renewSocks: (id: number, body: AssetRenewInput) => call<AssetRenewal & { socks: Socks }>('POST', `/api/socks/${id}/renew`, body),
   checkAllSocks: () => call<Socks[]>('POST', '/api/socks-check-all'),
 };

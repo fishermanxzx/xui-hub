@@ -251,6 +251,27 @@ export const TOOLS: ToolDef[] = [
       return { ...customerView(r, ctx), payment: paymentView(r.payment) };
     },
   },
+  ...(['panel', 'socks'] as const).map((kind) => ({
+    name: `renew_${kind}`,
+    title: kind === 'panel' ? '面板续费' : 'SOCKS 续费',
+    description: `${kind === 'panel' ? '面板(服务器)' : 'SOCKS'}续费后用这个记:到期日在现在的到期日上加 months 个月或 days 天(两个给一个;已过期或没填到期日的从现在起算)。付了钱就填 amount,会在账本里记一笔关联它的支出(按月续时通常是月成本 × 月数)。id 从 ${kind === 'panel' ? 'list_panels' : 'list_socks'} 里拿。`,
+    inputSchema: obj(
+      {
+        id: int(kind === 'panel' ? '面板 id' : 'SOCKS id', { minimum: 1 }),
+        months: int('加几个月', { minimum: 1, maximum: 120 }),
+        days: int('加多少天', { minimum: 1, maximum: 3650 }),
+        amount: { type: 'number', exclusiveMinimum: 0, maximum: 100_000_000, description: '这次付了多少钱(不填 = 只顺延到期日,不记账)' },
+        note: str('备注,最多 200 字', { maxLength: 200 }),
+      },
+      ['id'],
+    ),
+    annotations: { destructiveHint: false },
+    run: async (a: Record<string, any>, ctx: ToolContext) => {
+      const span = a.months ? `续 ${a.months} 个月` : a.days ? `续 ${a.days} 天` : '';
+      const r = await call(ctx, 'POST', `/${kind === 'panel' ? 'panels' : 'socks'}/${Number(a.id)}/renew`, { months: a.months, days: a.days, amount: a.amount, category: kind === 'panel' ? '服务器' : 'SOCKS', note: a.note || span });
+      return { name: r.name, expire_before: iso(r.expire_before), expire_after: iso(r.expire_after), expense: r.entry ? entryView(r.entry) : null };
+    },
+  })),
   {
     name: 'list_payments',
     title: '续费 / 收款记录',
@@ -600,4 +621,4 @@ export async function runTool(tool: ToolDef, args: unknown, ctx: ToolContext): P
 
 export const INSTRUCTIONS =
   'xui-hub 把多台 3x-ui 面板接到一个后台,按「客户」管理线路。一位客户有若干线路(每条是某块面板上的一个客户端)、一个总流量额度、一个到期时间和一条订阅链接。' +
-  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer(收了钱填 amount,会记成一笔收款),查收款用 list_payments;续费以外的收入 / 支出(如买服务器,可以关联面板 / SOCKS / 客户)用 add_ledger_entry 记、list_ledger_entries 查;记错了用 update_ledger_entry / update_payment 改。删除类操作(delete_customer、delete_line、reset_subscription_link)和换出口(change_line_exit,会重启面板的 Xray)执行前先向用户确认。';
+  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer(收了钱填 amount,会记成一笔收款),查收款用 list_payments;续费以外的收入 / 支出(如买服务器,可以关联面板 / SOCKS / 客户)用 add_ledger_entry 记、list_ledger_entries 查;记错了用 update_ledger_entry / update_payment 改;面板 / SOCKS 续了费用 renew_panel / renew_socks 顺延到期日并记支出。删除类操作(delete_customer、delete_line、reset_subscription_link)和换出口(change_line_exit,会重启面板的 Xray)执行前先向用户确认。';

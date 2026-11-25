@@ -312,6 +312,13 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
       const what = [p.amount != null ? `金额 ${p.amount}` : '没记钱', p.months || p.days ? `续 ${span(p)}` : '只记收款'];
       return S(`删除「${p.customer_name}」${date(p.paid_at)} 的一笔记录(${what.join(',')};到期日不变)`, p.customer_id);
     }
+    case 'POST /panels/:id/renew':
+    case 'POST /socks/:id/renew': {
+      const what = action.startsWith('POST /panels') ? `面板${pname}` : ` SOCKS「${b.socks?.name ?? `#${b.segs[1] ?? ''}`}」`;
+      const r = ok ? (result as { months: number; days: number; expire_before: number; expire_after: number; entry: LedgerEntry | null }) : null;
+      if (!r) return S(`续费${what}`, null);
+      return S(`续费${what}${r.months ? `${r.months} 个月` : `${r.days} 天`}:到期 ${date(r.expire_before)} → ${date(r.expire_after)};${r.entry ? `记支出 ${r.entry.amount}` : '没记钱'}`, null);
+    }
     case 'POST /ledger': {
       const e: Partial<LedgerEntry> = ok ? result : body;
       return S(`记一笔${e.kind === 'expense' ? '支出' : '收入'}${entryText(e)}`, ok ? (e.customer_id ?? null) : null);

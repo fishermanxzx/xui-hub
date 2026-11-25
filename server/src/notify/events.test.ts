@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { addLine, createCustomer, listCustomers, updateLineStats } from '../customers/repo';
-import { deletePanel, getPanel, recordCheck } from '../panels/repo';
+import { deletePanel, getPanel, recordCheck, updatePanel } from '../panels/repo';
+import { createSocks, updateSocks } from '../socks/repo';
 import { DEFAULT_SETTINGS } from '../settings';
 import { addPanel, memoryDb } from '../testUtil';
-import { aboutDuration, enforceEvents, panelEvents, panelLabel, thresholdEvents } from './events';
+import { aboutDuration, assetEvents, enforceEvents, panelEvents, panelLabel, thresholdEvents } from './events';
 import { broadcast, channelsFor, type Message } from './send';
 
 /** 模拟一轮检查:先记下检查前的面板,检查完算通知 */
@@ -14,6 +15,8 @@ function round(db: ReturnType<typeof memoryDb>, id: number, ok: boolean, now: nu
   return panelEvents(db, before, [getPanel(db, id)!], downAfter, now).map((m) => [m.event, m.title, m.text]);
 }
 const MIN = 60_000;
+const DAY = 86_400_000;
+const ymd = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
 test('面板掉线:连续失败够次数才发「连不上」,发过的恢复时才发「恢复正常」', () => {
   const db = memoryDb();
@@ -140,4 +143,34 @@ test('渠道:没配就没有;测试用的假渠道一个成一个败,broadcast �
   const msg: Message = { event: 'test', title: 't', text: '', at: 0 };
   const r = await broadcast([{ name: 'ok', send: async () => {} }, { name: 'bad', send: async () => Promise.reject(new Error('nope')) }], msg);
   assert.deepEqual(r, [{ channel: 'ok', ok: true }, { channel: 'bad', ok: false, error: 'nope' }]);
+});
+
+test('面板 / SOCKS 快到期:提前几天提醒一次,带上影响几条线路 / 几位客户;续了费到期日变了再提醒;没填到期日的不管;能关', () => {
+  const db = memoryDb();
+  const now = 1_800_000_000_000;
+  const s = { ...DEFAULT_SETTINGS.notify, asset_expiring_days: 7 };
+  const p = addPanel(db, 'hk');
+  const far = addPanel(db, 'jp');
+  addPanel(db, 'nodate');
+  const c = createCustomer(db, { name: '小王' });
+  addLine(db, { customer_id: c, kind: 'direct', panel_id: p.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'w1' });
+  addLine(db, { customer_id: c, kind: 'direct', panel_id: p.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'w2' });
+  updatePanel(db, p.id, { expire_at: now + 3 * DAY + 1000, monthly_cost: 45 });
+  updatePanel(db, far.id, { expire_at: now + 30 * DAY });
+  const x = createSocks(db, { name: 'isp', address: '1.2.3.4:1080', expire_at: now - 2 * DAY });
+  const msgs = assetEvents(db, s, now).map((m) => [m.event, m.title, m.text]);
+  assert.deepEqual(msgs, [
+    ['panel_expiring', '面板「hk」(hk.example)3 天后到期', `到期日 ${ymd(now + 3 * DAY + 1000)},月成本 45;2 条线路(1 位客户)\n续了以后在后台点「续费」顺延到期日`],
+    ['socks_expiring', 'SOCKS「isp」已过期 2 天', `到期日 ${ymd(now - 2 * DAY)};还没有线路用它\n续了以后在后台点「续费」顺延到期日`],
+  ]);
+  // 同一个到期日只提醒一次
+  assert.deepEqual(assetEvents(db, s, now + 3600_000), []);
+  // 续了费:新的到期日到了提前天数再提醒
+  updateSocks(db, x, { expire_at: now + 20 * DAY });
+  assert.deepEqual(assetEvents(db, s, now + 3600_000), []);
+  assert.deepEqual(assetEvents(db, s, now + 14 * DAY).map((m) => m.title), ['SOCKS「isp」6 天后到期']);
+  // 今天到期;关掉就不发
+  updatePanel(db, far.id, { expire_at: now + 30 * DAY + 3600_000 });
+  assert.deepEqual(assetEvents(db, { ...s, asset_expiring: false }, now + 30 * DAY), []);
+  assert.deepEqual(assetEvents(db, s, now + 30 * DAY).map((m) => m.title), ['面板「jp」(jp.example)今天到期']);
 });

@@ -23,6 +23,10 @@ test('设置:默认值;没传的字段不动;token / 地址 / 数字有校验', 
   // 存着的老设置里没有这项:按默认 3
   db.prepare("UPDATE meta SET value = json_remove(value, '$.notify.panel_down_after') WHERE key = 'settings'").run();
   assert.deepEqual([getSettings(db).notify.panel_down_after, getSettings(db).notify.expiring_days], [3, 7]);
+  // 面板 / SOCKS 快到期:默认开、提前 7 天,1 到 60
+  assert.deepEqual([getSettings(db).notify.asset_expiring, getSettings(db).notify.asset_expiring_days], [true, 7]);
+  assert.equal(updateSettings(db, { notify: { asset_expiring_days: 30 } }).notify.asset_expiring_days, 30);
+  assert.throws(() => updateSettings(db, { notify: { asset_expiring_days: 61 } }), /1 到 60/);
   // 清空
   assert.equal(updateSettings(db, { telegram: { token: '' } }).telegram.token, '');
 });
