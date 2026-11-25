@@ -72,7 +72,7 @@ Authorization: Bearer xh_……
 
 续费 / 收款记录的字段:`id`、`customer_id`、`customer_name`(客户删了是记的时候的名字)、`customer_deleted`、`amount`(`null` = 只续期没记钱)、`paid_at`、`months`、`days`(都是 0 = 只记收款)、`expire_before`、`expire_after`、`note`、`created_at`。自己记的收入 / 支出的字段:`id`、`kind`、`amount`、`at`、`category`、`note`、`created_at`,和关联的 `customer_id` / `customer_name` / `customer_deleted`、`panel_id` / `panel_name` / `panel_deleted`、`socks_id` / `socks_name` / `socks_deleted`(没关联的 id 为 `null`、名字为空;删了的是记的时候的名字)。客户列表里的 `last_payment` 是他最近一笔收款(金额大于 0 的,退款不算)(`amount`、`paid_at`),没有为 `null`。
 
-删线路(包括在面板卡片上删客户端、强制删面板)时,线路本期用掉的流量结转到客户身上,客户的已用不会变少。同步时面板上的计数比上次小(在面板上清零过、删了重建同名客户端、面板重装),旧计数也会结转;要清零请用 `reset-usage`。
+删线路(包括在面板卡片上删客户端、卸载面板)时,线路本期用掉的流量结转到客户身上,客户的已用不会变少。同步时面板上的计数比上次小(在面板上清零过、删了重建同名客户端、面板重装),旧计数也会结转;要清零请用 `reset-usage`。
 
 ### 外部订阅怎么取
 
@@ -165,6 +165,8 @@ Authorization: Bearer xh_……
 | GET | `/panels` | 面板列表(拿 `panel_id`) |
 | POST / PATCH | `/panels`、`/panels/:id` | 新建 / 修改面板:`name`、`base_url`、`token`、`monthly_cost`、`expire_at`、`node_name`、`tags`、`traffic_ratio`(见下)、`location`(手动填位置 `{ "lat": 22.3, "lng": 114.2, "city": "香港" }`;`null` = 按 IP 自动查;不给 = 不改) |
 | GET | `/panels/geo` | 面板列表,顺带把还没定位的面板按 IP 查一下地理位置(先 ipwho.is,查不到再试 ipinfo.io;查过的 IP 不重查,IP 变了重查,没查到的 1 小时内不重试;手动填了位置的不查)。每块面板多出 `geo_lat`、`geo_lng`(`null` = 还没定位)、`geo_city`、`geo_country`、`geo_manual`、`geo_error`(没查到的原因)。只有这个接口会去查,`GET /panels` 不查 |
+| POST | `/panels/:id/uninstall` | 卸载面板(过期了、不想要了的):从客户名下删掉这块面板上的线路,再把面板从这里移除。面板连得上时先删掉这些线路在面板上的客户端(中转 / 出口规则的路由一起去掉,入站和不是线路的客户端不动);连不上(读不到客户端列表)就直接删记录。连得上但没删完时返回 502、什么记录都不删,再调一次会接着删;body 带 `{ "force": true }` 不连面板、只删记录。返回 `name`、`lines`(删掉的线路条数)、`customers`(涉及几位客户)、`remote`(`deleted` 删了面板上的客户端 / `unreachable` 连不上只删了记录 / `skipped` 只删记录 / `none` 上面没线路)、`clients_deleted`、`error`(连不上的原因)。线路本期用掉的流量结转到客户身上;流量记录、面板的名字和倍率留着,流量页、自助页的每天用量照旧按它显示、计费;面板 id 不会给新面板用 |
+| DELETE | `/panels/:id` | 只删面板记录,面板上的客户端不动(有线路时要 `?force=1`,线路记录一起删);一般用上面的卸载 |
 | GET | `/panels/:id/ratio-preview?ratio=1.2` | 面板改成这个倍率之后,上面各位客户的已用会变成多少、谁会超额,只算不改:`ratio_before`、`ratio`、`customers`(每位 `id`、`name`、`quota_bytes`、`used_before`、`used_after`、`over_before`、`over_after`)、`over_after`(改完会从没超额变成超额的人数) |
 | GET | `/panels/:id/inbounds` | 面板上的入站和客户端 |
 | GET | `/panels/:id/geodata/files` | 面板 Xray 目录里的 geo 库:`files` 每项有 `name`、`kind`(`site` 域名库 / `ip` IP 库)、`size`、`modifiedAt`、`categories`、`error`(解析不了时)。面板低于 3x-ui 3.7.0 时返回 `{ "supported": false }`,下面三个也一样 |

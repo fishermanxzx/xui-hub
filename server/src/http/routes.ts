@@ -8,6 +8,7 @@ import { createClient, type ClientAdmin } from '../clients/create';
 import { checkAllPanels, checkPanel, type PanelProbe } from '../panels/check';
 import { readPanelDetail, type PanelReader } from '../panels/inbounds';
 import { createPanel, deletePanel, getPanel, InputError, listPanels, toPanelView, updatePanel, validRatio, type Panel } from '../panels/repo';
+import { uninstallPanel } from '../panels/uninstall';
 import {
   adjustUsage,
   previewPanelRatio,
@@ -315,7 +316,10 @@ export function apiRouter(deps: RouteDeps): Router {
     }),
   );
   // 面板上还有客户线路时要带 ?force=1(线路记录会跟着删掉)
+  // 只删记录(面板上的客户端不动);有线路时要 ?force=1。后台页面上用的是下面的卸载
   r.delete('/panels/:id', wrap((req) => void deletePanel(db, idParam(req), req.query.force === '1')));
+  // 卸载面板:连得上先删掉线路在面板上的客户端,连不上直接删记录;force = 不连面板只删记录(见 panels/uninstall.ts)
+  r.post('/panels/:id/uninstall', wrap((req) => uninstallPanel(db, idParam(req), deps.clientFor, { force: req.body?.force === true })));
   r.post('/panels/check', wrap(async () => (await checkAllPanels(db, deps.clientFor)).map(view)));
   r.post(
     '/panels/:id/check',

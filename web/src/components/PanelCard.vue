@@ -49,7 +49,7 @@ function onRenewed() {
   emit('changed');
 }
 
-/** 「⋯」里的操作:检查、内核、重启、打开后台、续费、统一节点名、删除 */
+/** 「⋯」里的操作:检查、内核、重启、打开后台、续费、统一节点名、卸载 */
 const menuItems = computed<MenuItem[]>(() => [
   { label: checking.value ? t('card.checking') : t('card.check'), run: check, disabled: checking.value },
   { label: t('card.xray'), run: openXray, disabled: !!props.panel.check_error },
@@ -57,7 +57,7 @@ const menuItems = computed<MenuItem[]>(() => [
   { label: t('card.openPanel'), run: () => window.open(props.panel.base_url, '_blank', 'noopener,noreferrer'), title: t('card.openPanelHint') },
   { label: t('card.renew'), run: () => (renewing.value = true), title: t('card.renewHint'), divide: true },
   ...(props.panel.node_name && props.panel.line_count ? [{ label: t('card.lineNames'), run: applyLineNames, disabled: renaming.value, title: t('card.lineNamesHint'), divide: true }] : []),
-  { label: t('card.deletePanel'), run: () => emit('remove'), danger: true, divide: true },
+  { label: t('card.uninstallPanel'), run: () => emit('remove'), danger: true, divide: true },
 ]);
 
 const detail = ref<PanelDetail | null>(null);

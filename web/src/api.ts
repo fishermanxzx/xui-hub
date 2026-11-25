@@ -1,4 +1,4 @@
-import type { AssetRenewal, AssetRenewInput, PanelRule, EntryInput, LedgerEntry, OpLog, Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, RatioPreview, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
+import type { UninstallResult, AssetRenewal, AssetRenewInput, PanelRule, EntryInput, LedgerEntry, OpLog, Payment, RenewInput, RemoteBackups, RemoteResult, UpdateInfo, TrafficBy, TrafficReport, ApiToken, BackupInfo, OAuthGrant, ClientProtocol, CreatedClient, Customer, CustomerInput, EnforceOp, ImportResult, Line, OpenedLine, OpenLineInput, Panel, PanelDetail, PanelInput, PanelVersions, RatioPreview, Settings, Socks, SocksInput, SubDevice, SubFetch, SubTemplate, UpdateStatus, LineRule, GeoCategory, GeoEntry, GeoFile, GeoIssue, GeoKind, LineExitTarget } from './types';
 import { locale } from './i18n';
 
 let onUnauthorized: (() => void) | null = null;
@@ -76,8 +76,8 @@ export const api = {
   /** 一键改名:这块面板上的线路都用面板的节点名(清掉各自设的),只改订阅里显示的名字 */
   panelLineNames: (id: number) => call<{ changed: number; panel: Panel }>('POST', `/api/panels/${id}/line-names`),
   renewPanel: (id: number, body: AssetRenewInput) => call<AssetRenewal & { panel: Panel }>('POST', `/api/panels/${id}/renew`, body),
-  /** 面板上还记着客户线路时要 force,线路记录一并删掉 */
-  deletePanel: (id: number, force = false) => call('DELETE', `/api/panels/${id}${force ? '?force=1' : ''}`),
+  /** 卸载面板:连得上先删掉线路在面板上的客户端,连不上只删记录;force = 不连面板只删记录 */
+  uninstallPanel: (id: number, force = false) => call<UninstallResult>('POST', `/api/panels/${id}/uninstall`, { force }),
   checkPanels: () => call<Panel[]>('POST', '/api/panels/check'),
   checkPanel: (id: number) => call<Panel>('POST', `/api/panels/${id}/check`),
   panelInbounds: (id: number) => call<PanelDetail>('GET', `/api/panels/${id}/inbounds`),

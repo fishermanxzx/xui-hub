@@ -412,6 +412,17 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE socks_proxies ADD COLUMN geo_at INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE socks_proxies ADD COLUMN geo_error TEXT NOT NULL DEFAULT '';
   `,
+  `
+  -- 34:卸载 / 删掉的面板留下名字和流量倍率。流量记录(traffic_daily)按面板 id 一直留着,
+  -- 流量页、自助页的每天用量靠这里显示原来的名字、按原来的倍率算,不会变成「已删除的面板 #id」、倍率按 1。
+  -- 面板 id 本来就不复用(见 nextId),新面板不会串到这些记录上
+  CREATE TABLE removed_panels (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL,
+    traffic_ratio REAL NOT NULL DEFAULT 1,
+    removed_at    INTEGER NOT NULL
+  );
+  `,
 ];
 
 export function openDb(file: string): DB {

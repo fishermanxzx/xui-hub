@@ -411,6 +411,18 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
     }
     case 'DELETE /panels/:id':
       return S(`删除面板${pname}${req.query?.force === '1' ? '(连同上面的线路记录)' : ''}`, null);
+    case 'POST /panels/:id/uninstall': {
+      if (!ok || typeof result?.lines !== 'number') return S(`卸载面板${pname}${body.force === true ? '(只删记录)' : ''}`, null);
+      const remote =
+        result.remote === 'deleted'
+          ? `,面板上删了 ${result.clients_deleted} 个客户端`
+          : result.remote === 'unreachable'
+            ? `,面板连不上,只删了记录(${result.error})`
+            : result.remote === 'skipped'
+              ? ',只删记录,没动面板上的客户端'
+              : '';
+      return S(`卸载面板${pname}:从 ${result.customers} 位客户名下删了 ${result.lines} 条线路${remote}`, null);
+    }
     case 'POST /panels/:id/xray/:version':
       return S(`给面板${pname}换 Xray ${b.segs[3] ?? ''}`, null);
     case 'POST /panels/:id/line-names':

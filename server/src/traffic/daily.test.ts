@@ -28,8 +28,8 @@ test('流量统计:第一次见只记起点,之后按天记增量;清零后新�
   const byCustomer = trafficReport(db, { by: 'customer', days: 3 }, T + 120_000);
   assert.deepEqual(byCustomer.days, ['2026-11-08', '2026-11-09', '2026-11-10']);
   assert.deepEqual(byCustomer.rows, [
-    { id: c.id, name: '小王', deleted: false, up: 160, down: 420, daily: [0, 500, 80] },
-    { id: 0, name: '没归入客户的客户端', deleted: false, up: 11, down: 22, daily: [0, 0, 33] },
+    { id: c.id, name: '小王', deleted: false, uninstalled: false, up: 160, down: 420, daily: [0, 500, 80] },
+    { id: 0, name: '没归入客户的客户端', deleted: false, uninstalled: false, up: 11, down: 22, daily: [0, 0, 33] },
   ]);
   assert.deepEqual(byCustomer.total, { up: [0, 100, 71], down: [0, 400, 42] });
 
@@ -43,7 +43,7 @@ test('流量统计:第一次见只记起点,之后按天记增量;清零后新�
 
   // 客户删了统计还在;过了保留期的清掉
   deleteCustomer(db, c.id);
-  assert.deepEqual(trafficReport(db, { by: 'customer', days: 3 }, T + 120_000).rows[0], { id: c.id, name: `已删除的客户 #${c.id}`, deleted: true, up: 160, down: 420, daily: [0, 500, 80] });
+  assert.deepEqual(trafficReport(db, { by: 'customer', days: 3 }, T + 120_000).rows[0], { id: c.id, name: `已删除的客户 #${c.id}`, deleted: true, uninstalled: false, up: 160, down: 420, daily: [0, 500, 80] });
   pruneTraffic(db, T + TRAFFIC_KEEP_DAYS * DAY);
   assert.deepEqual(trafficReport(db, { by: 'panel', days: 365 }, T + 120_000).rows.map((r) => [r.name, r.up + r.down]), [['p1', 110], ['p2', 3]]);
 });

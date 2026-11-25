@@ -29,6 +29,8 @@ export interface Panel {
   /** 记在这块面板上的客户线路数;拿它当落地出口的中转线路数 */
   line_count: number;
   exit_line_count: number;
+  /** 有线路在这块面板上的客户数 */
+  customer_count: number;
   /** 地理位置(面板页的地球):坐标 null = 还没定位;geo_manual = 手动填的;geo_error = 按 IP 没查到的原因 */
   geo_lat: number | null;
   geo_lng: number | null;
@@ -481,6 +483,8 @@ export interface TrafficRow {
   id: number;
   name: string;
   deleted: boolean;
+  /** 面板是卸载掉的,name 是卸载时的名字 */
+  uninstalled: boolean;
   up: number;
   down: number;
   /** 每天的上行 + 下行,和 days 一一对应 */
@@ -640,4 +644,17 @@ export interface AssetRenewInput {
   paid_at?: number;
   category?: string;
   note?: string;
+}
+
+/** 卸载面板的结果 */
+export interface UninstallResult {
+  name: string;
+  /** 从客户名下删掉的线路条数、涉及几位客户 */
+  lines: number;
+  customers: number;
+  /** deleted = 面板上的客户端删掉了;unreachable = 连不上,只删了记录;skipped = 选了只删记录;none = 上面没线路 */
+  remote: 'deleted' | 'unreachable' | 'skipped' | 'none';
+  clients_deleted: number;
+  /** 连不上的原因 */
+  error: string;
 }
