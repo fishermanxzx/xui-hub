@@ -49,7 +49,7 @@ export function recordTraffic(db: DB, panelId: number, clients: { email: string;
 }
 
 /**
- * 一位客户最近 days 天每天的计费用量:各线路(含删掉的)每天的上下行,各乘上所在面板现在的倍率(面板已删的按 1)。
+ * 一位客户最近 days 天每天的计费用量:各线路(含删掉的)每天的上下行,各乘上所在面板现在的倍率(面板卸载了的按卸载时的倍率)。
  * 自助页的「每天用量」用它,和订阅里的已用一个口径
  */
 export function dailyBilled(db: DB, customerId: number, days: number, now = Date.now()): { days: string[]; bytes: number[] } {
@@ -57,7 +57,9 @@ export function dailyBilled(db: DB, customerId: number, days: number, now = Date
   const index = new Map(list.map((d, i) => [d, i]));
   const bytes = list.map(() => 0);
   const rows = db
-    .prepare('SELECT t.day, SUM(t.up + t.down) AS total, COALESCE(p.traffic_ratio, 1) AS ratio FROM traffic_daily t LEFT JOIN panels p ON p.id = t.panel_id WHERE t.customer_id = ? AND t.day >= ? GROUP BY t.day, t.panel_id')
+    .prepare(`SELECT t.day, SUM(t.up + t.down) AS total, COALESCE(p.traffic_ratio, rp.traffic_ratio, 1) AS ratio
+       FROM traffic_daily t LEFT JOIN panels p ON p.id = t.panel_id LEFT JOIN removed_panels rp ON rp.id = t.panel_id
+       WHERE t.customer_id = ? AND t.day >= ? GROUP BY t.day, t.panel_id`)
     .all(customerId, list[0]) as { day: string; total: number; ratio: number }[];
   for (const r of rows) {
     const i = index.get(r.day);
@@ -78,6 +80,8 @@ export interface TrafficRow {
   name: string;
   /** 客户 / 面板已经删掉了,只剩统计 */
   deleted: boolean;
+  /** 面板是卸载掉的,name 是卸载时的名字(deleted 也是 true) */
+  uninstalled: boolean;
   up: number;
   down: number;
   /** 每天的上行 + 下行,和 days 一一对应 */
@@ -115,11 +119,11 @@ export function trafficReport(db: DB, opts: { by: TrafficBy; days: number; id?: 
   const only = opts.customers?.length ? 'AND COALESCE(t.customer_id, 0) IN (SELECT value FROM json_each(@customers))' : '';
   const data = db
     .prepare(
-      `SELECT t.day, t.panel_id, t.email, t.customer_id, t.up, t.down, p.name AS panel_name, c.name AS customer_name
-       FROM traffic_daily t LEFT JOIN panels p ON p.id = t.panel_id LEFT JOIN customers c ON c.id = t.customer_id
+      `SELECT t.day, t.panel_id, t.email, t.customer_id, t.up, t.down, p.name AS panel_name, rp.name AS removed_name, c.name AS customer_name
+       FROM traffic_daily t LEFT JOIN panels p ON p.id = t.panel_id LEFT JOIN removed_panels rp ON rp.id = t.panel_id LEFT JOIN customers c ON c.id = t.customer_id
        WHERE t.day >= @from ${where} ${exclude} ${only}`,
     )
-    .all({ from: days[0], id, exclude: JSON.stringify(opts.exclude ?? []), customers: JSON.stringify(opts.customers ?? []) }) as { day: string; panel_id: number; email: string; customer_id: number | null; up: number; down: number; panel_name: string | null; customer_name: string | null }[];
+    .all({ from: days[0], id, exclude: JSON.stringify(opts.exclude ?? []), customers: JSON.stringify(opts.customers ?? []) }) as { day: string; panel_id: number; email: string; customer_id: number | null; up: number; down: number; panel_name: string | null; removed_name: string | null; customer_name: string | null }[];
 
   const total = { up: days.map(() => 0), down: days.map(() => 0) };
   const rows = new Map<string, TrafficRow>();
@@ -128,20 +132,21 @@ export function trafficReport(db: DB, opts: { by: TrafficBy; days: number; id?: 
     if (i === undefined) continue;
     total.up[i] += r.up;
     total.down[i] += r.down;
-    const panelName = r.panel_name ?? `已删除的面板 #${r.panel_id}`;
+    // 卸载了的面板用卸载时的名字(行上 deleted = true);更早删掉、没留名字的写 id
+    const panelName = r.panel_name ?? r.removed_name ?? `已删除的面板 #${r.panel_id}`;
     const customerName = r.customer_id == null ? '没归入客户的客户端' : (r.customer_name ?? `已删除的客户 #${r.customer_id}`);
     let key: string;
-    let head: Pick<TrafficRow, 'id' | 'name' | 'deleted'>;
+    let head: Pick<TrafficRow, 'id' | 'name' | 'deleted' | 'uninstalled'>;
     if (id != null) {
       key = `${r.panel_id}\n${r.email}`;
       // 展开客户:这条线路在哪块面板上;展开面板:这个客户端是谁的
-      head = { id: 0, name: by === 'customer' ? `${panelName} · ${r.email}` : r.customer_id == null ? r.email : `${r.email} · ${customerName}`, deleted: false };
+      head = { id: 0, name: by === 'customer' ? `${panelName} · ${r.email}` : r.customer_id == null ? r.email : `${r.email} · ${customerName}`, deleted: false, uninstalled: false };
     } else if (by === 'panel') {
       key = String(r.panel_id);
-      head = { id: r.panel_id, name: panelName, deleted: r.panel_name == null };
+      head = { id: r.panel_id, name: panelName, deleted: r.panel_name == null, uninstalled: r.panel_name == null && r.removed_name != null };
     } else {
       key = String(r.customer_id ?? 0);
-      head = { id: r.customer_id ?? 0, name: customerName, deleted: r.customer_id != null && r.customer_name == null };
+      head = { id: r.customer_id ?? 0, name: customerName, deleted: r.customer_id != null && r.customer_name == null, uninstalled: false };
     }
     let row = rows.get(key);
     if (!row) rows.set(key, (row = { ...head, up: 0, down: 0, daily: days.map(() => 0) }));

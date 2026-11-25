@@ -1181,3 +1181,45 @@ test('自己记的收入 / 支出:记一笔、按日期区间查、删;金额不
     await close();
   }
 });
+
+test('卸载面板:POST /panels/:id/uninstall;连得上删客户端、连不上只删记录、删不完报 502 且什么都不删;操作日志写清楚', async () => {
+  const db = memoryDb();
+  const data: Record<string, FakePanel> = { a: panel(), b: panel(), c: panel() };
+  const { call, close } = await serve(db, data);
+  const summaries = () => listOpLog(db).rows.map((r) => r.summary);
+  try {
+    const cid = (await call('POST', '/customers', { name: 'zhang' })).body.id;
+    const ids: Record<string, number> = {};
+    for (const name of ['a', 'b', 'c']) {
+      ids[name] = addPanel(db, name).id;
+      assert.equal((await call('POST', `/customers/${cid}/lines`, { panel_id: ids[name], inbound: { id: 7 } })).status, 200);
+    }
+    assert.deepEqual((await call('GET', '/panels')).body.map((p: any) => [p.name, p.line_count, p.customer_count]), [['a', 1, 1], ['b', 1, 1], ['c', 1, 1]]);
+
+    const a = await call('POST', `/panels/${ids.a}/uninstall`, {});
+    assert.deepEqual([a.status, a.body.remote, a.body.lines, a.body.customers, a.body.clients_deleted], [200, 'deleted', 1, 1, 1]);
+    assert.deepEqual(emails(data.a), []);
+    assert.equal(summaries()[0], '卸载面板「a」:从 1 位客户名下删了 1 条线路,面板上删了 1 个客户端');
+
+    data.b.fail = { listClients: '连接超时' };
+    const b = await call('POST', `/panels/${ids.b}/uninstall`, {});
+    assert.deepEqual([b.status, b.body.remote], [200, 'unreachable']);
+    assert.equal(emails(data.b).length, 1);
+    assert.equal(summaries()[0], '卸载面板「b」:从 1 位客户名下删了 1 条线路,面板连不上,只删了记录(连接超时)');
+
+    data.c.fail = { deleteClient: '面板返回 500' };
+    const c = await call('POST', `/panels/${ids.c}/uninstall`, {});
+    assert.equal(c.status, 502);
+    assert.match(c.body.error, /没删完/);
+    assert.deepEqual((await call('GET', '/panels')).body.map((p: any) => p.name), ['c']);
+    const [last] = listOpLog(db).rows;
+    assert.deepEqual([last.summary, last.ok], ['卸载面板「c」', false]);
+    const forced = await call('POST', `/panels/${ids.c}/uninstall`, { force: true });
+    assert.deepEqual([forced.status, forced.body.remote], [200, 'skipped']);
+    assert.equal(summaries()[0], '卸载面板「c」:从 1 位客户名下删了 1 条线路,只删记录,没动面板上的客户端');
+    assert.deepEqual((await call('GET', '/panels')).body, []);
+    assert.deepEqual(getCustomer(db, cid)!.lines, []);
+  } finally {
+    await close();
+  }
+});

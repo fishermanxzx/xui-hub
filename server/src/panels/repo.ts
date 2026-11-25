@@ -48,7 +48,7 @@ export interface Panel {
 }
 
 /** line_count:挂在这块面板上的客户线路数;exit_line_count:旧版本留下的、以它为出口的线路数 */
-export type PanelView = Omit<Panel, 'token'> & { line_count: number; exit_line_count: number };
+export type PanelView = Omit<Panel, 'token'> & { line_count: number; exit_line_count: number; customer_count: number };
 
 export interface PanelInput {
   name?: string;
@@ -141,10 +141,15 @@ export function validExpire(value: unknown): number {
   return n;
 }
 
-export function panelUsage(db: DB, id: number): { line_count: number; exit_line_count: number } {
+/** 面板上的线路条数、有线路在上面的客户数,以及出口经这块面板的线路(旧版本的落地面板出口)条数 */
+export function panelUsage(db: DB, id: number): { line_count: number; exit_line_count: number; customer_count: number } {
   return db
-    .prepare('SELECT (SELECT COUNT(*) FROM lines WHERE panel_id = @id) AS line_count, (SELECT COUNT(*) FROM lines WHERE exit_panel_id = @id) AS exit_line_count')
-    .get({ id }) as { line_count: number; exit_line_count: number };
+    .prepare(
+      `SELECT (SELECT COUNT(*) FROM lines WHERE panel_id = @id) AS line_count,
+              (SELECT COUNT(*) FROM lines WHERE exit_panel_id = @id) AS exit_line_count,
+              (SELECT COUNT(DISTINCT customer_id) FROM lines WHERE panel_id = @id) AS customer_count`,
+    )
+    .get({ id }) as { line_count: number; exit_line_count: number; customer_count: number };
 }
 
 export function toPanelView(db: DB, panel: Panel): PanelView {
@@ -218,8 +223,12 @@ export function updatePanel(db: DB, id: number, patch: PanelInput): Panel {
   return getPanel(db, id)!;
 }
 
-/** 删面板(只是不再接入,面板上的东西不动)。挂在它上面的客户线路记录会跟着删掉,所以有线路时要 force 才删 */
-export function deletePanel(db: DB, id: number, force = false): void {
+/**
+ * 删面板记录(只是不再接入,面板上的东西不动;要连面板上的客户端一起删用 uninstallPanel)。
+ * 挂在它上面的客户线路记录会跟着删掉,所以有线路时要 force 才删。
+ * 名字和流量倍率留到 removed_panels,流量记录不删,id 也不会给新面板用
+ */
+export function deletePanel(db: DB, id: number, force = false, now = Date.now()): void {
   const { line_count } = panelUsage(db, id);
   if (line_count && !force) throw new InputError(`这块面板上还有 ${line_count} 条客户线路,删面板会把这些线路记录一并删掉(本期用掉的流量会留在客户的已用里);先删线路,或确认后强制删除`);
   db.transaction(() => {
@@ -232,8 +241,10 @@ export function deletePanel(db: DB, id: number, force = false): void {
          carried_used_down = carried_used_down + (SELECT COALESCE(SUM(CAST(ROUND(down * @ratio) AS INTEGER)), 0) FROM lines WHERE lines.customer_id = customers.id AND lines.panel_id = @id)
        WHERE id IN (SELECT customer_id FROM lines WHERE panel_id = @id)`,
     ).run({ id, ratio: getPanel(db, id)?.traffic_ratio ?? 1 });
+    // 留下名字和倍率:流量页、自助页的每天用量还按它显示、计费
+    db.prepare('INSERT OR REPLACE INTO removed_panels (id, name, traffic_ratio, removed_at) SELECT id, name, traffic_ratio, @now FROM panels WHERE id = @id').run({ id, now });
     if (!db.prepare('DELETE FROM panels WHERE id = @id').run({ id }).changes) throw new InputError('面板不存在');
-    // 「发过连不上」的记录一起清掉,id 以后可能给新面板用
+    // 「发过连不上」的记录一起清掉
     db.prepare('DELETE FROM notified WHERE key = ?').run(`panel_down:${id}`);
   })();
 }

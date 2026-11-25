@@ -60,7 +60,7 @@ test('删面板:上面有客户线路要先确认;强制删连线路记录一起
     return [v.line_count, v.exit_line_count];
   };
   assert.deepEqual([usage(relay.id), usage(land.id)], [[1, 0], [1, 1]]);
-  assert.deepEqual(panelUsage(db, 999), { line_count: 0, exit_line_count: 0 });
+  assert.deepEqual(panelUsage(db, 999), { line_count: 0, exit_line_count: 0, customer_count: 0 });
 
   assert.throws(() => deletePanel(db, land.id), /还有 1 条客户线路/);
   assert.equal(listPanels(db).length, 2);

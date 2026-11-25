@@ -2,14 +2,14 @@
 // 面板页:每块面板一张卡片,展开看入站和客户端;添加 / 编辑面板用弹窗。右上角「地球」展开 3D 地球,看各面板在哪。
 import { t } from '../i18n';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import Modal from '../components/Modal.vue';
 import PanelCard from '../components/PanelCard.vue';
 import GlobeBlock from '../components/GlobeBlock.vue';
 import { parseCoords, type GlobePoint } from '../geoRegions';
 import { costSummary, dateInputToMs, fmtBytes, fmtCost, msToDateInput } from '../format';
 import { toast, toastError } from '../toast';
-import type { Panel, PanelInput } from '../types';
+import type { Panel, PanelInput, UninstallResult } from '../types';
 
 const panels = ref<Panel[]>([]);
 const checking = ref(false);
@@ -180,19 +180,36 @@ async function confirmRatio(panel: Panel, ratio: number): Promise<boolean> {
   return confirm(lines.join('\n'));
 }
 
+/**
+ * 卸载面板:从客户名下删掉上面的线路,再从这里移除。连得上先删掉线路在面板上的客户端;连不上只删记录。
+ * 连得上却没删完(502)时问一句要不要只删记录
+ */
 async function remove(panel: Panel) {
-  const notes = [
-    panel.line_count ? t('panels.deleteLines', { n: panel.line_count }) : '',
-    panel.exit_line_count ? t('panels.deleteExits', { n: panel.exit_line_count }) : '',
-  ].filter(Boolean);
-  if (!confirm(t('panels.confirmDelete', { name: panel.name }) + (notes.length ? `\n\n${notes.join('\n')}` : ''))) return;
+  const notes = panel.line_count ? [t('panels.uninstallLines', { n: panel.line_count, c: panel.customer_count }), t('panels.uninstallRemote')] : [t('panels.uninstallNoLines')];
+  if (panel.exit_line_count) notes.push(t('panels.deleteExits', { n: panel.exit_line_count }));
+  notes.push(t('panels.uninstallKeep'));
+  if (!confirm(`${t('panels.uninstallConfirm', { name: panel.name })}\n\n${notes.join('\n\n')}`)) return;
   try {
-    await api.deletePanel(panel.id, panel.line_count > 0);
-    toast(t('panels.deleted'));
-    await load();
+    let r: UninstallResult;
+    try {
+      r = await api.uninstallPanel(panel.id);
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status !== 502 || e.lost || !confirm(t('panels.uninstallForce', { error: e.message }))) throw e;
+      r = await api.uninstallPanel(panel.id, true);
+    }
+    const text =
+      r.remote === 'deleted'
+        ? t('panels.uninstalledRemote', { name: r.name, n: r.lines, k: r.clients_deleted })
+        : r.remote === 'unreachable'
+          ? t('panels.uninstalledUnreachable', { name: r.name, n: r.lines, error: r.error })
+          : r.remote === 'skipped'
+            ? t('panels.uninstalledSkipped', { name: r.name, n: r.lines })
+            : t('panels.uninstalled', { name: r.name });
+    toast(text, r.remote === 'unreachable' ? 'err' : 'ok');
   } catch (e) {
     toastError(e);
   }
+  await load();
 }
 
 let timer: number | undefined;

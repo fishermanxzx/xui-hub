@@ -124,7 +124,7 @@ async function onEachPanel(db: DB, lines: Line[], adminFor: (panel: Panel) => Li
 }
 
 /** 中转线路和配了出口规则的线路在面板上的规则是哪几条(入站 tag + email);入站已经不在的略过 */
-async function routesOf(admin: LineAdmin, lines: Line[]): Promise<UserRoute[]> {
+export async function routesOf(admin: LineAdmin, lines: Line[]): Promise<UserRoute[]> {
   const relays = lines.filter((l) => l.kind === 'relay' || l.rules.length > 0);
   if (!relays.length) return [];
   const tags = new Map((await admin.listInbounds()).map((ib) => [Number(ib.id), ib.tag]));

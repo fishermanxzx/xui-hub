@@ -107,9 +107,9 @@ const totalUp = computed(() => sum(report.value?.total.up ?? []));
 const totalDown = computed(() => sum(report.value?.total.down ?? []));
 const total = computed(() => totalUp.value + totalDown.value);
 const noun = computed(() => (by.value === 'customer' ? t('traffic.customer') : t('traffic.panel')));
-/** 行的名字:服务端给的「已删除 / 没归入」是中文占位,这里按界面语言重写;展开后的行(面板 · 客户端)原样显示 */
+/** 行的名字:服务端给的「已删除 / 没归入」是中文占位,这里按界面语言重写;卸载掉的面板用卸载时的名字;展开后的行(面板 · 客户端)原样显示 */
 function rowName(r: TrafficRow): string {
-  if (focus.value) return r.name;
+  if (focus.value || r.uninstalled) return r.name;
   if (r.deleted) return by.value === 'customer' ? t('traffic.deletedCustomer', { id: r.id }) : t('traffic.deletedPanel', { id: r.id });
   return by.value === 'customer' && r.id === 0 ? t('traffic.unassigned') : r.name;
 }
@@ -192,7 +192,8 @@ function open(r: TrafficRow) {
               <td>
                 <button v-if="canOpen(r)" class="link name" :title="t('traffic.openHint', { name: rowName(r) })" @click="open(r)">{{ rowName(r) }}</button>
                 <span v-else class="name">{{ rowName(r) }}</span>
-                <span v-if="r.deleted" class="badge warn">{{ t('traffic.deleted') }}</span>
+                <span v-if="r.uninstalled" class="badge">{{ t('traffic.uninstalled') }}</span>
+                <span v-else-if="r.deleted" class="badge warn">{{ t('traffic.deleted') }}</span>
               </td>
               <td class="wide">
                 <span class="meter"><i :style="{ width: `${((r.up + r.down) / maxRow) * 100}%` }" /></span>

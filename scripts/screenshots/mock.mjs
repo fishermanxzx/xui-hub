@@ -102,7 +102,7 @@ const panelRules = {
   ],
 };
 for (const l of lines) Object.assign(l, { panel_node_name: panels.find((x) => x.id === l.panel_id)?.node_name ?? '', panel_ratio: 1, used_up: l.up, used_down: l.down });
-for (const x of panels) Object.assign(x, { line_count: lines.filter((l) => l.panel_id === x.id).length, exit_line_count: lines.filter((l) => l.exit_panel_id === x.id).length });
+for (const x of panels) Object.assign(x, { line_count: lines.filter((l) => l.panel_id === x.id).length, exit_line_count: lines.filter((l) => l.exit_panel_id === x.id).length, customer_count: new Set(lines.filter((l) => l.panel_id === x.id).map((l) => l.customer_id)).size });
 for (const x of socks) Object.assign(x, { used_by: lines.filter((l) => l.exit_socks_id === x.id).length, customers: new Set(lines.filter((l) => l.exit_socks_id === x.id).map((l) => l.customer_id)).size });
 for (const d of Object.values(details)) for (const i of d.inbounds) i.accepts_clients = i.protocol !== 'mixed';
 
@@ -176,6 +176,17 @@ createServer((req, res) => {
       json({ kind, id: it.id, name: it.name, months: b.months ?? 0, days: b.days ?? 0, expire_before: before, expire_after: it.expire_at, entry, [kind]: it });
     });
     return;
+  }
+  // 卸载面板:连不上的(check_error)只删记录,别的当成删掉了面板上的客户端(演示用)
+  const um = req.method === 'POST' && p.match(/^\/api\/panels\/(\d+)\/uninstall$/);
+  if (um) {
+    const it = panels.find((x) => x.id === Number(um[1]));
+    const mine = lines.filter((l) => l.panel_id === it.id);
+    panels.splice(panels.indexOf(it), 1);
+    for (const c of customers) c.lines = c.lines.filter((l) => l.panel_id !== it.id);
+    for (const l of mine) lines.splice(lines.indexOf(l), 1);
+    const remote = !mine.length ? 'none' : it.check_error ? 'unreachable' : 'deleted';
+    return json({ name: it.name, lines: mine.length, customers: new Set(mine.map((l) => l.customer_id)).size, remote, clients_deleted: remote === 'deleted' ? mine.length : 0, error: remote === 'unreachable' ? it.check_error : '' });
   }
   let m0;
   if (p === '/api/session') return json({ auth_required: true, logged_in: true });
