@@ -63,9 +63,11 @@ Authorization: Bearer xh_……
 | DELETE | `/customers/:id/devices/:deviceId` | 移除一台设备,让出名额 |
 | DELETE | `/customers/:id` | 删除客户,连同他在各面板上的客户端(他的续费 / 收款记录留着) |
 | GET | `/payments` | 全部客户的续费 / 收款记录,新的在前。`from` / `to`(毫秒,可选)= 收款日期在 `[from, to)` 里的 |
+| PATCH | `/payments/:id` | 改一笔记录,只给要改的:`amount`(只记收款的那种不能空)、`paid_at`、`note`。只改记录,到期日不变;续了多久不能改 |
 | DELETE | `/payments/:id` | 删一笔记录(记错了时用),只删记录,到期日不变 |
 | GET | `/ledger` | 自己记的收入 / 支出,新的在前。`from` / `to`(毫秒,可选)= 日期在 `[from, to)` 里的;`customer_id`(可选)= 只要关联了这位客户的 |
 | POST | `/ledger` | 记一笔收入 / 支出。请求体:`kind`(必填,`income` 收入 / `expense` 支出)、`amount`(必填,正数,支出也填正数)、`at`(毫秒,不填 = 现在)、`category`(类别,最多 20 字)、`note`;关联(都可以不填):`panel_id` 或 `socks_id`(二选一)、`customer_id`(只有收入能填) |
+| PATCH | `/ledger/:id` | 改一笔自己记的收入 / 支出,字段同上,只给要改的。改成支出时关联的客户去掉;给了 `panel_id` 没给 `socks_id` 时原来的 SOCKS 去掉(反过来也一样);关联填 `null` = 取消 |
 | DELETE | `/ledger/:id` | 删一笔自己记的收入 / 支出 |
 
 续费 / 收款记录的字段:`id`、`customer_id`、`customer_name`(客户删了是记的时候的名字)、`customer_deleted`、`amount`(`null` = 只续期没记钱)、`paid_at`、`months`、`days`(都是 0 = 只记收款)、`expire_before`、`expire_after`、`note`、`created_at`。自己记的收入 / 支出的字段:`id`、`kind`、`amount`、`at`、`category`、`note`、`created_at`,和关联的 `customer_id` / `customer_name` / `customer_deleted`、`panel_id` / `panel_name` / `panel_deleted`、`socks_id` / `socks_name` / `socks_deleted`(没关联的 id 为 `null`、名字为空;删了的是记的时候的名字)。客户列表里的 `last_payment` 是他最近一笔收款(金额大于 0 的,退款不算)(`amount`、`paid_at`),没有为 `null`。

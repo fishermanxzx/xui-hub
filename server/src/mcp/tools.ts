@@ -36,6 +36,17 @@ async function call(ctx: ToolContext, method: string, path: string, body?: unkno
   return res.body;
 }
 
+/** YYYY-MM-DD → 那天中午的毫秒(按服务器时区;按月汇总时不会落到隔壁月);不给 = undefined */
+function dayAt(value: unknown): number | undefined {
+  if (!value) return undefined;
+  const [y, m, d] = String(value).split('-').map(Number);
+  const at = new Date(y, m - 1, d, 12).getTime();
+  if (!Number.isFinite(at) || new Date(at).getMonth() !== m - 1 || new Date(at).getDate() !== d) throw new ToolError('date 要是 YYYY-MM-DD');
+  return at;
+}
+/** 关联的 id:0 = 取消关联(接口里是 null),不给 = 不改 */
+const linkArg = (v: unknown) => (v === undefined ? undefined : Number(v) === 0 ? null : v);
+
 /** 给模型看的自己记的收入 / 支出 */
 function entryView(e: any) {
   const link = (id: number | null, name: string, deleted: boolean) => (id == null ? undefined : { id, name, deleted: deleted || undefined });
@@ -275,6 +286,22 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'update_payment',
+    title: '改一笔续费 / 收款记录',
+    description: '改一笔续费 / 收款记录(id 从 list_payments 里拿):金额、收款日期、备注,只填要改的。只改记录,客户的到期日不会跟着变;续了多久不能改。',
+    inputSchema: obj(
+      {
+        id: int('这笔记录的 id', { minimum: 1 }),
+        amount: { type: 'number', minimum: -100_000_000, maximum: 100_000_000, description: '收了多少,负数 = 退款' },
+        date: str('收款日期,YYYY-MM-DD(按服务器时区)', { pattern: '^\\d{4}-\\d{2}-\\d{2}$' }),
+        note: str('备注,最多 200 字;空字符串 = 清空', { maxLength: 200 }),
+      },
+      ['id'],
+    ),
+    annotations: { destructiveHint: false },
+    run: async (a, ctx) => paymentView(await call(ctx, 'PATCH', `/payments/${Number(a.id)}`, { amount: a.amount, paid_at: dayAt(a.date), note: a.note })),
+  },
+  {
     name: 'add_ledger_entry',
     title: '记一笔收入 / 支出',
     description:
@@ -293,15 +320,41 @@ export const TOOLS: ToolDef[] = [
       ['kind', 'amount'],
     ),
     annotations: { destructiveHint: false },
-    run: async (a, ctx) => {
-      let at: number | undefined;
-      if (a.date) {
-        const [y, m, d] = String(a.date).split('-').map(Number);
-        at = new Date(y, m - 1, d, 12).getTime();
-        if (!Number.isFinite(at) || new Date(at).getMonth() !== m - 1 || new Date(at).getDate() !== d) throw new ToolError('date 要是 YYYY-MM-DD');
-      }
-      return entryView(await call(ctx, 'POST', '/ledger', { kind: a.kind, amount: a.amount, at, category: a.category, note: a.note, panel_id: a.panel_id, socks_id: a.socks_id, customer_id: a.customer_id }));
-    },
+    run: async (a, ctx) => entryView(await call(ctx, 'POST', '/ledger', { kind: a.kind, amount: a.amount, at: dayAt(a.date), category: a.category, note: a.note, panel_id: a.panel_id, socks_id: a.socks_id, customer_id: a.customer_id })),
+  },
+  {
+    name: 'update_ledger_entry',
+    title: '改一笔收入 / 支出',
+    description:
+      '改账本里自己记的一笔收入 / 支出(id 从 list_ledger_entries 里拿),只填要改的,没填的不变。改成支出时关联的客户会去掉;关联面板时原来关联的 SOCKS 会去掉(反过来也一样)。panel_id / socks_id / customer_id 填 0 = 取消关联。',
+    inputSchema: obj(
+      {
+        id: int('这笔记录的 id', { minimum: 1 }),
+        kind: { type: 'string', enum: ['income', 'expense'], description: 'income = 收入,expense = 支出' },
+        amount: { type: 'number', exclusiveMinimum: 0, maximum: 100_000_000, description: '金额,正数(支出也填正数)' },
+        date: str('哪天,YYYY-MM-DD(按服务器时区)', { pattern: '^\\d{4}-\\d{2}-\\d{2}$' }),
+        category: str('类别,最多 20 字;空字符串 = 清空', { maxLength: 20 }),
+        note: str('备注,最多 200 字;空字符串 = 清空', { maxLength: 200 }),
+        panel_id: int('关联的面板 id;0 = 取消关联', { minimum: 0 }),
+        socks_id: int('关联的 SOCKS id;0 = 取消关联', { minimum: 0 }),
+        customer_id: int('关联的客户 id(只有收入能关联);0 = 取消关联', { minimum: 0 }),
+      },
+      ['id'],
+    ),
+    annotations: { destructiveHint: false },
+    run: async (a, ctx) =>
+      entryView(
+        await call(ctx, 'PATCH', `/ledger/${Number(a.id)}`, {
+          kind: a.kind,
+          amount: a.amount,
+          at: dayAt(a.date),
+          category: a.category,
+          note: a.note,
+          panel_id: linkArg(a.panel_id),
+          socks_id: linkArg(a.socks_id),
+          customer_id: linkArg(a.customer_id),
+        }),
+      ),
   },
   {
     name: 'list_ledger_entries',
@@ -568,4 +621,4 @@ export async function runTool(tool: ToolDef, args: unknown, ctx: ToolContext): P
 
 export const INSTRUCTIONS =
   'xui-hub 把多台 3x-ui 面板接到一个后台,按「客户」管理线路。一位客户有若干线路(每条是某块面板上的一个客户端)、一个总流量额度、一个到期时间和一条订阅链接。' +
-  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer(收了钱填 amount,会记成一笔收款),查收款用 list_payments;续费以外的收入 / 支出(如买服务器,可以关联面板 / SOCKS / 客户)用 add_ledger_entry 记、list_ledger_entries 查;面板 / SOCKS 续了费用 renew_panel / renew_socks 顺延到期日并记支出。删除类操作(delete_customer、delete_line、reset_subscription_link)和换出口(change_line_exit,会重启面板的 Xray)执行前先向用户确认。';
+  '常见流程:list_panels 看有哪些面板 → create_customer → open_line → 把返回的 sub_url 发给客户。续费用 renew_customer(收了钱填 amount,会记成一笔收款),查收款用 list_payments;续费以外的收入 / 支出(如买服务器,可以关联面板 / SOCKS / 客户)用 add_ledger_entry 记、list_ledger_entries 查;记错了用 update_ledger_entry / update_payment 改;面板 / SOCKS 续了费用 renew_panel / renew_socks 顺延到期日并记支出。删除类操作(delete_customer、delete_line、reset_subscription_link)和换出口(change_line_exit,会重启面板的 Xray)执行前先向用户确认。';

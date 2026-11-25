@@ -55,6 +55,8 @@ claude mcp add --transport http xui-hub https://hub.example.com:8788/mcp --heade
 | `list_payments` | 续费 / 收款记录(全部或某位客户的),带合计 |
 | `add_ledger_entry` | 记一笔续费以外的收入 / 支出(如买服务器、域名),可以关联面板或 SOCKS,收入还可以关联客户 |
 | `list_ledger_entries` | 自己记的收入 / 支出,带收入、支出合计;可以只看关联了某位客户的 |
+| `update_ledger_entry` | 改一笔自己记的收入 / 支出,只改给了的字段 |
+| `update_payment` | 改一笔续费 / 收款记录的金额、日期、备注(到期日不变) |
 | `reset_customer_usage` | 清零已用流量 |
 | `adjust_customer_usage` | 调整本期已用(直接加减计费用量 GB,不乘面板倍率;迁移旧用量、纠错) |
 | `reset_subscription_link` | 重置订阅链接,旧链接失效 |

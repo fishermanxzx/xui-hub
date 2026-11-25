@@ -230,3 +230,29 @@ test('操作日志:面板 / SOCKS 续费写清续多久、到期前后、记没�
     await close();
   }
 });
+
+test('操作日志:改收支记录只写改了的;记在关联的客户名下;什么都没改不记', async () => {
+  const db = memoryDb();
+  const { call, close } = await serve(db);
+  try {
+    await call('POST', '/login', { password: 'pw' });
+    const c = (await call('POST', '/customers', { name: '张三' })).body;
+    await call('POST', `/customers/${c.id}/renew`, { months: 1 });
+    const pay = (await call('GET', `/customers/${c.id}/payments`)).body[0];
+    await call('PATCH', `/payments/${pay.id}`, { amount: 30, note: '微信' });
+    assert.match(summaries(db)[0], /^修改「张三」\d{4}-\d{2}-\d{2} 的一笔续费\(续 1 个月\):金额 没填 → 30;备注改成「微信」$/);
+    assert.equal(listOpLog(db).rows[0].customer_id, c.id);
+    const n = listOpLog(db).rows.length;
+    await call('PATCH', `/payments/${pay.id}`, { amount: 30 });
+    assert.equal(listOpLog(db).rows.length, n);
+
+    const e = (await call('POST', '/ledger', { kind: 'expense', amount: 300, category: '服务器' })).body;
+    await call('PATCH', `/ledger/${e.id}`, { kind: 'income', amount: 320, customer_id: c.id });
+    assert.match(summaries(db)[0], /^修改 \d{4}-\d{2}-\d{2} 的一笔支出 300\(服务器\):支出 → 收入;金额 300 → 320;客户 没关联 → 「张三」$/);
+    assert.equal(listOpLog(db).rows[0].customer_id, c.id);
+    assert.equal((await call('PATCH', `/ledger/${e.id}`, { amount: -1 })).status, 400);
+    assert.deepEqual([listOpLog(db).rows[0].ok, listOpLog(db).rows[0].error], [false, '金额要是大于 0 的数字(支出也填正数),不超过 1 亿']);
+  } finally {
+    await close();
+  }
+});

@@ -67,6 +67,29 @@ const entryText = (e: Partial<LedgerEntry>) => {
   const extra = [e.category, link('面板', e.panel_id, e.panel_name), link('SOCKS', e.socks_id, e.socks_name), link('客户', e.customer_id, e.customer_name), e.note ? `备注「${e.note}」` : ''].filter(Boolean);
   return `${e.amount != null ? ` ${e.amount}` : ''}${extra.length ? `(${extra.join(';')})` : ''}`;
 };
+/** 一笔续费 / 收款改了什么 */
+function paymentDiff(a: Payment, b: Payment): string[] {
+  const out: string[] = [];
+  if (a.amount !== b.amount) out.push(`金额 ${money(a.amount)} → ${money(b.amount)}`);
+  if (date(a.paid_at) !== date(b.paid_at)) out.push(`日期 ${date(a.paid_at)} → ${date(b.paid_at)}`);
+  if (a.note !== b.note) out.push(b.note ? `备注改成「${b.note}」` : '清空了备注');
+  return out;
+}
+/** 一笔收入 / 支出改了什么 */
+function entryDiff(a: LedgerEntry, b: LedgerEntry): string[] {
+  const out: string[] = [];
+  const kind = (e: LedgerEntry) => (e.kind === 'expense' ? '支出' : '收入');
+  const link = (id: number | null, name: string) => (id == null ? '没关联' : `「${name}」`);
+  const target = (e: LedgerEntry) => (e.panel_id != null ? `面板${link(e.panel_id, e.panel_name)}` : e.socks_id != null ? `SOCKS${link(e.socks_id, e.socks_name)}` : '没关联');
+  if (a.kind !== b.kind) out.push(`${kind(a)} → ${kind(b)}`);
+  if (a.amount !== b.amount) out.push(`金额 ${a.amount} → ${b.amount}`);
+  if (date(a.at) !== date(b.at)) out.push(`日期 ${date(a.at)} → ${date(b.at)}`);
+  if (a.category !== b.category) out.push(`类别 ${a.category || '空'} → ${b.category || '空'}`);
+  if (target(a) !== target(b)) out.push(`关联 ${target(a)} → ${target(b)}`);
+  if (a.customer_id !== b.customer_id) out.push(`客户 ${link(a.customer_id, a.customer_name)} → ${link(b.customer_id, b.customer_name)}`);
+  if (a.note !== b.note) out.push(b.note ? `备注改成「${b.note}」` : '清空了备注');
+  return out;
+}
 /** 面板上手配的一条规则:「geosite:google → SOCKS「美国」」 */
 function panelRuleText(db: DB, r: { when?: Record<string, string[]>; to?: { kind?: string; tag?: string; socks_id?: number } }): string {
   const when = Object.values(r.when ?? {}).flat().join('、') || '全部流量';
@@ -276,6 +299,13 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
       const amount = Number(result?.amount ?? body.amount);
       return S(`给${cname}记一笔${amount < 0 ? '退款' : '收款'} ${Number.isFinite(amount) ? amount : ''}${body.note ? `(${body.note})` : ''}`);
     }
+    case 'PATCH /payments/:id': {
+      const p = b.payment;
+      const a: Payment | undefined = ok ? result : undefined;
+      if (!p) return S('修改一笔续费 / 收款记录', null);
+      const diff = a ? paymentDiff(p, a) : [];
+      return changed(`修改「${p.customer_name}」${date(p.paid_at)} 的一笔${p.months || p.days ? `续费(续 ${span(p)})` : '收款'}`, diff, p.customer_id);
+    }
     case 'DELETE /payments/:id': {
       const p = b.payment;
       if (!p) return S('删除一笔续费 / 收款记录', null);
@@ -292,6 +322,14 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
     case 'POST /ledger': {
       const e: Partial<LedgerEntry> = ok ? result : body;
       return S(`记一笔${e.kind === 'expense' ? '支出' : '收入'}${entryText(e)}`, ok ? (e.customer_id ?? null) : null);
+    }
+    case 'PATCH /ledger/:id': {
+      const e = b.entry;
+      const a: LedgerEntry | undefined = ok ? result : undefined;
+      if (!e) return S('修改一笔收入 / 支出记录', null);
+      const diff = a ? entryDiff(e, a) : [];
+      // 记在改完后关联的客户名下;改成不关联了就记在原来那位名下
+      return changed(`修改 ${date(e.at)} 的一笔${e.kind === 'expense' ? '支出' : '收入'}${entryText(e)}`, diff, a?.customer_id ?? e.customer_id ?? null);
     }
     case 'DELETE /ledger/:id': {
       const e = b.entry;
