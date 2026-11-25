@@ -2,11 +2,11 @@
 // 3D 地球(面板页、SOCKS 页共用):按位置打点(同一个地方的几个合成一个点),可拖动旋转、滚轮缩放,没人动时慢慢自转。
 // 地球用卫星图(NASA Blue Marble,公有领域),带地形起伏和海面反光;外面一圈淡蓝的大气光晕,背景是星空。
 // 点是发光的小圆点 + 地面上一圈圈波纹:都正常是白蓝色,有不通的(面板连不上 / SOCKS 测试失败)是红色、波纹更急。
-// 悬停看这里有哪几个,点一下跳到页面上那一行。
+// 点旁边写按 IP 查到的城市(只有一个时下面再写它的名字,几个时写 ×N),悬停看这里有哪几个,点一下跳到页面上那一行。
 // globe.gl(three.js)和贴图只在打开地球时才加载,不拖慢别的页面。亮色 / 暗色主题下都一样。
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { t } from '../i18n';
-import type { GlobePoint } from '../geoRegions';
+import { locale, t } from '../i18n';
+import { regionName, type GlobePoint } from '../geoRegions';
 import dayUrl from '../assets/globe/earth-day.jpg?url';
 import bumpUrl from '../assets/globe/earth-bump.jpg?url';
 import waterUrl from '../assets/globe/earth-water.jpg?url';
@@ -44,7 +44,17 @@ function spotsOf(list: GlobePoint[]): Spot[] {
 
 /** globe.gl 的回调参数是 object,这里转成 Spot */
 const by = <R,>(f: (s: Spot) => R) => (o: object) => f(o as Spot);
-const nameOf = (s: Spot) => (s.items.length === 1 ? s.items[0].name : `${s.place || s.items[0].name} ×${s.items.length}`);
+/** 这个地方叫什么:按 IP 查到的城市(手动填的地点名);没有城市就写国家 / 地区 */
+function placeOf(s: Spot): string {
+  if (s.place) return s.place;
+  const country = s.items.find((p) => p.country)?.country;
+  return country ? regionName(country, locale.value) : '';
+}
+/** 提示框顶上那行:城市 · 国家 */
+function whereOf(s: Spot): string {
+  const country = s.items.find((p) => p.country)?.country;
+  return [s.place, country ? regionName(country, locale.value) : ''].filter(Boolean).join(' · ');
+}
 
 // ---------- 悬停提示(Vue 渲染,名字不会被当成 HTML) ----------
 const hovered = ref<Spot | null>(null);
@@ -64,7 +74,7 @@ function hideTip() {
   release();
 }
 
-/** 点:一个发光的圆点(连不上的红色、闪得急),旁边写名字。悬停出提示,点一下跳到面板 */
+/** 点:一个发光的圆点(连不上的红色、闪得急),旁边写城市,一个的话下面一行写名字。悬停出提示,点一下跳到面板 */
 function markerEl(s: Spot): HTMLElement {
   const el = document.createElement('div');
   el.className = `globe-marker${s.down ? ' down' : ''}`;
@@ -72,7 +82,18 @@ function markerEl(s: Spot): HTMLElement {
   dot.className = 'globe-dot';
   const label = document.createElement('span');
   label.className = 'globe-name';
-  label.textContent = nameOf(s);
+  const place = placeOf(s);
+  const many = s.items.length > 1;
+  const top = document.createElement('span');
+  top.className = 'globe-city';
+  top.textContent = many ? `${place || s.items[0].name} ×${s.items.length}` : place || s.items[0].name;
+  label.append(top);
+  if (!many && place) {
+    const sub = document.createElement('span');
+    sub.className = 'globe-sub';
+    sub.textContent = s.items[0].name;
+    label.append(sub);
+  }
   el.append(dot, label);
   el.addEventListener('mouseenter', (e) => showTip(s, e));
   el.addEventListener('mousemove', (e) => showTip(s, e));
@@ -182,7 +203,7 @@ onMounted(async () => {
   }
 });
 
-watch(() => props.points, setData);
+watch([() => props.points, locale], setData);
 
 onBeforeUnmount(() => {
   clearTimeout(resumeTimer);
@@ -198,7 +219,7 @@ onBeforeUnmount(() => {
     <p v-if="state === 'loading'" class="globe-msg">{{ t('globe.loading') }}</p>
     <p v-else-if="state === 'failed'" class="globe-msg">{{ t('globe.failed', { error }) }}</p>
     <div v-if="hovered" class="globe-tip" :style="{ left: `${tipAt.x}px`, top: `${tipAt.y}px` }">
-      <div v-if="hovered.place || hovered.items[0].country" class="muted-tip">{{ hovered.place || hovered.items[0].country }}</div>
+      <div v-if="whereOf(hovered)" class="tip-where">{{ whereOf(hovered) }}</div>
       <div v-for="p in hovered.items" :key="p.id" class="tip-row">
         <b :class="{ bad: p.down }">{{ p.name }}</b>
         <span class="muted-tip">{{ p.meta }}</span>
@@ -274,15 +295,24 @@ onBeforeUnmount(() => {
   left: 16px;
   top: 50%;
   transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   white-space: nowrap;
-  font: 500 11px/1 'IBM Plex Sans', system-ui, sans-serif;
+  font: 600 12px/1 'IBM Plex Sans', system-ui, sans-serif;
   color: #f2f7ff;
   text-shadow:
     0 1px 3px rgba(0, 0, 0, 0.95),
     0 0 6px rgba(0, 0, 0, 0.8);
   pointer-events: none;
 }
-.globe :deep(.globe-marker.down .globe-name) {
+.globe :deep(.globe-sub) {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #c4d3e8;
+}
+.globe :deep(.globe-marker.down .globe-name),
+.globe :deep(.globe-marker.down .globe-sub) {
   color: #ffb9ae;
 }
 .globe :deep(.globe-marker:hover .globe-dot) {
@@ -312,6 +342,10 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1.45;
   pointer-events: none;
+}
+.tip-where {
+  font-weight: 600;
+  color: #cfe3ff;
 }
 .tip-row {
   margin-top: 4px;
