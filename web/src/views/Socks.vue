@@ -1,9 +1,12 @@
 <script setup lang="ts">
 // SOCKS 页:登记购买的 SOCKS5 代理,测连通性(出口 IP / 地区 / 延迟),给客户页的中转当出口用。
+// 右上角「地球」展开 3D 地球,按出口 IP 看各 SOCKS 分布在哪些地区。
 import { t } from '../i18n';
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../api';
 import AssetRenew from '../components/AssetRenew.vue';
+import GlobeBlock from '../components/GlobeBlock.vue';
+import { parseCoords, type GlobePoint } from '../geoRegions';
 import Modal from '../components/Modal.vue';
 import { costSummary, dateInputToMs, dueClass, fmtAgo, fmtCost, fmtDate, fmtDue, msToDateInput, region } from '../format';
 import { toast, toastError } from '../toast';
@@ -21,7 +24,63 @@ async function load() {
     toastError(e);
   }
 }
-onMounted(load);
+
+// ---------- 地球:展开时按出口 IP 查还没定位的,点一个点跳到那一行 ----------
+const GLOBE_KEY = 'xui-hub.socksGlobe';
+const showGlobe = ref(false);
+try {
+  showGlobe.value = localStorage.getItem(GLOBE_KEY) === '1';
+} catch {
+  /* 读不了就默认收起 */
+}
+const locating = ref(false);
+async function locate() {
+  locating.value = true;
+  try {
+    list.value = await api.socksGeo();
+  } catch (e) {
+    toastError(e);
+  } finally {
+    locating.value = false;
+  }
+}
+function toggleGlobe() {
+  showGlobe.value = !showGlobe.value;
+  try {
+    localStorage.setItem(GLOBE_KEY, showGlobe.value ? '1' : '0');
+  } catch {
+    /* 存不了就算了 */
+  }
+  if (showGlobe.value) void locate();
+}
+const globePoints = computed<GlobePoint[]>(() =>
+  list.value
+    .filter((s) => s.geo_lat != null && s.geo_lng != null)
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      lat: s.geo_lat!,
+      lng: s.geo_lng!,
+      city: s.geo_city,
+      // 手动填的坐标没有国家代码,用测试时测出的地区
+      country: s.geo_country || s.check?.loc || '',
+      down: s.check?.ok === false,
+      meta: [s.check?.ip, s.check ? (s.check.ok ? `${s.check.ms} ms` : t('globe.socksDown')) : '', s.used_by ? t('globe.customers', { n: s.customers }) : ''].filter(Boolean).join(' · '),
+    })),
+);
+const unlocated = computed(() => list.value.filter((s) => s.geo_lat == null).map((s) => ({ id: s.id, name: s.name, reason: s.geo_error })));
+const focused = ref<number | null>(null);
+let focusTimer: number | undefined;
+function focusRow(id: number) {
+  document.getElementById(`socks-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  focused.value = id;
+  clearTimeout(focusTimer);
+  focusTimer = window.setTimeout(() => (focused.value = null), 2000);
+}
+/** 测过之后出口 IP 可能变了:地球开着就顺手重新定位 */
+const relocate = () => (showGlobe.value ? locate() : undefined);
+
+onMounted(() => void (showGlobe.value ? locate() : load()));
 
 // 续费:顺延到期日,付了钱在账本记一笔支出
 const renewFor = ref<Socks | null>(null);
@@ -36,6 +95,7 @@ async function checkOne(s: Socks) {
   try {
     const updated = await api.checkSocks(s.id);
     Object.assign(s, updated);
+    void relocate();
     if (updated.check?.ok) toast(t('socks.okToast', { name: s.name, ms: updated.check.ms, ip: updated.check.ip ?? t('socks.unknown'), region: region(updated.check.loc) }));
     else toast(t('socks.failToast', { name: s.name, error: updated.check?.error ?? t('socks.testFailed') }), 'err');
   } catch (e) {
@@ -49,6 +109,7 @@ async function checkAll() {
   checkingAll.value = true;
   try {
     list.value = await api.checkAllSocks();
+    void relocate();
     const bad = list.value.filter((s) => !s.check?.ok).length;
     toast(t('socks.allDone', { ok: list.value.length - bad, bad }), bad ? 'err' : 'ok');
   } catch (e) {
@@ -62,11 +123,11 @@ async function checkAll() {
 const editing = ref<Socks | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', address: '', remark: '', cost: '', expire: '' });
+const form = ref({ name: '', address: '', remark: '', cost: '', expire: '', loc: '', locCity: '' });
 
 function openForm(s: Socks | null) {
   editing.value = s;
-  form.value = { name: s?.name ?? '', address: '', remark: s?.remark ?? '', cost: s?.monthly_cost == null ? '' : String(s.monthly_cost), expire: msToDateInput(s?.expire_at ?? 0) };
+  form.value = { name: s?.name ?? '', address: '', remark: s?.remark ?? '', cost: s?.monthly_cost == null ? '' : String(s.monthly_cost), expire: msToDateInput(s?.expire_at ?? 0), loc: s?.geo_manual ? `${s.geo_lat}, ${s.geo_lng}` : '', locCity: s?.geo_manual ? s.geo_city : '' };
   showForm.value = true;
 }
 
@@ -76,6 +137,13 @@ async function submit() {
   const expireAt = was && form.value.expire === msToDateInput(was.expire_at) ? was.expire_at : dateInputToMs(form.value.expire);
   const body: SocksInput = { name: form.value.name, remark: form.value.remark, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: expireAt };
   if (form.value.address.trim()) body.address = form.value.address.trim();
+  // 位置:填了坐标 = 手动;清空了(原来是手动的)= 改回按出口 IP 自动
+  const loc = form.value.loc.trim();
+  if (loc) {
+    const at = parseCoords(loc);
+    if (!at) return toastError(new Error(t('loc.bad')));
+    body.location = { ...at, city: form.value.locCity.trim() };
+  } else if (was?.geo_manual) body.location = null;
   const used = editing.value?.used_by ?? 0;
   if (body.address && used && !confirm(t('socks.confirmAddress', { n: used }))) return;
   saving.value = true;
@@ -83,7 +151,7 @@ async function submit() {
     const saved = editing.value ? await api.updateSocks(editing.value.id, body) : await api.createSocks(body);
     showForm.value = false;
     toast(t('socks.saved'));
-    await load();
+    await (showGlobe.value ? locate() : load());
     // 新登记的顺手测一下
     if (!editing.value) {
       const row = list.value.find((s) => s.id === saved.id);
@@ -125,10 +193,13 @@ async function remove(s: Socks) {
       </details>
     </div>
     <div class="ph-actions">
+      <button :aria-pressed="showGlobe" :disabled="!list.length" @click="toggleGlobe">{{ showGlobe ? t('globe.hide') : t('globe.show') }}</button>
       <button :disabled="checkingAll || !list.length" @click="checkAll">{{ checkingAll ? t('socks.testing') : t('socks.testAll') }}</button>
       <button class="primary" @click="openForm(null)">{{ t('socks.add') }}</button>
     </div>
   </header>
+
+  <GlobeBlock v-if="showGlobe && list.length" :points="globePoints" :unlocated="unlocated" :locating="locating" summary-key="globe.summarySocks" source-key="globe.sourceSocks" label-key="globe.ariaSocks" @pick="focusRow" />
 
   <section class="sheet">
     <div class="table-wrap">
@@ -146,7 +217,7 @@ async function remove(s: Socks) {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="s in list" :key="s.id">
+          <tr v-for="s in list" :id="`socks-${s.id}`" :key="s.id" :class="{ focused: focused === s.id }">
             <td class="name" :title="`${s.host}:${s.port}`">{{ s.name }}</td>
             <td class="small">
               <template v-if="checking.has(s.id)"><span class="muted">{{ t('socks.testing') }}</span></template>
@@ -192,6 +263,14 @@ async function remove(s: Socks) {
         <label class="field">{{ t('cost.expireField') }}<input v-model="form.expire" type="date" /></label>
       </div>
       <label class="field">{{ t('socks.remark') }}<input v-model="form.remark" :placeholder="t('socks.remarkPlaceholder')" /></label>
+      <div class="two">
+        <label class="field">{{ t('loc.field') }}<input v-model="form.loc" :placeholder="t('loc.placeholder')" inputmode="decimal" /></label>
+        <label class="field">{{ t('loc.city') }}<input v-model="form.locCity" maxlength="40" :placeholder="t('loc.cityPlaceholder')" /></label>
+      </div>
+      <p class="muted small hint">
+        {{ t('loc.hint') }}
+        <template v-if="editing && !editing.geo_manual && editing.geo_lat != null"><br />{{ t('loc.now', { place: `${editing.geo_city || editing.geo_country || ''} (${editing.geo_lat}, ${editing.geo_lng})`.trim() }) }}</template>
+      </p>
       <p class="muted small hint">{{ t('socks.hint') }} {{ t('cost.hint') }}</p>
     </form>
     <template #footer>
@@ -212,6 +291,10 @@ async function remove(s: Socks) {
 </template>
 
 <style scoped>
+tr.focused td {
+  background: var(--accent-soft);
+  transition: background 0.3s;
+}
 .name {
   font-weight: 500;
   white-space: nowrap;

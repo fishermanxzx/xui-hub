@@ -40,7 +40,7 @@ import { listSubFetches, subClientCounts, subIpsSince } from '../subscription/fe
 import { deleteDevice, deviceCounts, listDevices } from '../subscription/devices';
 import { renameLinks, validNodeName } from '../subscription/nodeName';
 import { fetchUpstream, refreshUpstreams, type UpstreamFetcher } from '../subscription/upstream';
-import { lookupGeo, refreshPanelGeo, type GeoLookup } from '../panels/geo';
+import { lookupGeo, refreshPanelGeo, refreshSocksGeo, type GeoLookup } from '../panels/geo';
 import { createToken, deleteToken, listTokens, TOKEN_BLOCKED, tokenName, verifyToken } from './tokens';
 import { listGrants, revokeGrant } from '../mcp/oauth';
 import { enforceCustomers } from '../lines/enforce';
@@ -869,6 +869,14 @@ export function apiRouter(deps: RouteDeps): Router {
     return view;
   };
   r.get('/socks', wrap(() => listSocks(db)));
+  // SOCKS 列表,顺带把还没定位的按出口 IP 查一下地理位置(SOCKS 页的地球打开时才调,见 panels/geo.ts)
+  r.get(
+    '/socks/geo',
+    wrap(async () => {
+      await refreshSocksGeo(db, deps.geoLookup ?? lookupGeo);
+      return listSocks(db);
+    }),
+  );
   r.post('/socks', wrap((req) => socksOne(createSocks(db, req.body ?? {}))));
   // 换了地址 / 账号:先把走它的线路在各自面板上改指到新地址,都改成了才保存
   r.patch(

@@ -1,50 +1,50 @@
 <script setup lang="ts">
-// 面板页的 3D 地球:按面板的位置打点(同一个地方的几块面板合成一个点),可拖动旋转、滚轮缩放,没人动时慢慢自转。
+// 3D 地球(面板页、SOCKS 页共用):按位置打点(同一个地方的几个合成一个点),可拖动旋转、滚轮缩放,没人动时慢慢自转。
 // 地球用卫星图(NASA Blue Marble,公有领域),带地形起伏和海面反光;外面一圈淡蓝的大气光晕,背景是星空。
-// 点是发光的小圆点 + 地面上一圈圈波纹:都连得上是白蓝色,有连不上的是红色、波纹更急。
-// 悬停看是哪几块面板,点一下跳到那块面板。
+// 点是发光的小圆点 + 地面上一圈圈波纹:都正常是白蓝色,有不通的(面板连不上 / SOCKS 测试失败)是红色、波纹更急。
+// 悬停看这里有哪几个,点一下跳到页面上那一行。
 // globe.gl(three.js)和贴图只在打开地球时才加载,不拖慢别的页面。亮色 / 暗色主题下都一样。
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { t } from '../i18n';
-import type { Panel } from '../types';
+import type { GlobePoint } from '../geoRegions';
 import dayUrl from '../assets/globe/earth-day.jpg?url';
 import bumpUrl from '../assets/globe/earth-bump.jpg?url';
 import waterUrl from '../assets/globe/earth-water.jpg?url';
 
-const props = defineProps<{ panels: Panel[] }>();
+/** label:读屏用的说明 */
+const props = defineProps<{ points: GlobePoint[]; label: string }>();
 const emit = defineEmits<{ pick: [id: number] }>();
 
 /** 波纹的颜色(圆点的颜色在下面的样式里) */
 const RING_OK = [124, 200, 255];
 const RING_DOWN = [255, 107, 91];
 
-/** 地图上的一个点:同一个地方(约 0.5°)的几块面板 */
+/** 地图上的一个点:同一个地方(约 0.5°)的几个 */
 interface Spot {
   key: string;
   lat: number;
   lng: number;
   place: string;
-  panels: Panel[];
+  items: GlobePoint[];
   down: number;
 }
 
-function spotsOf(list: Panel[]): Spot[] {
+function spotsOf(list: GlobePoint[]): Spot[] {
   const byKey = new Map<string, Spot>();
   for (const p of list) {
-    if (p.geo_lat == null || p.geo_lng == null) continue;
-    const key = `${Math.round(p.geo_lat * 2)}:${Math.round(p.geo_lng * 2)}`;
+    const key = `${Math.round(p.lat * 2)}:${Math.round(p.lng * 2)}`;
     let s = byKey.get(key);
-    if (!s) byKey.set(key, (s = { key, lat: p.geo_lat, lng: p.geo_lng, place: p.geo_city, panels: [], down: 0 }));
-    s.panels.push(p);
-    if (p.check_error) s.down++;
-    if (!s.place && p.geo_city) s.place = p.geo_city;
+    if (!s) byKey.set(key, (s = { key, lat: p.lat, lng: p.lng, place: p.city, items: [], down: 0 }));
+    s.items.push(p);
+    if (p.down) s.down++;
+    if (!s.place && p.city) s.place = p.city;
   }
   return [...byKey.values()];
 }
 
 /** globe.gl 的回调参数是 object,这里转成 Spot */
 const by = <R,>(f: (s: Spot) => R) => (o: object) => f(o as Spot);
-const nameOf = (s: Spot) => (s.panels.length === 1 ? s.panels[0].name : `${s.place || s.panels[0].name} ×${s.panels.length}`);
+const nameOf = (s: Spot) => (s.items.length === 1 ? s.items[0].name : `${s.place || s.items[0].name} ×${s.items.length}`);
 
 // ---------- 悬停提示(Vue 渲染,名字不会被当成 HTML) ----------
 const hovered = ref<Spot | null>(null);
@@ -77,7 +77,7 @@ function markerEl(s: Spot): HTMLElement {
   el.addEventListener('mouseenter', (e) => showTip(s, e));
   el.addEventListener('mousemove', (e) => showTip(s, e));
   el.addEventListener('mouseleave', hideTip);
-  el.addEventListener('click', () => emit('pick', (s.panels.find((p) => p.check_error) ?? s.panels[0]).id));
+  el.addEventListener('click', () => emit('pick', (s.items.find((p) => p.down) ?? s.items[0]).id));
   return el;
 }
 
@@ -105,18 +105,18 @@ function release() {
 
 function setData() {
   if (!globe) return;
-  const spots = spotsOf(props.panels);
+  const spots = spotsOf(props.points);
   globe.ringsData(spots).htmlElementsData(spots);
   if (hovered.value && !spots.some((s) => s.key === hovered.value!.key)) hovered.value = null;
 }
 
 /** 一开始对准面板最多的那一片:离各点(按面板数加权)的大圆距离之和最小的那个点 */
 function aimAtSpots() {
-  const spots = spotsOf(props.panels);
+  const spots = spotsOf(props.points);
   if (!spots.length) return globe.pointOfView({ lat: 25, lng: 110, altitude: 1.75 });
   const rad = Math.PI / 180;
   const dist = (a: Spot, b: Spot) => Math.acos(Math.min(1, Math.sin(a.lat * rad) * Math.sin(b.lat * rad) + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.cos((a.lng - b.lng) * rad)));
-  const cost = (c: Spot) => spots.reduce((n, s) => n + s.panels.length * dist(c, s), 0);
+  const cost = (c: Spot) => spots.reduce((n, s) => n + s.items.length * dist(c, s), 0);
   const best = spots.reduce((a, b) => (cost(b) < cost(a) ? b : a));
   globe.pointOfView({ lat: Math.max(-45, Math.min(45, best.lat)), lng: best.lng, altitude: 1.75 });
 }
@@ -182,7 +182,7 @@ onMounted(async () => {
   }
 });
 
-watch(() => props.panels, setData);
+watch(() => props.points, setData);
 
 onBeforeUnmount(() => {
   clearTimeout(resumeTimer);
@@ -194,14 +194,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="wrap" class="globe-wrap">
-    <div ref="box" class="globe" role="img" :aria-label="t('globe.aria', { n: panels.filter((p) => p.geo_lat != null).length })" />
+    <div ref="box" class="globe" role="img" :aria-label="label" />
     <p v-if="state === 'loading'" class="globe-msg">{{ t('globe.loading') }}</p>
     <p v-else-if="state === 'failed'" class="globe-msg">{{ t('globe.failed', { error }) }}</p>
     <div v-if="hovered" class="globe-tip" :style="{ left: `${tipAt.x}px`, top: `${tipAt.y}px` }">
-      <div v-if="hovered.place || hovered.panels[0].geo_country" class="muted-tip">{{ hovered.place || hovered.panels[0].geo_country }}</div>
-      <div v-for="p in hovered.panels" :key="p.id" class="tip-row">
-        <b :class="{ bad: p.check_error }">{{ p.name }}</b>
-        <span class="muted-tip">{{ [p.ip, p.check_error ? t('globe.down') : t('globe.clients', { n: p.client_count ?? 0 })].filter(Boolean).join(' · ') }}</span>
+      <div v-if="hovered.place || hovered.items[0].country" class="muted-tip">{{ hovered.place || hovered.items[0].country }}</div>
+      <div v-for="p in hovered.items" :key="p.id" class="tip-row">
+        <b :class="{ bad: p.down }">{{ p.name }}</b>
+        <span class="muted-tip">{{ p.meta }}</span>
       </div>
       <div class="muted-tip tip-hint">{{ t('globe.clickHint') }}</div>
     </div>

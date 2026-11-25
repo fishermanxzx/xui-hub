@@ -1,12 +1,12 @@
 <script setup lang="ts">
 // 面板页:每块面板一张卡片,展开看入站和客户端;添加 / 编辑面板用弹窗。右上角「地球」展开 3D 地球,看各面板在哪。
 import { t } from '../i18n';
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
 import Modal from '../components/Modal.vue';
 import PanelCard from '../components/PanelCard.vue';
-// 地球(three.js)很大,展开时才加载
-const PanelGlobe = defineAsyncComponent(() => import('../components/PanelGlobe.vue'));
+import GlobeBlock from '../components/GlobeBlock.vue';
+import { parseCoords, type GlobePoint } from '../geoRegions';
 import { costSummary, dateInputToMs, fmtBytes, fmtCost, msToDateInput } from '../format';
 import { toast, toastError } from '../toast';
 import type { Panel, PanelInput } from '../types';
@@ -75,9 +75,13 @@ function toggleGlobe() {
   }
   if (showGlobe.value) void locate();
 }
-/** 还没定位的面板(在当前筛选里) */
-const unlocated = computed(() => shownPanels.value.filter((p) => p.geo_lat == null));
-const spotCount = computed(() => new Set(shownPanels.value.filter((p) => p.geo_lat != null).map((p) => `${Math.round(p.geo_lat! * 2)}:${Math.round(p.geo_lng! * 2)}`)).size);
+/** 地球上的点(在当前筛选里、定了位的面板)和还没定位的 */
+const globePoints = computed<GlobePoint[]>(() =>
+  shownPanels.value
+    .filter((p) => p.geo_lat != null && p.geo_lng != null)
+    .map((p) => ({ id: p.id, name: p.name, lat: p.geo_lat!, lng: p.geo_lng!, city: p.geo_city, country: p.geo_country, down: !!p.check_error, meta: [p.ip, p.check_error ? t('globe.down') : t('globe.clients', { n: p.client_count ?? 0 })].filter(Boolean).join(' · ') })),
+);
+const unlocated = computed(() => shownPanels.value.filter((p) => p.geo_lat == null).map((p) => ({ id: p.id, name: p.name, reason: p.geo_error })));
 const focused = ref<number | null>(null);
 let focusTimer: number | undefined;
 function focusPanel(id: number) {
@@ -142,9 +146,9 @@ async function submit() {
   // 位置:填了坐标 = 手动;清空了(原来是手动的)= 改回按 IP 自动
   const loc = form.value.loc.trim();
   if (loc) {
-    const m = loc.match(/^(-?\d+(?:\.\d+)?)\s*[,,\s]\s*(-?\d+(?:\.\d+)?)$/);
-    if (!m) return toastError(new Error(t('panels.locationBad')));
-    body.location = { lat: Number(m[1]), lng: Number(m[2]), city: form.value.locCity.trim() };
+    const at = parseCoords(loc);
+    if (!at) return toastError(new Error(t('loc.bad')));
+    body.location = { ...at, city: form.value.locCity.trim() };
   } else if (was?.geo_manual) body.location = null;
   saving.value = true;
   try {
@@ -230,23 +234,7 @@ onUnmounted(() => clearInterval(timer));
     <span v-if="pickedTags.length" class="muted">{{ t('panels.shown', { n: shownPanels.length, total: panels.length }) }}</span>
   </div>
 
-  <section v-if="showGlobe && panels.length" class="globe-block sheet">
-    <PanelGlobe :panels="shownPanels" @pick="focusPanel" />
-    <div class="globe-foot small">
-      <span>{{ t('globe.summary', { n: shownPanels.length - unlocated.length, spots: spotCount }) }}</span>
-      <span v-if="locating" class="muted">{{ t('globe.locating') }}</span>
-      <details v-else-if="unlocated.length" class="unlocated">
-        <summary class="text-warn">{{ t('globe.unlocated', { n: unlocated.length }) }}</summary>
-        <ul>
-          <li v-for="p in unlocated" :key="p.id">
-            <button type="button" class="link" @click="focusPanel(p.id)">{{ p.name }}</button>
-            <span class="muted">{{ p.geo_error || t('globe.notYet') }}</span>
-          </li>
-        </ul>
-      </details>
-      <span class="muted src">{{ t('globe.source') }}</span>
-    </div>
-  </section>
+  <GlobeBlock v-if="showGlobe && panels.length" :points="globePoints" :unlocated="unlocated" :locating="locating" summary-key="globe.summary" source-key="globe.source" label-key="globe.aria" @pick="focusPanel" />
 
   <div class="cards">
     <div v-for="p in shownPanels" :id="`panel-${p.id}`" :key="p.id" class="card-wrap" :class="{ focused: focused === p.id }">
@@ -278,12 +266,12 @@ onUnmounted(() => clearInterval(timer));
         <label class="field">{{ t('cost.expireField') }}<input v-model="form.expire" type="date" /></label>
       </div>
       <div class="two">
-        <label class="field">{{ t('panels.location') }}<input v-model="form.loc" :placeholder="t('panels.locationPlaceholder')" inputmode="decimal" /></label>
-        <label class="field">{{ t('panels.locationCity') }}<input v-model="form.locCity" maxlength="40" :placeholder="t('panels.locationCityPlaceholder')" /></label>
+        <label class="field">{{ t('loc.field') }}<input v-model="form.loc" :placeholder="t('loc.placeholder')" inputmode="decimal" /></label>
+        <label class="field">{{ t('loc.city') }}<input v-model="form.locCity" maxlength="40" :placeholder="t('loc.cityPlaceholder')" /></label>
       </div>
       <p class="muted small hint node-hint">
-        {{ t('panels.locationHint') }}
-        <template v-if="editing && !editing.geo_manual && editing.geo_lat != null"><br />{{ t('panels.locationNow', { place: `${editing.geo_city || editing.geo_country || ''} (${editing.geo_lat}, ${editing.geo_lng})`.trim() }) }}</template>
+        {{ t('loc.hint') }}
+        <template v-if="editing && !editing.geo_manual && editing.geo_lat != null"><br />{{ t('loc.now', { place: `${editing.geo_city || editing.geo_country || ''} (${editing.geo_lat}, ${editing.geo_lng})`.trim() }) }}</template>
       </p>
       <label class="field">{{ t('panels.trafficRatio') }}<input v-model="form.ratio" type="number" min="0.01" max="100" step="0.01" :title="t('panels.ratioHint')" /></label>
       <p class="muted small hint node-hint">{{ t('panels.ratioHint') }}</p>
@@ -309,34 +297,6 @@ onUnmounted(() => clearInterval(timer));
 }
 .card-wrap.focused {
   box-shadow: 0 0 0 2px var(--accent);
-}
-.globe-block {
-  padding: 10px;
-  margin-bottom: 14px;
-}
-.globe-foot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  align-items: baseline;
-  padding: 10px 4px 2px;
-}
-.unlocated summary {
-  cursor: pointer;
-}
-.unlocated[open],
-.globe-foot .src {
-  flex-basis: 100%;
-}
-.unlocated ul {
-  margin: 6px 0 0;
-  padding-left: 18px;
-}
-.unlocated li {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin: 2px 0;
 }
 .form {
   display: flex;

@@ -401,6 +401,17 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE panels ADD COLUMN geo_at INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE panels ADD COLUMN geo_error TEXT NOT NULL DEFAULT '';
   `,
+  `
+  -- 33:SOCKS 的地理位置(SOCKS 页的地球),同 32。按测出来的出口 IP 查(流量从哪出去),还没测过就按地址里的 IP
+  ALTER TABLE socks_proxies ADD COLUMN geo_lat REAL;
+  ALTER TABLE socks_proxies ADD COLUMN geo_lng REAL;
+  ALTER TABLE socks_proxies ADD COLUMN geo_city TEXT NOT NULL DEFAULT '';
+  ALTER TABLE socks_proxies ADD COLUMN geo_country TEXT NOT NULL DEFAULT '';
+  ALTER TABLE socks_proxies ADD COLUMN geo_ip TEXT NOT NULL DEFAULT '';
+  ALTER TABLE socks_proxies ADD COLUMN geo_manual INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE socks_proxies ADD COLUMN geo_at INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE socks_proxies ADD COLUMN geo_error TEXT NOT NULL DEFAULT '';
+  `,
 ];
 
 export function openDb(file: string): DB {

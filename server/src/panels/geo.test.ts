@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { addPanel, memoryDb } from '../testUtil';
-import { GEO_RETRY_MS, geoIpOf, refreshPanelGeo, type GeoLookup } from './geo';
+import { createSocks, getSocksView, saveCheck, updateSocks } from '../socks/repo';
+import { GEO_RETRY_MS, geoIpOf, refreshPanelGeo, refreshSocksGeo, type GeoLookup } from './geo';
 import { getPanel, recordIp, updatePanel, validLocation } from './repo';
 
 /** 假的 IP 库:记下查了哪些 IP;fail 里的 IP 查不到 */
@@ -76,4 +77,34 @@ test('手动填坐标:不再自动查;改回自动就清掉,下次按 IP 重查;
   for (const bad of [{ lat: 91, lng: 0 }, { lat: 0, lng: -181 }, { lat: '', lng: 1 }, { lat: 'x', lng: 1 }, { lat: 1 }, 'tokyo', { lat: 1, lng: 1, city: 'x'.repeat(41) }]) assert.throws(() => validLocation(bad), /纬度|经度|位置|地点名/, JSON.stringify(bad));
   assert.throws(() => updatePanel(db, a.id, { name: 'a3', location: { lat: 100, lng: 0 } }), /纬度/);
   assert.equal(getPanel(db, a.id)!.name, 'a2');
+});
+
+test('SOCKS 定位:按测出来的出口 IP;还没测过先按地址里的 IP;测试失败时留着原来的位置;能手动填', async () => {
+  const db = memoryDb();
+  const a = createSocks(db, { name: 'a', address: '198.51.100.20:1080' });
+  const b = createSocks(db, { name: 'b', address: 'isp.example.net:1080' });
+  const calls: string[] = [];
+  await refreshSocksGeo(db, fakeLookup(calls), 1000);
+  assert.deepEqual(calls, ['198.51.100.20']);
+  assert.equal(getSocksView(db, a)!.geo_city, 'Hong Kong');
+  assert.deepEqual([getSocksView(db, b)!.geo_lat, getSocksView(db, b)!.geo_error], [null, '还没测出出口 IP,点「测试」后再看']);
+  // 测出出口 IP 了:按出口查(a 的出口和地址不一样,重查)
+  saveCheck(db, a, { at: 2000, ok: true, ms: 100, ip: '203.0.113.30', loc: 'JP', error: null });
+  saveCheck(db, b, { at: 2000, ok: true, ms: 100, ip: '203.0.113.31', loc: 'US', error: null });
+  await refreshSocksGeo(db, fakeLookup(calls), 3000);
+  assert.deepEqual(calls.slice(1).sort(), ['203.0.113.30', '203.0.113.31']);
+  assert.equal(getSocksView(db, b)!.geo_error, '');
+  // 测试失败(出口 IP 空了):不查,位置留着
+  saveCheck(db, a, { at: 4000, ok: false, ms: 10000, ip: null, loc: null, error: '超时' });
+  await refreshSocksGeo(db, fakeLookup(calls), 5000);
+  assert.deepEqual([calls.length, getSocksView(db, a)!.geo_lat, getSocksView(db, a)!.geo_ip], [3, 22.3, '203.0.113.30']);
+  // 手动填:不再查;改回自动按出口 IP 重查
+  updateSocks(db, b, { location: { lat: 35.68, lng: 139.69, city: '东京' } });
+  assert.deepEqual([getSocksView(db, b)!.geo_manual, getSocksView(db, b)!.geo_city], [true, '东京']);
+  await refreshSocksGeo(db, fakeLookup(calls), 6000);
+  assert.equal(calls.length, 3);
+  updateSocks(db, b, { location: null });
+  await refreshSocksGeo(db, fakeLookup(calls), 7000);
+  assert.deepEqual([calls.at(-1), getSocksView(db, b)!.geo_manual, getSocksView(db, b)!.geo_lat], ['203.0.113.31', false, 22.3]);
+  assert.throws(() => updateSocks(db, b, { location: { lat: 0, lng: 200 } }), /经度/);
 });

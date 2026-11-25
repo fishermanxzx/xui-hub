@@ -175,6 +175,8 @@ Authorization: Bearer xh_……
 | POST | `/panels/:id/restart` | 重启面板和 Xray 内核,等两个都恢复才返回(一般十几秒);上面所有客户端会断流几秒 |
 | POST | `/panels/:id/renew`、`/socks/:id/renew` | 面板 / SOCKS 续了费:到期日在现在的到期日上加 `months`(1–120)或 `days`(1–3650),两个给一个;已过期或没填到期日的从现在起算。填了 `amount`(大于 0)就在账本记一笔关联它的支出,另可带 `paid_at`(毫秒,不填 = 现在)、`category`、`note`;不填金额只顺延。返回 `name`、`months`、`days`、`expire_before`、`expire_after`、`entry`(记下的支出,没记为 `null`),以及更新后的 `panel` / `socks` |
 | GET | `/socks` | SOCKS 代理列表 |
+| POST / PATCH | `/socks`、`/socks/:id` | 登记 / 修改 SOCKS:`name`、`address`(修改时留空 = 不改)、`remark`、`monthly_cost`、`expire_at`、`location`(手动填位置,写法同面板;`null` = 按出口 IP 自动查) |
+| GET | `/socks/geo` | SOCKS 列表,顺带把还没定位的按出口 IP 查一下地理位置(用最近一次测试测出的出口 IP,也就是流量实际从哪出去;还没测过就按地址里的 IP;测试失败时已有的位置留着)。规则和 `/panels/geo` 一样,字段也是 `geo_*` |
 | GET | `/sub-templates` | 内置的订阅模板 |
 | POST | `/sync` | 立即同步全部面板的流量并执行额度 / 到期 |
 | GET | `/system/version` | xui-hub 自己的版本:`current`、`latest`(GitHub 上最新的发布版本,缓存 6 小时,`?refresh=1` 重查)、`update_available`、`method`(`auto` 能在后台里直接更新 / `docker` / `manual`) |

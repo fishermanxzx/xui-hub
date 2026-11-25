@@ -190,6 +190,8 @@ export const api = {
   remoteRestore: (key: string) => call<BackupInfo>('POST', '/api/backup/remote/restore', { key }),
 
   socks: () => call<Socks[]>('GET', '/api/socks'),
+  /** SOCKS 列表,顺带按出口 IP 查还没定位的(地球打开时用) */
+  socksGeo: () => call<Socks[]>('GET', '/api/socks/geo'),
   createSocks: (body: SocksInput) => call<Socks>('POST', '/api/socks', body),
   updateSocks: (id: number, body: SocksInput) => call<Socks>('PATCH', `/api/socks/${id}`, body),
   deleteSocks: (id: number) => call('DELETE', `/api/socks/${id}`),
