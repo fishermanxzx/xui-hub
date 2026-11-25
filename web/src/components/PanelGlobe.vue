@@ -1,18 +1,21 @@
 <script setup lang="ts">
 // 面板页的 3D 地球:按面板的位置打点(同一个地方的几块面板合成一个点),可拖动旋转、滚轮缩放,没人动时慢慢自转。
-// 点是发光的小圆点 + 地面上一圈圈波纹:都连得上是亮青色,有连不上的是红色、波纹更急。
+// 地球用卫星图(NASA Blue Marble,公有领域),带地形起伏和海面反光;外面一圈淡蓝的大气光晕,背景是星空。
+// 点是发光的小圆点 + 地面上一圈圈波纹:都连得上是白蓝色,有连不上的是红色、波纹更急。
 // 悬停看是哪几块面板,点一下跳到那块面板。
-// globe.gl(three.js)和各国轮廓只在打开地球时才加载,不拖慢别的页面。地球底色固定是深色,亮色 / 暗色主题下都一样。
+// globe.gl(three.js)和贴图只在打开地球时才加载,不拖慢别的页面。亮色 / 暗色主题下都一样。
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { t } from '../i18n';
 import type { Panel } from '../types';
-import countriesUrl from 'world-atlas/countries-110m.json?url';
+import dayUrl from '../assets/globe/earth-day.jpg?url';
+import bumpUrl from '../assets/globe/earth-bump.jpg?url';
+import waterUrl from '../assets/globe/earth-water.jpg?url';
 
 const props = defineProps<{ panels: Panel[] }>();
 const emit = defineEmits<{ pick: [id: number] }>();
 
 /** 波纹的颜色(圆点的颜色在下面的样式里) */
-const RING_OK = [95, 227, 196];
+const RING_OK = [124, 200, 255];
 const RING_DOWN = [255, 107, 91];
 
 /** 地图上的一个点:同一个地方(约 0.5°)的几块面板 */
@@ -118,49 +121,26 @@ function aimAtSpots() {
   globe.pointOfView({ lat: Math.max(-45, Math.min(45, best.lat)), lng: best.lng, altitude: 1.75 });
 }
 
-/**
- * 陆地按国家一块块画(整块陆地的大多边形跨了 180° 经线,打点算不出来),南极洲不画(同样的原因,也用不上);
- * 去掉缩成一个点的碎块(地图数据里有,打点会直接报错,整层陆地都画不出来)
- */
-type Ring = [number, number][];
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function landOf(countries: any[]) {
-  const solid = (poly: Ring[]) => new Set(poly[0].map((p) => `${p[0]},${p[1]}`)).size >= 3;
-  return countries
-    .filter((f) => f.id !== '010' && f.geometry)
-    .map((f) => {
-      const polys = (f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates) as Ring[][];
-      return { ...f, geometry: { type: 'MultiPolygon', coordinates: polys.filter(solid) } };
-    })
-    .filter((f) => f.geometry.coordinates.length);
-}
-
 onMounted(async () => {
   try {
-    const [{ default: Globe }, { feature }, world] = await Promise.all([import('globe.gl'), import('topojson-client'), fetch(countriesUrl).then((r) => r.json())]);
+    const [{ default: Globe }, THREE] = await Promise.all([import('globe.gl'), import('three')]);
     if (!box.value) return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const land = landOf((feature(world, world.objects.countries) as any).features);
     const el = box.value;
     globe = new Globe(el, { animateIn: true })
       .width(el.clientWidth)
       .height(el.clientHeight)
       .backgroundColor('rgba(0,0,0,0)')
+      // 卫星图 + 地形起伏
+      .globeImageUrl(dayUrl)
+      .bumpImageUrl(bumpUrl)
       .showAtmosphere(true)
-      .atmosphereColor('#3fb69a')
-      .atmosphereAltitude(0.18)
-      // 陆地:一颗颗暗青色的小圆点,面板的点要比它亮
-      .hexPolygonsData(land)
-      .hexPolygonResolution(3)
-      .hexPolygonMargin(0.32)
-      .hexPolygonUseDots(true)
-      .hexPolygonAltitude(0.003)
-      .hexPolygonColor(() => 'rgba(84, 170, 150, 0.38)')
+      .atmosphereColor('#7cc0ff')
+      .atmosphereAltitude(0.16)
       // 面板所在地:地面上一圈圈往外扩的波纹
       .ringLat('lat')
       .ringLng('lng')
       .ringAltitude(0.004)
-      .ringColor(by((s) => (k: number) => `rgba(${(s.down ? RING_DOWN : RING_OK).join(',')}, ${0.85 * (1 - k)})`))
+      .ringColor(by((s) => (k: number) => `rgba(${(s.down ? RING_DOWN : RING_OK).join(',')}, ${0.9 * (1 - k)})`))
       .ringMaxRadius(by((s) => (s.down ? 6 : 4.5)))
       .ringPropagationSpeed(by((s) => (s.down ? 3.5 : 2)))
       .ringRepeatPeriod(by((s) => (s.down ? 800 : 1500)))
@@ -175,11 +155,15 @@ onMounted(async () => {
         m.style.pointerEvents = visible ? 'auto' : 'none';
       })
       .onGlobeReady(() => (state.value = 'ready'));
-    // 球体:深青色,带一点自发光,背光的一面不至于全黑
-    const mat = globe.globeMaterial();
-    mat.color.set('#0b211d');
-    mat.emissive?.set('#06120f');
-    mat.shininess = 4;
+    // 海面反光:海洋的地方亮一点(陆地不反光)
+    new THREE.TextureLoader().load(waterUrl, (tex) => {
+      const mat = globe?.globeMaterial();
+      if (!mat) return;
+      mat.specularMap = tex;
+      mat.specular = new THREE.Color('#4a6680');
+      mat.shininess = 16;
+      mat.needsUpdate = true;
+    });
     const controls = globe.controls();
     controls.enablePan = false;
     controls.minDistance = 140;
@@ -229,9 +213,23 @@ onBeforeUnmount(() => {
   position: relative;
   border-radius: 10px;
   overflow: hidden;
+  /* 星空:几层稀疏的小亮点 + 深蓝渐变 */
   background:
-    radial-gradient(circle at 50% 46%, rgba(63, 182, 154, 0.14) 0%, rgba(63, 182, 154, 0) 42%),
-    radial-gradient(ellipse at 50% 120%, #0f2a25 0%, #08130f 55%, #040907 100%);
+    radial-gradient(1px 1px at 20px 30px, rgba(255, 255, 255, 0.7), transparent),
+    radial-gradient(1px 1px at 110px 80px, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1.5px 1.5px at 170px 150px, rgba(200, 225, 255, 0.8), transparent),
+    radial-gradient(1px 1px at 60px 190px, rgba(255, 255, 255, 0.45), transparent),
+    radial-gradient(1px 1px at 230px 40px, rgba(255, 255, 255, 0.6), transparent),
+    radial-gradient(circle at 50% 46%, rgba(90, 160, 255, 0.16) 0%, rgba(90, 160, 255, 0) 42%),
+    radial-gradient(ellipse at 50% 120%, #0d1d3a 0%, #070d1c 55%, #03060d 100%);
+  background-size:
+    260px 230px,
+    260px 230px,
+    260px 230px,
+    260px 230px,
+    260px 230px,
+    auto,
+    auto;
 }
 .globe {
   height: 460px;
@@ -242,7 +240,7 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   margin: 0;
-  color: #8fa39d;
+  color: #93a4bd;
   font-size: 13px;
   pointer-events: none;
 }
@@ -258,10 +256,10 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 2px;
   border-radius: 50%;
-  background: #eafff8;
+  background: #f2f8ff;
   box-shadow:
-    0 0 0 2px rgba(95, 227, 196, 0.55),
-    0 0 10px 3px rgba(95, 227, 196, 0.75);
+    0 0 0 2px rgba(124, 200, 255, 0.65),
+    0 0 10px 3px rgba(124, 200, 255, 0.85);
   animation: globe-glow 2.4s ease-in-out infinite;
 }
 .globe :deep(.globe-marker.down .globe-dot) {
@@ -278,7 +276,7 @@ onBeforeUnmount(() => {
   transform: translateY(-50%);
   white-space: nowrap;
   font: 500 11px/1 'IBM Plex Sans', system-ui, sans-serif;
-  color: #d6f1ea;
+  color: #f2f7ff;
   text-shadow:
     0 1px 3px rgba(0, 0, 0, 0.95),
     0 0 6px rgba(0, 0, 0, 0.8);
@@ -306,9 +304,9 @@ onBeforeUnmount(() => {
   z-index: 2;
   max-width: 260px;
   padding: 8px 10px;
-  border: 1px solid rgba(95, 227, 196, 0.35);
+  border: 1px solid rgba(124, 200, 255, 0.35);
   border-radius: 8px;
-  background: rgba(8, 19, 15, 0.94);
+  background: rgba(7, 13, 28, 0.94);
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
   color: #e5e9e6;
   font-size: 12px;
@@ -325,7 +323,7 @@ onBeforeUnmount(() => {
   color: #ff8a7a;
 }
 .muted-tip {
-  color: #8fa39d;
+  color: #93a4bd;
 }
 .tip-hint {
   margin-top: 6px;
