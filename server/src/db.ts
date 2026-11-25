@@ -389,6 +389,18 @@ export const MIGRATIONS: string[] = [
   -- SOCKS 的 id 也不再复用(记录按 id 关联,删了的 SOCKS 不能串到新建的头上)
   INSERT OR REPLACE INTO meta (key, value) SELECT 'socks_proxies_max_id', CAST(COALESCE(MAX(id), 0) AS TEXT) FROM socks_proxies;
   `,
+  `
+  -- 32:面板的地理位置(面板页的地球上标出来)。按面板 IP 查公开的 IP 库,打开地球时才查,查过的 IP 不重查(panels/geo.ts);
+  -- 也可以手动填坐标(geo_manual = 1,不再自动查)。geo_ip = 自动查的是哪个 IP,IP 变了重查;geo_error = 上次没查到的原因
+  ALTER TABLE panels ADD COLUMN geo_lat REAL;
+  ALTER TABLE panels ADD COLUMN geo_lng REAL;
+  ALTER TABLE panels ADD COLUMN geo_city TEXT NOT NULL DEFAULT '';
+  ALTER TABLE panels ADD COLUMN geo_country TEXT NOT NULL DEFAULT '';
+  ALTER TABLE panels ADD COLUMN geo_ip TEXT NOT NULL DEFAULT '';
+  ALTER TABLE panels ADD COLUMN geo_manual INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE panels ADD COLUMN geo_at INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE panels ADD COLUMN geo_error TEXT NOT NULL DEFAULT '';
+  `,
 ];
 
 export function openDb(file: string): DB {

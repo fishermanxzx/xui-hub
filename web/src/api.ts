@@ -67,6 +67,8 @@ export const api = {
   logout: () => call('POST', '/api/logout'),
 
   panels: () => call<Panel[]>('GET', '/api/panels'),
+  /** 面板列表,顺带按 IP 查还没定位的面板(地球打开时用) */
+  panelsGeo: () => call<Panel[]>('GET', '/api/panels/geo'),
   createPanel: (body: PanelInput) => call<Panel>('POST', '/api/panels', body),
   updatePanel: (id: number, body: PanelInput) => call<Panel>('PATCH', `/api/panels/${id}`, body),
   /** 面板改成这个倍率之后,上面各位客户的已用会变成多少、谁会超额(只算不改) */

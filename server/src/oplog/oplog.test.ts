@@ -256,3 +256,18 @@ test('操作日志:改收支记录只写改了的;记在关联的客户名下;�
     await close();
   }
 });
+
+test('操作日志:改面板位置写前后(手动坐标 / 按 IP 自动)', async () => {
+  const db = memoryDb();
+  const p = addPanel(db, 'hk');
+  const { call, close } = await serve(db);
+  try {
+    await call('POST', '/login', { password: 'pw' });
+    await call('PATCH', `/panels/${p.id}`, { location: { lat: 22.3, lng: 114.2, city: '香港' } });
+    assert.equal(summaries(db)[0], '修改面板「hk」:位置 按 IP 自动 → 香港 (22.3, 114.2)');
+    await call('PATCH', `/panels/${p.id}`, { location: null });
+    assert.equal(summaries(db)[0], '修改面板「hk」:位置 香港 (22.3, 114.2) → 按 IP 自动');
+  } finally {
+    await close();
+  }
+});

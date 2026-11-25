@@ -29,6 +29,13 @@ export interface Panel {
   /** 记在这块面板上的客户线路数;拿它当落地出口的中转线路数 */
   line_count: number;
   exit_line_count: number;
+  /** 地理位置(面板页的地球):坐标 null = 还没定位;geo_manual = 手动填的;geo_error = 按 IP 没查到的原因 */
+  geo_lat: number | null;
+  geo_lng: number | null;
+  geo_city: string;
+  geo_country: string;
+  geo_manual: boolean;
+  geo_error: string;
 }
 
 /** 现从面板取的版本信息 */
@@ -52,6 +59,8 @@ export interface PanelInput {
   node_name?: string;
   tags?: string[];
   traffic_ratio?: number;
+  /** 手动填的位置;null = 按 IP 自动查 */
+  location?: { lat: number; lng: number; city: string } | null;
 }
 
 /** 改面板倍率前的预览:上面每位客户改完的已用、谁会超额 */

@@ -1,6 +1,7 @@
 // 入口:打开数据库,提供 /api 和前端静态页,定期检查面板连通性。
 
 import express from 'express';
+import compression from 'compression';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
@@ -98,6 +99,8 @@ app.use(mcpRouter({ db, adminPassword: env.adminPassword, api: internalApi, vers
 
 const dist = resolve(PROJECT_ROOT, 'web/dist');
 if (existsSync(dist)) {
+  // 前端的 js / css 压缩后再发(面板页的地球那一块未压缩近 2 MB);只管 /assets,接口和 MCP 的流式响应不碰
+  app.use('/assets', compression());
   app.use(express.static(dist));
   app.get('*', (_req, res) => res.sendFile(join(dist, 'index.html')));
 }

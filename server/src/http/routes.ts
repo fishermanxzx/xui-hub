@@ -40,6 +40,7 @@ import { listSubFetches, subClientCounts, subIpsSince } from '../subscription/fe
 import { deleteDevice, deviceCounts, listDevices } from '../subscription/devices';
 import { renameLinks, validNodeName } from '../subscription/nodeName';
 import { fetchUpstream, refreshUpstreams, type UpstreamFetcher } from '../subscription/upstream';
+import { lookupGeo, refreshPanelGeo, type GeoLookup } from '../panels/geo';
 import { createToken, deleteToken, listTokens, TOKEN_BLOCKED, tokenName, verifyToken } from './tokens';
 import { listGrants, revokeGrant } from '../mcp/oauth';
 import { enforceCustomers } from '../lines/enforce';
@@ -96,6 +97,8 @@ export interface RouteDeps {
   fetchTemplate?: TemplateFetcher;
   /** 拉外部订阅;测试里换成假的 */
   fetchUpstream?: UpstreamFetcher;
+  /** 按 IP 查面板的地理位置;测试里换成假的 */
+  geoLookup?: GeoLookup;
   /** 内部通道(MCP 工具调的):认请求头里带来的「谁、从哪个 IP」,记操作日志用 */
   trustActorHeader?: boolean;
 }
@@ -265,6 +268,14 @@ export function apiRouter(deps: RouteDeps): Router {
 
   // ---------- 面板 ----------
   r.get('/panels', wrap(() => listPanels(db).map(view)));
+  // 面板列表,顺带把还没定位的面板按 IP 查一下地理位置(面板页的地球打开时才调,见 panels/geo.ts)
+  r.get(
+    '/panels/geo',
+    wrap(async () => {
+      await refreshPanelGeo(db, deps.geoLookup ?? lookupGeo);
+      return listPanels(db).map(view);
+    }),
+  );
   // 新建后立即检查一次连通性,保存失败的地址 / token 马上能看到
   r.post(
     '/panels',
