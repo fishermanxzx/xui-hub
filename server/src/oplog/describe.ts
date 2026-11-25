@@ -193,7 +193,7 @@ const panelDiff = (db: DB, a: Panel, b: Panel) =>
     ...(placeOf(a) !== placeOf(b) ? [`位置 ${placeOf(a)} → ${placeOf(b)}`] : []),
   ]);
 /** 位置:手动填的写坐标(和地点名),自动的写「按 IP 自动」 */
-const placeOf = (p: Panel) => (p.geo_manual ? `${p.geo_city ? `${p.geo_city} ` : ''}(${p.geo_lat}, ${p.geo_lng})` : '按 IP 自动');
+const placeOf = (p: Pick<Panel, 'geo_manual' | 'geo_city' | 'geo_lat' | 'geo_lng'>) => (p.geo_manual ? `${p.geo_city ? `${p.geo_city} ` : ''}(${p.geo_lat}, ${p.geo_lng})` : '按 IP 自动');
 
 const customersOnPanel = (db: DB, panelId: number) => (db.prepare('SELECT COUNT(DISTINCT customer_id) AS n FROM lines WHERE panel_id = ?').get(panelId) as { n: number }).n;
 
@@ -202,6 +202,7 @@ const socksDiff = (a: SocksProxy, b: SocksProxy) =>
     ...(a.host !== b.host || a.port !== b.port ? [`地址 ${a.host}:${a.port} → ${b.host}:${b.port}`] : []),
     ...(a.username !== b.username || a.password !== b.password ? ['账号密码改了'] : []),
     ...(a.remark !== b.remark ? [b.remark ? `备注改成「${b.remark}」` : '清空了备注'] : []),
+    ...(placeOf(a) !== placeOf(b) ? [`位置 ${placeOf(a)} → ${placeOf(b)}`] : []),
   ]);
 
 const SETTING_LABELS: Record<string, string> = {

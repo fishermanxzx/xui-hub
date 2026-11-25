@@ -16,10 +16,10 @@ const panels = [
 ].map((p) => ({ ...p, created_at: now - 40 * DAY, checked_at: now - 20_000, check_ok_at: now - 20_000, check_error: null, xray_state: 'running' }));
 
 const socks = [
-  { id: 1, name: '美国家宽-ATT', host: 'isp-us.example.net', port: 10002, username: 'user01', has_password: true, remark: '月付', monthly_cost: 15, expire_at: now + 15 * DAY, check: { at: now - 600_000, ok: true, ms: 182, ip: '203.0.113.45', loc: 'US', error: null } },
-  { id: 2, name: '台湾家宽', host: 'tw.example.net', port: 52755, username: 'tw88', has_password: true, remark: '', monthly_cost: 12.5, expire_at: now + 3 * DAY, check: { at: now - 900_000, ok: true, ms: 96, ip: '198.51.100.23', loc: 'TW', error: null } },
-  { id: 3, name: '备用机房', host: '192.0.2.77', port: 1080, username: '', has_password: false, remark: '临时', monthly_cost: null, expire_at: now - 2 * DAY, check: { at: now - 3_600_000, ok: false, ms: 10000, ip: null, loc: null, error: '连接代理失败:超时(10 秒)' } },
-  { id: 4, name: '日本-1 自建', host: 'jp1.example.com', port: 31825, username: 'jp-relay', has_password: true, remark: '日本-1 上自己建的 mixed 入站', monthly_cost: null, expire_at: 0, check: { at: now - 300_000, ok: true, ms: 64, ip: '192.0.2.31', loc: 'JP', error: null } },
+  { id: 1, name: '美国家宽-ATT', host: 'isp-us.example.net', port: 10002, username: 'user01', has_password: true, remark: '月付', monthly_cost: 15, expire_at: now + 15 * DAY, geo_lat: 37.3394, geo_lng: -121.895, geo_city: 'San Jose', geo_country: 'US', geo_manual: false, geo_error: '', check: { at: now - 600_000, ok: true, ms: 182, ip: '203.0.113.45', loc: 'US', error: null } },
+  { id: 2, name: '台湾家宽', host: 'tw.example.net', port: 52755, username: 'tw88', has_password: true, remark: '', monthly_cost: 12.5, expire_at: now + 3 * DAY, geo_lat: 25.0478, geo_lng: 121.5319, geo_city: 'Taipei', geo_country: 'TW', geo_manual: false, geo_error: '', check: { at: now - 900_000, ok: true, ms: 96, ip: '198.51.100.23', loc: 'TW', error: null } },
+  { id: 3, name: '备用机房', host: '192.0.2.77', port: 1080, username: '', has_password: false, remark: '临时', monthly_cost: null, expire_at: now - 2 * DAY, geo_lat: 1.3521, geo_lng: 103.8198, geo_city: 'Singapore', geo_country: 'SG', geo_manual: false, geo_error: '', check: { at: now - 3_600_000, ok: false, ms: 10000, ip: null, loc: null, error: '连接代理失败:超时(10 秒)' } },
+  { id: 4, name: '日本-1 自建', host: 'jp1.example.com', port: 31825, username: 'jp-relay', has_password: true, remark: '日本-1 上自己建的 mixed 入站', monthly_cost: null, expire_at: 0, geo_lat: 35.6895, geo_lng: 139.6917, geo_city: 'Tokyo', geo_country: 'JP', geo_manual: false, geo_error: '', check: { at: now - 300_000, ok: true, ms: 64, ip: '192.0.2.31', loc: 'JP', error: null } },
 ].map((s) => ({ ...s, created_at: now - 30 * DAY, updated_at: now - DAY }));
 
 let lid = 0;
@@ -181,7 +181,7 @@ createServer((req, res) => {
   if (p === '/api/session') return json({ auth_required: true, logged_in: true });
   if (p === '/api/customers') return json(customers);
   if (p === '/api/panels' || p === '/api/panels/geo') return json(panels);
-  if (p === '/api/socks') return json(socks);
+  if (p === '/api/socks' || p === '/api/socks/geo') return json(socks);
   if (p === '/api/payments') return json(payments);
   if ((m0 = p.match(/^\/api\/customers\/(\d+)\/payments$/))) return json(payments.filter((x) => x.customer_id === Number(m0[1])));
   if (p === '/api/ledger') { const c = Number(url.searchParams.get('customer_id')); return json(c ? entries.filter((e) => e.customer_id === c) : entries); }

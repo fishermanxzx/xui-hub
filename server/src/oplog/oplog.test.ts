@@ -271,3 +271,16 @@ test('操作日志:改面板位置写前后(手动坐标 / 按 IP 自动)', asyn
     await close();
   }
 });
+
+test('操作日志:改 SOCKS 位置写前后', async () => {
+  const db = memoryDb();
+  const { call, close } = await serve(db);
+  try {
+    await call('POST', '/login', { password: 'pw' });
+    const s = (await call('POST', '/socks', { name: 'isp', address: '1.2.3.4:1080' })).body;
+    await call('PATCH', `/socks/${s.id}`, { location: { lat: 35.68, lng: 139.69, city: '东京' } });
+    assert.equal(summaries(db)[0], '修改 SOCKS「isp」:位置 按 IP 自动 → 东京 (35.68, 139.69)');
+  } finally {
+    await close();
+  }
+});

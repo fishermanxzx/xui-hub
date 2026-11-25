@@ -110,11 +110,12 @@ export function validLocation(value: unknown): { lat: number; lng: number; city:
   return { lat: Math.round(lat * 1e5) / 1e5, lng: Math.round(lng * 1e5) / 1e5, city };
 }
 
-/** 改位置:手动填的直接存;改回自动就清掉,下次打开地球时按 IP 重查 */
-function setLocation(db: DB, id: number, loc: ReturnType<typeof validLocation>): void {
-  if (loc) db.prepare("UPDATE panels SET geo_manual = 1, geo_lat = ?, geo_lng = ?, geo_city = ?, geo_country = '', geo_ip = '', geo_at = 0, geo_error = '' WHERE id = ?").run(loc.lat, loc.lng, loc.city, id);
-  else db.prepare("UPDATE panels SET geo_manual = 0, geo_lat = NULL, geo_lng = NULL, geo_city = '', geo_country = '', geo_ip = '', geo_at = 0, geo_error = '' WHERE id = ? AND geo_manual = 1").run(id);
+/** 改位置(面板 / SOCKS 共用):手动填的直接存;改回自动就清掉,下次打开地球时按 IP 重查 */
+export function setGeoLocation(db: DB, table: 'panels' | 'socks_proxies', id: number, loc: ReturnType<typeof validLocation>): void {
+  if (loc) db.prepare(`UPDATE ${table} SET geo_manual = 1, geo_lat = ?, geo_lng = ?, geo_city = ?, geo_country = '', geo_ip = '', geo_at = 0, geo_error = '' WHERE id = ?`).run(loc.lat, loc.lng, loc.city, id);
+  else db.prepare(`UPDATE ${table} SET geo_manual = 0, geo_lat = NULL, geo_lng = NULL, geo_city = '', geo_country = '', geo_ip = '', geo_at = 0, geo_error = '' WHERE id = ? AND geo_manual = 1`).run(id);
 }
+const setLocation = (db: DB, id: number, loc: ReturnType<typeof validLocation>) => setGeoLocation(db, 'panels', id, loc);
 
 /** 流量倍率:0.01 到 100,保留两位小数;空 = 1 */
 export function validRatio(value: unknown): number {

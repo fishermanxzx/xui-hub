@@ -1,7 +1,7 @@
 // SOCKS 代理的存取(开线路时可选作出口)。账号密码只在服务端使用,对外视图不含密码。
 
 import { nextId, type DB } from '../db';
-import { InputError, validCost, validExpire } from '../panels/repo';
+import { InputError, setGeoLocation, validCost, validExpire, validLocation } from '../panels/repo';
 
 export interface SocksEndpoint {
   host: string;
@@ -20,6 +20,15 @@ export interface SocksProxy extends SocksEndpoint {
   expire_at: number;
   created_at: number;
   updated_at: number;
+  /** 地理位置(SOCKS 页的地球,见 panels/geo.ts):坐标 null = 还没定位;geo_manual = 手动填的;geo_error = 没查到的原因 */
+  geo_lat: number | null;
+  geo_lng: number | null;
+  geo_city: string;
+  geo_country: string;
+  geo_manual: boolean;
+  geo_ip: string;
+  geo_at: number;
+  geo_error: string;
 }
 
 export interface SocksCheck {
@@ -42,6 +51,8 @@ export interface SocksInput {
   remark?: unknown;
   monthly_cost?: unknown;
   expire_at?: unknown;
+  /** 位置:{ lat, lng, city? } = 手动填的坐标;null / 空 = 按出口 IP 自动查;不给 = 不改 */
+  location?: unknown;
 }
 
 const decode = (v: string) => {
@@ -110,6 +121,14 @@ function rowToProxy(row: any): SocksProxy {
     expire_at: row.expire_at ?? 0,
     created_at: row.created_at,
     updated_at: row.updated_at,
+    geo_lat: row.geo_lat ?? null,
+    geo_lng: row.geo_lng ?? null,
+    geo_city: row.geo_city ?? '',
+    geo_country: row.geo_country ?? '',
+    geo_manual: !!row.geo_manual,
+    geo_ip: row.geo_ip ?? '',
+    geo_at: row.geo_at ?? 0,
+    geo_error: row.geo_error ?? '',
   };
 }
 
@@ -155,9 +174,11 @@ export function createSocks(db: DB, input: SocksInput, now = Date.now()): number
   assertNameFree(db, n);
   const ep = parseSocksAddress(String(input.address ?? ''));
   const values = [n, ep.host, ep.port, ep.username, ep.password, String(input.remark ?? '').trim(), validCost(input.monthly_cost), validExpire(input.expire_at), now, now] as const;
+  const loc = validLocation(input.location);
   return db.transaction(() => {
     const id = nextId(db, 'socks_proxies');
     db.prepare('INSERT INTO socks_proxies (id, name, host, port, username, password, remark, monthly_cost, expire_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, ...values);
+    if (loc) setGeoLocation(db, 'socks_proxies', id, loc);
     return id;
   })();
 }
@@ -170,7 +191,7 @@ export function planSocksUpdate(
   db: DB,
   id: number,
   input: SocksInput,
-): { cur: SocksProxy; name: string; remark: string; monthly_cost: number | null; expire_at: number; endpoint: SocksEndpoint | null } {
+): { cur: SocksProxy; name: string; remark: string; monthly_cost: number | null; expire_at: number; endpoint: SocksEndpoint | null; location: ReturnType<typeof validLocation> | undefined } {
   const cur = getSocks(db, id);
   if (!cur) throw new InputError('SOCKS 不存在');
   const n = input.name === undefined ? cur.name : name(input.name);
@@ -185,6 +206,7 @@ export function planSocksUpdate(
     monthly_cost: input.monthly_cost === undefined ? cur.monthly_cost : validCost(input.monthly_cost),
     expire_at: input.expire_at === undefined ? cur.expire_at : validExpire(input.expire_at),
     endpoint: changed ? ep : null,
+    location: input.location === undefined ? undefined : validLocation(input.location),
   };
 }
 
@@ -196,6 +218,7 @@ export function updateSocks(db: DB, id: number, input: SocksInput, now = Date.no
      ${plan.endpoint ? ', check_at = NULL, check_ok = NULL, check_ms = NULL, check_ip = NULL, check_loc = NULL, check_error = NULL' : ''}
      WHERE id = ?`,
   ).run(plan.name, ep.host, ep.port, ep.username, ep.password, plan.remark, plan.monthly_cost, plan.expire_at, now, id);
+  if (plan.location !== undefined) setGeoLocation(db, 'socks_proxies', id, plan.location);
 }
 
 /** 还有线路拿它当出口时不让删(删了那些线路所在面板上的出站还指着它,记录却对不上了) */
