@@ -143,7 +143,7 @@ const oplog = [
   { id: 48, at: now - DAY - 3_600_000, actor: 'MCP · 令牌「发卡站」/ Claude', ip: '203.0.113.8', action: 'POST /customers', summary: '新建客户「李四」:额度 100 GB;月费 50', ok: true, error: '', customer_id: 2 },
   { id: 47, at: now - 2 * DAY, actor: '后台', ip: '203.0.113.8', action: 'POST /customers/:id/lines', summary: '给「王五」开线路:面板「备用-2」', ok: false, error: '连接失败:超时', customer_id: 3 },
 ];
-const settings = { telegram: { token: '', chat_id: '' }, webhook: { url: '' }, feishu: { url: '', secret: '' }, notify: { panel_down: true, panel_down_after: 3, customer_disabled: true, expiring: true, expiring_days: 3, quota_warn: true, quota_warn_pct: 80, monthly_reset: true, sub_share: true, sub_share_ips: 5 }, backup: { daily: false, remote: { endpoint: '', region: '', bucket: '', access_key: '', secret_key: '', prefix: '', keep_days: 30 } } };
+const settings = { telegram: { token: '', chat_id: '' }, webhook: { url: '' }, feishu: { url: '', secret: '' }, notify: { panel_down: true, panel_down_after: 3, customer_disabled: true, expiring: true, expiring_days: 3, asset_expiring: true, asset_expiring_days: 7, quota_warn: true, quota_warn_pct: 80, monthly_reset: true, sub_share: true, sub_share_ips: 5 }, backup: { daily: false, remote: { endpoint: '', region: '', bucket: '', access_key: '', secret_key: '', prefix: '', keep_days: 30 } } };
 function traffic(by, days, id) {
   const dayList = Array.from({ length: days }, (_, i) => { const d = new Date(now); d.setDate(d.getDate() - (days - 1 - i)); return d.toISOString().slice(0, 10); });
   const wave = (seed, scale) => dayList.map((_, i) => Math.round((0.55 + 0.45 * Math.sin((i + seed) * 0.9) + 0.2 * Math.sin((i + seed) * 2.3)) * scale * GB));
@@ -160,6 +160,23 @@ createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   const json = (o) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
   const p = url.pathname;
+  // 面板 / SOCKS 续费:按月顺延(演示用,按 30 天一个月算),付了钱记一笔支出
+  const rm = req.method === 'POST' && p.match(/^\/api\/(panels|socks)\/(\d+)\/renew$/);
+  if (rm) {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      const b = JSON.parse(raw || '{}');
+      const kind = rm[1] === 'panels' ? 'panel' : 'socks';
+      const it = (kind === 'panel' ? panels : socks).find((x) => x.id === Number(rm[2]));
+      const before = it.expire_at;
+      it.expire_at = Math.max(before, now) + (b.months ? b.months * 30 : b.days) * DAY;
+      const entry = b.amount ? { id: 900 + entries.length, kind: 'expense', amount: b.amount, at: b.paid_at ?? now, category: b.category ?? '', note: b.note ?? '', customer_id: null, customer_name: '', customer_deleted: false, panel_id: kind === 'panel' ? it.id : null, panel_name: kind === 'panel' ? it.name : '', panel_deleted: false, socks_id: kind === 'socks' ? it.id : null, socks_name: kind === 'socks' ? it.name : '', socks_deleted: false, created_at: now } : null;
+      if (entry) entries.unshift(entry);
+      json({ kind, id: it.id, name: it.name, months: b.months ?? 0, days: b.days ?? 0, expire_before: before, expire_after: it.expire_at, entry, [kind]: it });
+    });
+    return;
+  }
   if (p === '/api/session') return json({ auth_required: true, logged_in: true });
   if (p === '/api/customers') return json(customers);
   if (p === '/api/panels') return json(panels);

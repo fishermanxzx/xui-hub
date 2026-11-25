@@ -170,6 +170,7 @@ Authorization: Bearer xh_……
 | POST | `/panels/:id/geodata/validate` | 按面板的库核对写法:`{ "kind": "site" 或 "ip", "tokens": ["geosite:netflix", …] }`,返回 `issues`(对不上的,`reason` 是 `categoryMissing` / `fileMissing` / `attributeMissing` / `syntax` / `wrongKind`);普通域名、网段不查 |
 | POST | `/panels/:id/line-names` | 一键改名:这块面板上的线路都用面板的节点名(清掉各自设的 `node_name`)。只改订阅里显示的名字,面板上的客户端、UUID、出口都不动,客户更新订阅后生效。面板没填节点名时报 400。返回 `changed`(原来单独设过名字、这次清掉的条数)和 `panel` |
 | POST | `/panels/:id/restart` | 重启面板和 Xray 内核,等两个都恢复才返回(一般十几秒);上面所有客户端会断流几秒 |
+| POST | `/panels/:id/renew`、`/socks/:id/renew` | 面板 / SOCKS 续了费:到期日在现在的到期日上加 `months`(1–120)或 `days`(1–3650),两个给一个;已过期或没填到期日的从现在起算。填了 `amount`(大于 0)就在账本记一笔关联它的支出,另可带 `paid_at`(毫秒,不填 = 现在)、`category`、`note`;不填金额只顺延。返回 `name`、`months`、`days`、`expire_before`、`expire_after`、`entry`(记下的支出,没记为 `null`),以及更新后的 `panel` / `socks` |
 | GET | `/socks` | SOCKS 代理列表 |
 | GET | `/sub-templates` | 内置的订阅模板 |
 | POST | `/sync` | 立即同步全部面板的流量并执行额度 / 到期 |

@@ -10,6 +10,7 @@ import ClientLinks from './ClientLinks.vue';
 import Modal from './Modal.vue';
 import Select, { type SelectOption } from './Select.vue';
 import ActionMenu, { type MenuItem } from './ActionMenu.vue';
+import AssetRenew from './AssetRenew.vue';
 
 const props = defineProps<{ panel: Panel; open: boolean; /** 面板页正按这些标签筛 */ pickedTags?: string[] }>();
 /** 地址是域名时,检查时解析出的 IP;地址本身就是 IP 就不重复显示 */
@@ -40,12 +41,21 @@ async function applyLineNames() {
   }
 }
 
-/** 「⋯」里的操作:检查、内核、重启、打开后台、统一节点名、删除 */
+// ---------- 续费:顺延到期日,付了钱在账本记一笔支出 ----------
+const renewing = ref(false);
+const renewSaving = ref(false);
+function onRenewed() {
+  renewing.value = false;
+  emit('changed');
+}
+
+/** 「⋯」里的操作:检查、内核、重启、打开后台、续费、统一节点名、删除 */
 const menuItems = computed<MenuItem[]>(() => [
   { label: checking.value ? t('card.checking') : t('card.check'), run: check, disabled: checking.value },
   { label: t('card.xray'), run: openXray, disabled: !!props.panel.check_error },
   { label: restarting.value ? t('card.restarting') : t('card.restart'), run: restart, disabled: restarting.value, title: t('card.restartHint') },
   { label: t('card.openPanel'), run: () => window.open(props.panel.base_url, '_blank', 'noopener,noreferrer'), title: t('card.openPanelHint') },
+  { label: t('card.renew'), run: () => (renewing.value = true), title: t('card.renewHint'), divide: true },
   ...(props.panel.node_name && props.panel.line_count ? [{ label: t('card.lineNames'), run: applyLineNames, disabled: renaming.value, title: t('card.lineNamesHint'), divide: true }] : []),
   { label: t('card.deletePanel'), run: () => emit('remove'), danger: true, divide: true },
 ]);
@@ -458,6 +468,15 @@ async function removeClient(c: PanelClient) {
 
   <Modal v-if="linksFor" :title="t('card.linksTitle', { email: linksFor.email })" @close="linksFor = null">
     <ClientLinks :links="linksFor.links" :name="linksFor.email" />
+  </Modal>
+
+  <Modal v-if="renewing" :title="t('assetRenew.titlePanel', { name: panel.name })" @close="renewing = false">
+    <AssetRenew kind="panel" :item="panel" @saved="onRenewed" @saving="(b) => (renewSaving = b)" />
+    <template #footer>
+      <span class="spacer" />
+      <button @click="renewing = false">{{ t('common.cancel') }}</button>
+      <button class="primary" form="asset-renew-form" :disabled="renewSaving">{{ renewSaving ? t('common.saving') : t('assetRenew.button') }}</button>
+    </template>
   </Modal>
 </template>
 

@@ -5,6 +5,7 @@
 import { locale, t } from '../i18n';
 import { computed, onMounted, ref, watch } from 'vue';
 import { api } from '../api';
+import AssetRenew from '../components/AssetRenew.vue';
 import CustomerRenew from '../components/CustomerRenew.vue';
 import LedgerEntryForm from '../components/LedgerEntryForm.vue';
 import Modal from '../components/Modal.vue';
@@ -142,15 +143,22 @@ async function onAdded() {
   await load();
 }
 
-// ---------- 月成本明细:填了月成本或到期日的面板和 SOCKS ----------
+// ---------- 月成本明细:填了月成本或到期日的面板和 SOCKS;能直接续费(顺延到期日、记一笔支出) ----------
+type CostItem = { id: number; name: string; monthly_cost: number | null; expire_at: number };
 const costRows = computed(() =>
   [
-    ...panels.value.map((p) => ({ key: `p${p.id}`, kind: t('ledger.panel'), name: p.name, cost: p.monthly_cost, expire: p.expire_at })),
-    ...socksList.value.map((s) => ({ key: `s${s.id}`, kind: 'SOCKS', name: s.name, cost: s.monthly_cost, expire: s.expire_at })),
+    ...panels.value.map((p) => ({ key: `p${p.id}`, type: 'panel' as const, item: p as CostItem, kind: t('ledger.panel'), name: p.name, cost: p.monthly_cost, expire: p.expire_at })),
+    ...socksList.value.map((s) => ({ key: `s${s.id}`, type: 'socks' as const, item: s as CostItem, kind: 'SOCKS', name: s.name, cost: s.monthly_cost, expire: s.expire_at })),
   ]
     .filter((r) => r.cost != null || r.expire)
     .sort((a, b) => (b.cost ?? 0) - (a.cost ?? 0) || a.name.localeCompare(b.name, locale.value)),
 );
+const assetFor = ref<{ type: 'panel' | 'socks'; item: CostItem } | null>(null);
+const assetSaving = ref(false);
+async function onAssetRenewed() {
+  assetFor.value = null;
+  await load();
+}
 </script>
 
 <template>
@@ -311,6 +319,7 @@ const costRows = computed(() =>
             <th>{{ t('ledger.colKind') }}</th>
             <th class="num">{{ t('ledger.colCost') }}</th>
             <th>{{ t('ledger.colExpire') }}</th>
+            <th class="act"><span class="sr-only">{{ t('assetRenew.button') }}</span></th>
           </tr>
         </thead>
         <tbody>
@@ -321,6 +330,9 @@ const costRows = computed(() =>
             <td :class="r.expire ? dueClass(r.expire, 'muted') : 'muted'">
               <template v-if="r.expire">{{ fmtDate(r.expire) }} · {{ fmtDue(r.expire) }}</template>
               <template v-else>—</template>
+            </td>
+            <td class="act">
+              <button class="link" @click="assetFor = { type: r.type, item: r.item }">{{ t('assetRenew.button') }}</button>
             </td>
           </tr>
         </tbody>
@@ -334,6 +346,15 @@ const costRows = computed(() =>
       <span class="spacer" />
       <button @click="adding = false">{{ t('common.cancel') }}</button>
       <button class="primary" form="ledger-entry-form" :disabled="addSaving">{{ addSaving ? t('common.saving') : t('entry.submit') }}</button>
+    </template>
+  </Modal>
+
+  <Modal v-if="assetFor" :title="t(assetFor.type === 'panel' ? 'assetRenew.titlePanel' : 'assetRenew.titleSocks', { name: assetFor.item.name })" @close="assetFor = null">
+    <AssetRenew :kind="assetFor.type" :item="assetFor.item" @saved="onAssetRenewed" @saving="(b) => (assetSaving = b)" />
+    <template #footer>
+      <span class="spacer" />
+      <button @click="assetFor = null">{{ t('common.cancel') }}</button>
+      <button class="primary" form="asset-renew-form" :disabled="assetSaving">{{ assetSaving ? t('common.saving') : t('assetRenew.button') }}</button>
     </template>
   </Modal>
 

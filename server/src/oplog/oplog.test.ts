@@ -210,3 +210,23 @@ test('操作日志:线路换出口写成「直出 → SOCKS isp」;批量写换�
     await new Promise((r) => server.close(r));
   }
 });
+
+test('操作日志:面板 / SOCKS 续费写清续多久、到期前后、记没记支出', async () => {
+  const db = memoryDb();
+  const p = addPanel(db, 'hk');
+  const { call, close } = await serve(db);
+  try {
+    await call('POST', '/login', { password: 'pw' });
+    const r = (await call('POST', `/panels/${p.id}/renew`, { months: 1, amount: 45, category: '服务器' })).body;
+    assert.deepEqual([r.panel.id, r.entry.panel_id, r.entry.amount], [p.id, p.id, 45]);
+    assert.match(summaries(db)[0], /^续费面板「hk」1 个月:到期 不限期 → \d{4}-\d{2}-\d{2};记支出 45$/);
+    const s = (await call('POST', '/socks', { name: 'isp', address: '1.2.3.4:1080' })).body;
+    const r2 = (await call('POST', `/socks/${s.id}/renew`, { days: 30 })).body;
+    assert.deepEqual([r2.socks.id, r2.entry], [s.id, null]);
+    assert.match(summaries(db)[0], /^续费 SOCKS「isp」30 天:到期 不限期 → \d{4}-\d{2}-\d{2};没记钱$/);
+    assert.equal((await call('POST', `/panels/${p.id}/renew`, {})).status, 400);
+    assert.deepEqual([summaries(db)[0], listOpLog(db).rows[0].ok], ['续费面板「hk」', false]);
+  } finally {
+    await close();
+  }
+});

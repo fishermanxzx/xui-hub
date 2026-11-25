@@ -105,7 +105,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/sc
 - 接入 3x-ui 面板,每分钟同步;看版本、入站、客户端,创建 / 删除客户端,归入已有客户端;点客户端后面的客户名跳到这位客户。
 - 面板节点名、标签;切换 Xray 内核、升级面板、重启。
 - 登记 SOCKS5 代理,测连通性、出口 IP、地区和延迟。
-- 面板和 SOCKS 可记月成本和到期日。
+- 面板和 SOCKS 可记月成本和到期日;续了费点「续费」顺延到期日,顺手在账本记一笔支出。
 
 **统计与记账**
 
@@ -115,7 +115,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/sc
 
 **通知与备份**
 
-- 通知(Telegram / 飞书 / Webhook):面板掉线与恢复、客户超额 / 到期 / 快到期、流量用到某个比例、订阅疑似被分享。
+- 通知(Telegram / 飞书 / Webhook):面板掉线与恢复、客户超额 / 到期 / 快到期、流量用到某个比例、订阅疑似被分享、面板 / SOCKS 快到期。
 - 每日自动备份到 Telegram 或 S3 兼容存储(R2、MinIO 等),后台可直接用远端备份恢复。
 
 **其它**

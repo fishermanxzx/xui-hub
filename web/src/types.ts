@@ -356,6 +356,9 @@ export interface Settings {
     customer_disabled: boolean;
     expiring: boolean;
     expiring_days: number;
+    /** 面板 / SOCKS 快到期(提前几天) */
+    asset_expiring: boolean;
+    asset_expiring_days: number;
     quota_warn: boolean;
     quota_warn_pct: number;
     monthly_reset: boolean;
@@ -598,3 +601,25 @@ export interface OpLog {
 
 /** 换出口:换成 SOCKS 页登记的代理,或直出 */
 export type LineExitTarget = { kind: 'direct' } | { kind: 'socks'; socks_id: number };
+
+/** 面板 / SOCKS 续费的结果 */
+export interface AssetRenewal {
+  kind: 'panel' | 'socks';
+  id: number;
+  name: string;
+  months: number;
+  days: number;
+  expire_before: number;
+  expire_after: number;
+  /** 记下的那笔支出;没填金额 = null */
+  entry: LedgerEntry | null;
+}
+
+export interface AssetRenewInput {
+  months?: number;
+  days?: number;
+  amount?: number | null;
+  paid_at?: number;
+  category?: string;
+  note?: string;
+}

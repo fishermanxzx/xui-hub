@@ -30,6 +30,7 @@ import {
 } from '../customers/repo';
 import { deletePayment, insertPayment, lastPayments, listPayments, renewedExpire, renewSpan, validAmount, validNote, validPaidAt } from '../customers/payments';
 import { deleteEntry, insertEntry, listEntries, validEntry } from '../ledger/entries';
+import { renewAsset } from '../ledger/renewAsset';
 import { importClients } from '../lines/import';
 import { resetCustomerUsage } from '../lines/reset';
 import { broadcast, channelsFor } from '../notify/send';
@@ -292,6 +293,14 @@ export function apiRouter(deps: RouteDeps): Router {
       const ratio = validRatio(req.query.ratio);
       const customers = previewPanelRatio(db, panel.id, ratio);
       return { ratio_before: panel.traffic_ratio, ratio, customers, over_after: customers.filter((c) => c.over_after && !c.over_before).length };
+    }),
+  );
+  // 续费:到期日顺延 months / days,填了 amount 就在账本记一笔关联这块面板的支出(见 ledger/renewAsset.ts)
+  r.post(
+    '/panels/:id/renew',
+    wrap((req) => {
+      const r = renewAsset(db, 'panel', idParam(req), req.body ?? {});
+      return { ...r, panel: view(getPanel(db, r.id)!) };
     }),
   );
   // 面板上还有客户线路时要带 ?force=1(线路记录会跟着删掉)
@@ -860,6 +869,14 @@ export function apiRouter(deps: RouteDeps): Router {
     }),
   );
   r.delete('/socks/:id', wrap((req) => void deleteSocks(db, idParam(req))));
+  // 续费:同面板
+  r.post(
+    '/socks/:id/renew',
+    wrap((req) => {
+      const r = renewAsset(db, 'socks', idParam(req), req.body ?? {});
+      return { ...r, socks: socksOne(r.id) };
+    }),
+  );
   // 连通性测试:从本服务所在机器经代理访问 Cloudflare,拿到出口 IP 和地区
   r.post(
     '/socks/:id/check',

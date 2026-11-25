@@ -70,6 +70,7 @@ claude mcp add --transport http xui-hub https://hub.example.com:8788/mcp --heade
 | `list_panels` | 面板列表和状态 |
 | `list_panel_inbounds` | 面板上的入站和客户端 |
 | `list_socks` | SOCKS 代理列表 |
+| `renew_panel` / `renew_socks` | 面板 / SOCKS 续了费:顺延到期日,付了钱在账本记一笔关联它的支出 |
 | `sync_now` | 立即同步流量并执行额度 / 到期 |
 
 MCP 改不了后台设置,碰不了备份恢复、API 令牌,也不能增删面板和 SOCKS。
