@@ -578,6 +578,8 @@ export const TOOLS: ToolDef[] = [
         // 这块面板上没单独设节点名的线路在订阅里用的名字;null = 用面板生成的
         node_name: p.node_name || null,
         tags: p.tags?.length ? p.tags : undefined,
+        // 地理位置(按 IP 查的或手动填的);还没定位 = 没有这项
+        location: p.geo_lat != null ? { lat: p.geo_lat, lng: p.geo_lng, city: p.geo_city || undefined, country: p.geo_country || undefined, manual: p.geo_manual || undefined } : undefined,
         // 流量倍率:这块面板上线路的计费用量 = 实际流量 × 它(默认 1)
         traffic_ratio: p.traffic_ratio ?? 1,
         expire_at: iso(p.expire_at ?? 0),

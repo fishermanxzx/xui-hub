@@ -190,7 +190,10 @@ const panelDiff = (db: DB, a: Panel, b: Panel) =>
     ...(a.node_name !== b.node_name ? [`节点名 ${a.node_name || '(面板生成的)'} → ${b.node_name || '(面板生成的)'}`] : []),
     ...(JSON.stringify(a.tags) !== JSON.stringify(b.tags) ? [`标签 ${a.tags.join('、') || '(无)'} → ${b.tags.join('、') || '(无)'}`] : []),
     ...(a.traffic_ratio !== b.traffic_ratio ? [`流量倍率 ×${a.traffic_ratio} → ×${b.traffic_ratio}(上面有 ${customersOnPanel(db, b.id)} 位客户的线路,本期已用按新倍率重算)`] : []),
+    ...(placeOf(a) !== placeOf(b) ? [`位置 ${placeOf(a)} → ${placeOf(b)}`] : []),
   ]);
+/** 位置:手动填的写坐标(和地点名),自动的写「按 IP 自动」 */
+const placeOf = (p: Panel) => (p.geo_manual ? `${p.geo_city ? `${p.geo_city} ` : ''}(${p.geo_lat}, ${p.geo_lng})` : '按 IP 自动');
 
 const customersOnPanel = (db: DB, panelId: number) => (db.prepare('SELECT COUNT(DISTINCT customer_id) AS n FROM lines WHERE panel_id = ?').get(panelId) as { n: number }).n;
 

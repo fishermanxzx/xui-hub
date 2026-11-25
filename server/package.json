@@ -15,6 +15,7 @@
     "@modelcontextprotocol/node": "^2.1.2",
     "@modelcontextprotocol/server": "^2.4.0",
     "better-sqlite3": "^12.4.1",
+    "compression": "^1.8.2",
     "express": "^4.21.2",
     "qrcode-generator": "^2.0.4",
     "undici": "^6.21.0",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
+    "@types/compression": "^1.8.1",
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.0",
     "esbuild": "^0.25.12",

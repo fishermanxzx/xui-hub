@@ -10,9 +10,9 @@ const DAY = 86_400_000;
 const GB = 1024 ** 3;
 
 const panels = [
-  { id: 1, name: '香港-1', base_url: 'https://hk1.example.com:2053/panel', ip: '203.0.113.10', node_name: '香港 01', tags: ['香港', '中转'], traffic_ratio: 1, inbound_count: 2, client_count: 5, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 45, expire_at: now + 52 * DAY },
-  { id: 2, name: '美国-1', base_url: 'https://us1.example.com:2053/panel', ip: '198.51.100.8', node_name: '美国 01', tags: ['美国', '便宜'], traffic_ratio: 1, inbound_count: 3, client_count: 4, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 30, expire_at: now + 5 * DAY },
-  { id: 3, name: '日本-1', base_url: 'https://jp1.example.com:2053/panel', ip: '192.0.2.31', node_name: '', tags: ['日本'], traffic_ratio: 1, inbound_count: 2, client_count: 2, panel_version: '3.10.2', xray_version: '26.10.21', monthly_cost: null, expire_at: 0 },
+  { id: 1, name: '香港-1', base_url: 'https://hk1.example.com:2053/panel', ip: '203.0.113.10', node_name: '香港 01', tags: ['香港', '中转'], traffic_ratio: 1, inbound_count: 2, client_count: 5, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 45, expire_at: now + 52 * DAY, geo_lat: 22.3193, geo_lng: 114.1694, geo_city: 'Hong Kong', geo_country: 'HK', geo_manual: false, geo_error: '' },
+  { id: 2, name: '美国-1', base_url: 'https://us1.example.com:2053/panel', ip: '198.51.100.8', node_name: '美国 01', tags: ['美国', '便宜'], traffic_ratio: 1, inbound_count: 3, client_count: 4, panel_version: '3.11.0', xray_version: '26.10.31', monthly_cost: 30, expire_at: now + 5 * DAY, geo_lat: 34.0522, geo_lng: -118.2437, geo_city: 'Los Angeles', geo_country: 'US', geo_manual: false, geo_error: '' },
+  { id: 3, name: '日本-1', base_url: 'https://jp1.example.com:2053/panel', ip: '192.0.2.31', node_name: '', tags: ['日本'], traffic_ratio: 1, inbound_count: 2, client_count: 2, panel_version: '3.10.2', xray_version: '26.10.21', monthly_cost: null, expire_at: 0, geo_lat: 35.6895, geo_lng: 139.6917, geo_city: '东京', geo_country: '', geo_manual: true, geo_error: '' },
 ].map((p) => ({ ...p, created_at: now - 40 * DAY, checked_at: now - 20_000, check_ok_at: now - 20_000, check_error: null, xray_state: 'running' }));
 
 const socks = [
@@ -180,7 +180,7 @@ createServer((req, res) => {
   let m0;
   if (p === '/api/session') return json({ auth_required: true, logged_in: true });
   if (p === '/api/customers') return json(customers);
-  if (p === '/api/panels') return json(panels);
+  if (p === '/api/panels' || p === '/api/panels/geo') return json(panels);
   if (p === '/api/socks') return json(socks);
   if (p === '/api/payments') return json(payments);
   if ((m0 = p.match(/^\/api\/customers\/(\d+)\/payments$/))) return json(payments.filter((x) => x.customer_id === Number(m0[1])));

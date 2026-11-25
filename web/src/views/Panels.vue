@@ -1,10 +1,12 @@
 <script setup lang="ts">
-// 面板页:每块面板一张卡片,展开看入站和客户端;添加 / 编辑面板用弹窗。
+// 面板页:每块面板一张卡片,展开看入站和客户端;添加 / 编辑面板用弹窗。右上角「地球」展开 3D 地球,看各面板在哪。
 import { t } from '../i18n';
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue';
 import { api } from '../api';
 import Modal from '../components/Modal.vue';
 import PanelCard from '../components/PanelCard.vue';
+// 地球(three.js)很大,展开时才加载
+const PanelGlobe = defineAsyncComponent(() => import('../components/PanelGlobe.vue'));
 import { costSummary, dateInputToMs, fmtBytes, fmtCost, msToDateInput } from '../format';
 import { toast, toastError } from '../toast';
 import type { Panel, PanelInput } from '../types';
@@ -45,6 +47,46 @@ async function load() {
   }
 }
 
+// ---------- 地球:展开时按 IP 查还没定位的面板,点一个点跳到那块面板 ----------
+const GLOBE_KEY = 'xui-hub.panelsGlobe';
+const showGlobe = ref(false);
+try {
+  showGlobe.value = localStorage.getItem(GLOBE_KEY) === '1';
+} catch {
+  /* 读不了就默认收起 */
+}
+const locating = ref(false);
+async function locate() {
+  locating.value = true;
+  try {
+    panels.value = await api.panelsGeo();
+  } catch (e) {
+    toastError(e);
+  } finally {
+    locating.value = false;
+  }
+}
+function toggleGlobe() {
+  showGlobe.value = !showGlobe.value;
+  try {
+    localStorage.setItem(GLOBE_KEY, showGlobe.value ? '1' : '0');
+  } catch {
+    /* 存不了就算了 */
+  }
+  if (showGlobe.value) void locate();
+}
+/** 还没定位的面板(在当前筛选里) */
+const unlocated = computed(() => shownPanels.value.filter((p) => p.geo_lat == null));
+const spotCount = computed(() => new Set(shownPanels.value.filter((p) => p.geo_lat != null).map((p) => `${Math.round(p.geo_lat! * 2)}:${Math.round(p.geo_lng! * 2)}`)).size);
+const focused = ref<number | null>(null);
+let focusTimer: number | undefined;
+function focusPanel(id: number) {
+  document.getElementById(`panel-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  focused.value = id;
+  clearTimeout(focusTimer);
+  focusTimer = window.setTimeout(() => (focused.value = null), 2000);
+}
+
 async function checkAll() {
   checking.value = true;
   try {
@@ -62,7 +104,7 @@ async function checkAll() {
 const editing = ref<Panel | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', base_url: '', token: '', cost: '', expire: '', nodeName: '', tags: '', ratio: '1' });
+const form = ref({ name: '', base_url: '', token: '', cost: '', expire: '', nodeName: '', tags: '', ratio: '1', loc: '', locCity: '' });
 /** 表单里填的标签(逗号 / 空格分开) */
 const splitTags = (s: string) => [...new Set(s.split(/[,,\s]+/).map((x) => x.trim()).filter(Boolean))];
 /** 别的面板用过、这里还没填的标签,点一下加上 */
@@ -86,7 +128,7 @@ const shownPanels = computed(() => (pickedTags.value.length ? panels.value.filte
 
 function openForm(panel: Panel | null) {
   editing.value = panel;
-  form.value = { name: panel?.name ?? '', base_url: panel?.base_url ?? '', token: '', cost: panel?.monthly_cost == null ? '' : String(panel.monthly_cost), expire: msToDateInput(panel?.expire_at ?? 0), nodeName: panel?.node_name ?? '', tags: (panel?.tags ?? []).join(', '), ratio: String(panel?.traffic_ratio ?? 1) };
+  form.value = { name: panel?.name ?? '', base_url: panel?.base_url ?? '', token: '', cost: panel?.monthly_cost == null ? '' : String(panel.monthly_cost), expire: msToDateInput(panel?.expire_at ?? 0), nodeName: panel?.node_name ?? '', tags: (panel?.tags ?? []).join(', '), ratio: String(panel?.traffic_ratio ?? 1), loc: panel?.geo_manual ? `${panel.geo_lat}, ${panel.geo_lng}` : '', locCity: panel?.geo_manual ? panel.geo_city : '' };
   showForm.value = true;
 }
 
@@ -97,6 +139,13 @@ async function submit() {
   const ratio = form.value.ratio === '' ? 1 : Number(form.value.ratio);
   const body: PanelInput = { name: form.value.name, base_url: form.value.base_url, monthly_cost: form.value.cost === '' ? null : Number(form.value.cost), expire_at: expireAt, node_name: form.value.nodeName.trim(), tags: splitTags(form.value.tags), traffic_ratio: ratio };
   if (form.value.token) body.token = form.value.token;
+  // 位置:填了坐标 = 手动;清空了(原来是手动的)= 改回按 IP 自动
+  const loc = form.value.loc.trim();
+  if (loc) {
+    const m = loc.match(/^(-?\d+(?:\.\d+)?)\s*[,,\s]\s*(-?\d+(?:\.\d+)?)$/);
+    if (!m) return toastError(new Error(t('panels.locationBad')));
+    body.location = { lat: Number(m[1]), lng: Number(m[2]), city: form.value.locCity.trim() };
+  } else if (was?.geo_manual) body.location = null;
   saving.value = true;
   try {
     // 改倍率:这块面板上的客户本期已用会当场按新倍率重算,先算出谁会超额,确认了再存
@@ -104,7 +153,7 @@ async function submit() {
     const saved = editing.value ? await api.updatePanel(editing.value.id, body) : await api.createPanel(body);
     showForm.value = false;
     toast(saved.check_error ? t('panels.savedButDown', { error: saved.check_error }) : t('panels.savedOk'), saved.check_error ? 'err' : 'ok');
-    await load();
+    await (showGlobe.value ? locate() : load());
     if (!editing.value && !saved.check_error) toggle(saved.id);
   } catch (e) {
     toastError(e);
@@ -144,7 +193,7 @@ async function remove(panel: Panel) {
 
 let timer: number | undefined;
 onMounted(() => {
-  void load();
+  void (showGlobe.value ? locate() : load());
   timer = window.setInterval(load, 30_000);
 });
 onUnmounted(() => clearInterval(timer));
@@ -166,6 +215,7 @@ onUnmounted(() => clearInterval(timer));
       </details>
     </div>
     <div class="ph-actions">
+      <button :aria-pressed="showGlobe" :disabled="!panels.length" @click="toggleGlobe">{{ showGlobe ? t('globe.hide') : t('globe.show') }}</button>
       <button :disabled="checking || !panels.length" @click="checkAll">{{ checking ? t('panels.checking') : t('panels.checkAll') }}</button>
       <button class="primary" @click="openForm(null)">{{ t('panels.add') }}</button>
     </div>
@@ -180,8 +230,28 @@ onUnmounted(() => clearInterval(timer));
     <span v-if="pickedTags.length" class="muted">{{ t('panels.shown', { n: shownPanels.length, total: panels.length }) }}</span>
   </div>
 
+  <section v-if="showGlobe && panels.length" class="globe-block sheet">
+    <PanelGlobe :panels="shownPanels" @pick="focusPanel" />
+    <div class="globe-foot small">
+      <span>{{ t('globe.summary', { n: shownPanels.length - unlocated.length, spots: spotCount }) }}</span>
+      <span v-if="locating" class="muted">{{ t('globe.locating') }}</span>
+      <details v-else-if="unlocated.length" class="unlocated">
+        <summary class="text-warn">{{ t('globe.unlocated', { n: unlocated.length }) }}</summary>
+        <ul>
+          <li v-for="p in unlocated" :key="p.id">
+            <button type="button" class="link" @click="focusPanel(p.id)">{{ p.name }}</button>
+            <span class="muted">{{ p.geo_error || t('globe.notYet') }}</span>
+          </li>
+        </ul>
+      </details>
+      <span class="muted src">{{ t('globe.source') }}</span>
+    </div>
+  </section>
+
   <div class="cards">
-    <PanelCard v-for="p in shownPanels" :key="p.id" :panel="p" :open="open.has(p.id)" :picked-tags="pickedTags" @toggle="toggle(p.id)" @edit="openForm(p)" @remove="remove(p)" @changed="load" @tag="toggleTag" />
+    <div v-for="p in shownPanels" :id="`panel-${p.id}`" :key="p.id" class="card-wrap" :class="{ focused: focused === p.id }">
+      <PanelCard :panel="p" :open="open.has(p.id)" :picked-tags="pickedTags" @toggle="toggle(p.id)" @edit="openForm(p)" @remove="remove(p)" @changed="load" @tag="toggleTag" />
+    </div>
   </div>
   <div v-if="!panels.length" class="empty sheet">{{ t('panels.empty') }}</div>
 
@@ -207,6 +277,14 @@ onUnmounted(() => clearInterval(timer));
         <label class="field">{{ t('cost.field') }}<input v-model="form.cost" type="number" min="0" step="0.01" /></label>
         <label class="field">{{ t('cost.expireField') }}<input v-model="form.expire" type="date" /></label>
       </div>
+      <div class="two">
+        <label class="field">{{ t('panels.location') }}<input v-model="form.loc" :placeholder="t('panels.locationPlaceholder')" inputmode="decimal" /></label>
+        <label class="field">{{ t('panels.locationCity') }}<input v-model="form.locCity" maxlength="40" :placeholder="t('panels.locationCityPlaceholder')" /></label>
+      </div>
+      <p class="muted small hint node-hint">
+        {{ t('panels.locationHint') }}
+        <template v-if="editing && !editing.geo_manual && editing.geo_lat != null"><br />{{ t('panels.locationNow', { place: `${editing.geo_city || editing.geo_country || ''} (${editing.geo_lat}, ${editing.geo_lng})`.trim() }) }}</template>
+      </p>
       <label class="field">{{ t('panels.trafficRatio') }}<input v-model="form.ratio" type="number" min="0.01" max="100" step="0.01" :title="t('panels.ratioHint')" /></label>
       <p class="muted small hint node-hint">{{ t('panels.ratioHint') }}</p>
       <p class="muted small hint">{{ t('panels.hint') }} {{ t('cost.hint') }}</p>
@@ -224,6 +302,41 @@ onUnmounted(() => clearInterval(timer));
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.card-wrap {
+  border-radius: 10px;
+  transition: box-shadow 0.3s;
+}
+.card-wrap.focused {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.globe-block {
+  padding: 10px;
+  margin-bottom: 14px;
+}
+.globe-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  align-items: baseline;
+  padding: 10px 4px 2px;
+}
+.unlocated summary {
+  cursor: pointer;
+}
+.unlocated[open],
+.globe-foot .src {
+  flex-basis: 100%;
+}
+.unlocated ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.unlocated li {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 2px 0;
 }
 .form {
   display: flex;
