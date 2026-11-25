@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 面板 / SOCKS 的「续费」:到期日往后顺延几个月(或几天),付了钱就顺手在账本记一笔关联它的支出。
-// 金额默认 = 月成本 × 月数,改过就不再跟着变;空 = 只顺延不记账。放在 Modal 里用,底部按钮用 form="asset-renew-form" 提交。
+// 金额默认 = 月成本 × 月数(月成本没填或是 0 就留空:比如和面板同一台机器的 SOCKS,费用已算在面板里),改过就不再跟着变;空 = 只顺延不记账。放在 Modal 里用,底部按钮用 form="asset-renew-form" 提交。
 import { t } from '../i18n';
 import { computed, ref, watch } from 'vue';
 import { api } from '../api';
@@ -39,7 +39,8 @@ const until = computed(() => {
   return span.value.months ? addMonths(base, span.value.months) : base + span.value.days * DAY;
 });
 
-const cost = computed(() => props.item.monthly_cost);
+/** 月成本;没填或是 0 = null(不给默认金额,也不提示「按月成本」) */
+const cost = computed(() => props.item.monthly_cost || null);
 const amount = ref('');
 const amountTouched = ref(false);
 const defaultAmount = () => (cost.value != null && span.value?.months ? String(Math.round(cost.value * span.value.months * 100) / 100) : '');
