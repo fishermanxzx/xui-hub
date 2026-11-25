@@ -491,6 +491,32 @@ test('外部订阅(只给外部的):不去取自己线路的节点;外部的 REA
   }
 });
 
+test('外部订阅(只给自己线路的):不取外部订阅、不出那边的节点,流量和到期也用自己的;改回合并又照常', async () => {
+  const { db, id, token } = setup();
+  updateCustomer(db, id, { upstreams: [UP_URL], upstream_mode: 'own', upstream_userinfo: true });
+  const calls: string[] = [];
+  const { link, close } = await serve(db, fakeConverter([]), () => false, fetcher, upstream(calls));
+  const page = async () => (await fetch(link(token), { headers: { 'User-Agent': BROWSER_UA, Accept: 'text/html' } })).text();
+  try {
+    const b64 = await get(link(token), V2RAYN_UA);
+    assert.equal(await decode(b64), NODES);
+    assert.equal(b64.headers.get('subscription-userinfo'), USERINFO);
+    assert.ok((await (await get(link(token), CLASH_UA)).text()).endsWith(`|${NODES}`));
+    assert.match(await page(), /已用 0 KB \/ 1 KB/);
+    assert.deepEqual(calls, []);
+    // 外部订阅还留着(地址、节点名都在)
+    assert.deepEqual(getCustomer(db, id)!.upstreams.map((u) => u.url), [UP_URL]);
+
+    updateCustomer(db, id, { upstream_mode: 'merge' });
+    const merged = await get(link(token), V2RAYN_UA);
+    assert.equal(await decode(merged), `${NODES}\n${UP_LINK}`);
+    assert.equal(merged.headers.get('subscription-userinfo'), UP_INFO);
+    assert.deepEqual(calls, [UP_URL]);
+  } finally {
+    await close();
+  }
+});
+
 test('外部订阅:取不到时用上次的;从没取到过且只给外部的 → 502;别处 xui-hub 来拉(带标记头)只给自己线路的', async () => {
   const { db, id, token } = setup();
   updateCustomer(db, id, { upstreams: [UP_URL], upstream_mode: 'replace' });

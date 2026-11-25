@@ -148,7 +148,7 @@ function customerDiff(a: CustomerView, b: CustomerView): string[] {
   if (JSON.stringify(a.sub_links) !== JSON.stringify(b.sub_links)) out.push(`自定义链接 ${a.sub_links.length} → ${b.sub_links.length} 条`);
   const ups = (c: CustomerView) => JSON.stringify(c.upstreams.map((u) => [u.url, u.node_name]));
   if (ups(a) !== ups(b)) out.push(`外部订阅改了(现在 ${b.upstreams.length} 个)`);
-  ch('外部订阅', a.upstream_mode, b.upstream_mode, (m) => (m === 'replace' ? '只给外部的' : '和线路的合并'));
+  ch('外部订阅', a.upstream_mode, b.upstream_mode, (m) => (m === 'replace' ? '只给外部的' : m === 'own' ? '只给自己线路的(外部订阅停用)' : '和线路的合并'));
   ch('流量和到期用外部的', a.upstream_userinfo, b.upstream_userinfo, onOff);
   return out;
 }

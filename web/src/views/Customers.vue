@@ -18,7 +18,7 @@ import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget, routeWhen } from '../format';
 import { toast, toastError } from '../toast';
-import type { Customer, EnforceOp, Line, LineRule, OpenedLine, OpenLineInput, Panel, PanelInbound, PanelRule, RouteHop, Socks, SubDevice, SubFetch, SubTemplate } from '../types';
+import type { Customer, EnforceOp, Line, LineRule, OpenedLine, OpenLineInput, Panel, PanelInbound, PanelRule, RouteHop, Socks, SubDevice, SubFetch, SubTemplate, UpstreamMode } from '../types';
 
 const customers = ref<Customer[]>([]);
 const panels = ref<Panel[]>([]);
@@ -230,13 +230,15 @@ onMounted(async () => {
 });
 
 const PROTOCOL: Record<string, string> = { hysteria: 'hy2' };
+/** 客户卡片上外部订阅的用法 */
+const UPSTREAM_MODE_TEXT: Record<UpstreamMode, string> = { merge: 'customers.upstreamMerge', replace: 'customers.upstreamReplace', own: 'customers.upstreamOwn' };
 const proto = (p: string) => PROTOCOL[p] ?? p;
 
 // ---------- 新建 / 编辑客户 ----------
 const editing = ref<Customer | null>(null);
 const showForm = ref(false);
 const saving = ref(false);
-const form = ref({ name: '', remark: '', fee: '', adjustGb: '', quotaGb: '', expire: '', monthlyReset: false, resetDay: '', limitDevices: '', template: '', customTemplate: '', subLinks: '', upstreams: [] as { url: string; node_name: string }[], upstreamReplace: false, upstreamUserinfo: false });
+const form = ref({ name: '', remark: '', fee: '', adjustGb: '', quotaGb: '', expire: '', monthlyReset: false, resetDay: '', limitDevices: '', template: '', customTemplate: '', subLinks: '', upstreams: [] as { url: string; node_name: string }[], upstreamMode: 'merge' as UpstreamMode, upstreamUserinfo: false });
 /** 内置的 Clash 订阅模板;第一次打开表单时取 */
 const templates = ref<SubTemplate[]>([]);
 /** 内置模板的名字和说明按界面语言给(按模板 id 查文案);语言文件里没有的新模板用服务端给的 */
@@ -250,7 +252,7 @@ function openForm(c: Customer | null) {
   editing.value = c;
   const tpl = c?.sub_template ?? '';
   const custom = /^https:/.test(tpl);
-  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', fee: c?.monthly_fee == null ? '' : String(c.monthly_fee), adjustGb: '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', monthlyReset: !!c?.reset_day, resetDay: c?.reset_day ? String(c.reset_day) : '', limitDevices: c?.limit_devices ? String(c.limit_devices) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '', subLinks: (c?.sub_links ?? []).join('\n'), upstreams: (c?.upstreams ?? []).map((u) => ({ url: u.url, node_name: u.node_name })), upstreamReplace: c?.upstream_mode === 'replace', upstreamUserinfo: !!c?.upstream_userinfo };
+  form.value = { name: c?.name ?? '', remark: c?.remark ?? '', fee: c?.monthly_fee == null ? '' : String(c.monthly_fee), adjustGb: '', quotaGb: c?.quota_bytes ? String(bytesToGb(c.quota_bytes)) : '', expire: c ? msToDateInput(c.expire_at) : '', monthlyReset: !!c?.reset_day, resetDay: c?.reset_day ? String(c.reset_day) : '', limitDevices: c?.limit_devices ? String(c.limit_devices) : '', template: custom ? 'custom' : tpl, customTemplate: custom ? tpl : '', subLinks: (c?.sub_links ?? []).join('\n'), upstreams: (c?.upstreams ?? []).map((u) => ({ url: u.url, node_name: u.node_name })), upstreamMode: c?.upstream_mode ?? 'merge', upstreamUserinfo: !!c?.upstream_userinfo };
   showForm.value = true;
 }
 
@@ -279,7 +281,7 @@ async function submit() {
   const was = editing.value;
   const expireAt = was && form.value.expire === msToDateInput(was.expire_at) ? was.expire_at : dateInputToMs(form.value.expire);
   const quotaBytes = was && String(form.value.quotaGb ?? '') === (was.quota_bytes ? String(bytesToGb(was.quota_bytes)) : '') ? was.quota_bytes : form.value.quotaGb === '' ? 0 : gbToBytes(Number(form.value.quotaGb));
-  const body = { name: form.value.name, remark: form.value.remark, monthly_fee: form.value.fee === '' ? null : Number(form.value.fee), quota_bytes: quotaBytes, expire_at: expireAt, reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template, sub_links: form.value.subLinks.split('\n').map((x) => x.trim()).filter(Boolean), upstreams: form.value.upstreams.map((u) => ({ url: u.url.trim(), node_name: u.node_name.trim() })).filter((u) => u.url), upstream_mode: form.value.upstreamReplace ? ('replace' as const) : ('merge' as const), upstream_userinfo: form.value.upstreamUserinfo };
+  const body = { name: form.value.name, remark: form.value.remark, monthly_fee: form.value.fee === '' ? null : Number(form.value.fee), quota_bytes: quotaBytes, expire_at: expireAt, reset_day: form.value.monthlyReset ? Number(form.value.resetDay) || 1 : 0, limit_devices: form.value.limitDevices === '' ? 0 : Number(form.value.limitDevices), sub_template: form.value.template === 'custom' ? form.value.customTemplate.trim() : form.value.template, sub_links: form.value.subLinks.split('\n').map((x) => x.trim()).filter(Boolean), upstreams: form.value.upstreams.map((u) => ({ url: u.url.trim(), node_name: u.node_name.trim() })).filter((u) => u.url), upstream_mode: form.value.upstreamMode, upstream_userinfo: form.value.upstreamUserinfo };
   try {
     const saved = editing.value ? await api.updateCustomer(editing.value.id, body) : await api.createCustomer(body);
     let ops = (saved as { ops?: EnforceOp[] }).ops ?? [];
@@ -1226,7 +1228,7 @@ function exitText(l: Line): string {
           <span v-if="u.error" class="text-warn upstream-err" :title="u.error">{{ t('customers.upstreamErr', { error: u.error }) }}</span>
         </div>
         <div v-if="c.upstreams.length" class="custom-link small">
-          <span class="muted">{{ c.upstream_mode === 'replace' ? t('customers.upstreamReplace') : t('customers.upstreamMerge') }}<template v-if="c.upstream_userinfo"> · {{ t('customers.upstreamUserinfoOn') }}</template></span>
+          <span class="muted">{{ t(UPSTREAM_MODE_TEXT[c.upstream_mode]) }}<template v-if="c.upstream_userinfo && c.upstream_mode !== 'own'"> · {{ t('customers.upstreamUserinfoOn') }}</template></span>
           <button class="link" :disabled="refreshing === c.id" @click="refreshUpstreams(c)">{{ refreshing === c.id ? t('customers.upstreamRefreshing') : t('customers.upstreamRefresh') }}</button>
         </div>
       </div>
@@ -1335,8 +1337,11 @@ function exitText(l: Line): string {
         <span v-if="form.upstreams.length" class="muted small">{{ t('customers.upstreamNodeNameHint', { name: '{name}', n: '{n}' }) }}</span>
       </div>
       <div v-if="form.upstreams.some((u) => u.url.trim())" class="field">
-        <label class="row small check"><input v-model="form.upstreamReplace" type="checkbox" />{{ t('customers.upstreamReplaceLabel') }}</label>
-        <label class="row small check"><input v-model="form.upstreamUserinfo" type="checkbox" />{{ t('customers.upstreamUserinfoLabel') }}</label>
+        <span class="small">{{ t('customers.upstreamModeLabel') }}</span>
+        <label class="row small check"><input v-model="form.upstreamMode" type="radio" value="merge" />{{ t('customers.upstreamModeMerge') }}</label>
+        <label class="row small check"><input v-model="form.upstreamMode" type="radio" value="replace" />{{ t('customers.upstreamModeReplace') }}</label>
+        <label class="row small check"><input v-model="form.upstreamMode" type="radio" value="own" />{{ t('customers.upstreamModeOwn') }}</label>
+        <label class="row small check" :class="{ muted: form.upstreamMode === 'own' }"><input v-model="form.upstreamUserinfo" type="checkbox" :disabled="form.upstreamMode === 'own'" />{{ t('customers.upstreamUserinfoLabel') }}</label>
       </div>
       <p class="muted small hint">{{ t('customers.formHint') }}</p>
     </form>

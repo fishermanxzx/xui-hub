@@ -36,6 +36,9 @@ test('客户的外部订阅:存取、用法开关;改地址时没变的保留上
   let c = getCustomer(db, id)!;
   assert.deepEqual([c.upstream_mode, c.upstream_userinfo, c.upstreams.map((u) => [u.url, u.nodes, u.ok_at])], ['replace', true, [[A, 0, 0], [B, 0, 0]]]);
   assert.throws(() => updateCustomer(db, id, { upstream_mode: 'both' }), /merge|replace/);
+  updateCustomer(db, id, { upstream_mode: 'own' });
+  assert.equal(getCustomer(db, id)!.upstream_mode, 'own');
+  updateCustomer(db, id, { upstream_mode: 'replace' });
 
   const fetcher: UpstreamFetcher = async (url) => ({ status: 200, body: url === A ? LINK : `${LINK}2`, userinfo: url === A ? 'upload=1; download=2; total=3; expire=4' : null });
   await refreshUpstreams(db, id, fetcher);

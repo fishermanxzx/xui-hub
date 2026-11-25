@@ -233,6 +233,9 @@ export interface Upstream {
   error: string;
 }
 
+/** 外部订阅的用法:merge = 和自己线路的一起给;replace = 只给外部订阅的;own = 只给自己线路的(外部订阅先停着) */
+export type UpstreamMode = 'merge' | 'replace' | 'own';
+
 export interface Customer {
   id: number;
   name: string;
@@ -267,7 +270,7 @@ export interface Customer {
   /** 外部订阅 */
   upstreams: Upstream[];
   /** merge = 外部订阅的节点和线路的一起给;replace = 只给外部订阅的 */
-  upstream_mode: 'merge' | 'replace';
+  upstream_mode: UpstreamMode;
   /** 订阅里的流量和到期用外部订阅给的 */
   upstream_userinfo: boolean;
   sub_fetched_at: number | null;
@@ -325,7 +328,7 @@ export interface CustomerInput {
   monthly_fee?: number | null;
   sub_links?: string[];
   upstreams?: { url: string; node_name?: string }[];
-  upstream_mode?: 'merge' | 'replace';
+  upstream_mode?: UpstreamMode;
   upstream_userinfo?: boolean;
 }
 
