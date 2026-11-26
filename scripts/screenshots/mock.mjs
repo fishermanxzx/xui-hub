@@ -103,7 +103,11 @@ const panelRules = {
 };
 for (const l of lines) Object.assign(l, { panel_node_name: panels.find((x) => x.id === l.panel_id)?.node_name ?? '', panel_ratio: 1, used_up: l.up, used_down: l.down });
 for (const x of panels) Object.assign(x, { line_count: lines.filter((l) => l.panel_id === x.id).length, exit_line_count: lines.filter((l) => l.exit_panel_id === x.id).length, customer_count: new Set(lines.filter((l) => l.panel_id === x.id).map((l) => l.customer_id)).size });
-for (const x of socks) Object.assign(x, { used_by: lines.filter((l) => l.exit_socks_id === x.id).length, customers: new Set(lines.filter((l) => l.exit_socks_id === x.id).map((l) => l.customer_id)).size });
+for (const x of socks) {
+  const using = lines.filter((l) => l.exit_socks_id === x.id);
+  const users = customers.filter((c) => using.some((l) => l.customer_id === c.id)).map((c) => ({ id: c.id, name: c.name, lines: using.filter((l) => l.customer_id === c.id).length }));
+  Object.assign(x, { used_by: using.length, customers: users.length, users });
+}
 for (const d of Object.values(details)) for (const i of d.inbounds) i.accepts_clients = i.protocol !== 'mixed';
 
 // 面板上的 geo 库(出口规则里「浏览 geo 分类」用):几个常见分类,条目只给 netflix 的
