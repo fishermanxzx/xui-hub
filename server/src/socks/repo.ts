@@ -41,8 +41,15 @@ export interface SocksCheck {
   error: string | null;
 }
 
-/** used_by:用到它的线路数(出口是它,或出口规则里用了它);customers:这些线路属于几位客户 */
-export type SocksView = Omit<SocksProxy, 'password'> & { has_password: boolean; check: SocksCheck | null; used_by: number; customers: number };
+/** 用到这个 SOCKS 的一位客户:他名下有几条线路用到它 */
+export interface SocksUser {
+  id: number;
+  name: string;
+  lines: number;
+}
+
+/** used_by:用到它的线路数(出口是它,或出口规则里用了它);customers:这些线路属于几位客户;users:是哪几位(按名字排) */
+export type SocksView = Omit<SocksProxy, 'password'> & { has_password: boolean; check: SocksCheck | null; used_by: number; customers: number; users: SocksUser[] };
 
 export interface SocksInput {
   name?: unknown;
@@ -132,27 +139,47 @@ function rowToProxy(row: any): SocksProxy {
   };
 }
 
-function rowToView(row: any): SocksView {
+function rowToView(row: any, users: SocksUser[]): SocksView {
   const { password, ...rest } = rowToProxy(row);
   return {
     ...rest,
     has_password: password !== '',
     used_by: row.used_by ?? 0,
     customers: row.customers ?? 0,
+    users,
     check: row.check_at == null ? null : { at: row.check_at, ok: row.check_ok === 1, ms: row.check_ms, ip: row.check_ip, loc: row.check_loc, error: row.check_error },
   };
 }
 
-const USING = `FROM lines l WHERE l.exit_socks_id = s.id OR EXISTS (SELECT 1 FROM json_each(l.rules) r WHERE json_extract(r.value, '$.to.socks_id') = s.id)`;
+const USES = `l.exit_socks_id = s.id OR EXISTS (SELECT 1 FROM json_each(l.rules) r WHERE json_extract(r.value, '$.to.socks_id') = s.id)`;
+const USING = `FROM lines l WHERE ${USES}`;
 const VIEW_SQL = `SELECT s.*, (SELECT COUNT(*) ${USING}) AS used_by, (SELECT COUNT(DISTINCT l.customer_id) ${USING}) AS customers FROM socks_proxies s`;
 
+/** 各 SOCKS 被哪些客户用着(socks id → 客户);只查一个时传 id */
+function usersOf(db: DB, id?: number): Map<number, SocksUser[]> {
+  const rows = db
+    .prepare(
+      `SELECT s.id AS sid, c.id, c.name, COUNT(*) AS lines FROM socks_proxies s JOIN lines l ON ${USES} JOIN customers c ON c.id = l.customer_id
+       ${id == null ? '' : 'WHERE s.id = @id'} GROUP BY s.id, c.id ORDER BY c.name COLLATE NOCASE, c.id`,
+    )
+    .all(id == null ? {} : { id }) as (SocksUser & { sid: number })[];
+  const out = new Map<number, SocksUser[]>();
+  for (const { sid, ...u } of rows) {
+    const list = out.get(sid);
+    if (list) list.push(u);
+    else out.set(sid, [u]);
+  }
+  return out;
+}
+
 export function listSocks(db: DB): SocksView[] {
-  return (db.prepare(`${VIEW_SQL} ORDER BY s.name COLLATE NOCASE`).all() as any[]).map(rowToView);
+  const users = usersOf(db);
+  return (db.prepare(`${VIEW_SQL} ORDER BY s.name COLLATE NOCASE`).all() as any[]).map((row) => rowToView(row, users.get(row.id) ?? []));
 }
 
 export function getSocksView(db: DB, id: number): SocksView | undefined {
-  const row = db.prepare(`${VIEW_SQL} WHERE s.id = ?`).get(id);
-  return row ? rowToView(row) : undefined;
+  const row = db.prepare(`${VIEW_SQL} WHERE s.id = ?`).get(id) as any;
+  return row ? rowToView(row, usersOf(db, id).get(id) ?? []) : undefined;
 }
 
 /** 含密码,只在服务端使用(测连通性、给线路所在面板建出站) */

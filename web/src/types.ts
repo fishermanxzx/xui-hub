@@ -131,6 +131,8 @@ export interface Socks {
   /** 拿它当出口的线路数(出口是它,或出口规则里用了它);这些线路属于几位客户 */
   used_by: number;
   customers: number;
+  /** 是哪几位客户,各有几条线路用到它(按名字排) */
+  users: { id: number; name: string; lines: number }[];
   /** 地理位置(SOCKS 页的地球,按出口 IP 查):坐标 null = 还没定位;geo_manual = 手动填的;geo_error = 没查到的原因 */
   geo_lat: number | null;
   geo_lng: number | null;

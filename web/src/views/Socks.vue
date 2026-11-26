@@ -82,6 +82,9 @@ const relocate = () => (showGlobe.value ? locate() : undefined);
 
 onMounted(() => void (showGlobe.value ? locate() : load()));
 
+// 「N 位客户」点开:列出是哪几位,点名字跳到客户页
+const usersFor = ref<Socks | null>(null);
+
 // 续费:顺延到期日,付了钱在账本记一笔支出
 const renewFor = ref<Socks | null>(null);
 const renewSaving = ref(false);
@@ -229,7 +232,10 @@ async function remove(s: Socks) {
               <template v-if="s.check?.ok">{{ s.check.ip }} <span class="muted">{{ region(s.check.loc) }}</span></template>
               <span v-else class="muted">—</span>
             </td>
-            <td class="small nowrap"><template v-if="s.used_by"><span :title="t('socks.usedLines', { n: s.used_by }, s.used_by)">{{ t('socks.usedBy', { n: s.customers }, s.customers) }}</span></template><span v-else class="muted">—</span></td>
+            <td class="small nowrap">
+              <button v-if="s.used_by" class="link" :title="t('socks.usedLines', { n: s.used_by }, s.used_by)" @click="usersFor = s">{{ t('socks.usedBy', { n: s.customers }, s.customers) }}</button>
+              <span v-else class="muted">—</span>
+            </td>
             <td class="small mono"><template v-if="s.monthly_cost != null">{{ fmtCost(s.monthly_cost) }}</template><span v-else class="muted">—</span></td>
             <td class="small nowrap">
               <template v-if="s.expire_at">{{ fmtDate(s.expire_at) }} <span :class="dueClass(s.expire_at, 'muted')">{{ fmtDue(s.expire_at) }}</span></template>
@@ -280,6 +286,16 @@ async function remove(s: Socks) {
     </template>
   </Modal>
 
+  <Modal v-if="usersFor" :title="t('socks.usersTitle', { name: usersFor.name })" @close="usersFor = null">
+    <p class="muted small hint">{{ t('socks.usersHint') }}</p>
+    <ul class="users">
+      <li v-for="u in usersFor.users" :key="u.id">
+        <a class="link" :href="`#customers/${u.id}`" @click="usersFor = null">{{ u.name }}</a>
+        <span class="muted small">{{ t('socks.userLines', { n: u.lines }, u.lines) }}</span>
+      </li>
+    </ul>
+  </Modal>
+
   <Modal v-if="renewFor" :title="t('assetRenew.titleSocks', { name: renewFor.name })" @close="renewFor = null">
     <AssetRenew kind="socks" :item="renewFor" @saved="onRenewed" @saving="(b) => (renewSaving = b)" />
     <template #footer>
@@ -322,5 +338,21 @@ tr.focused td {
 }
 .nowrap {
   white-space: nowrap;
+}
+.users {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.users li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--rule-soft);
+}
+.users li:first-child {
+  border-top: 0;
 }
 </style>

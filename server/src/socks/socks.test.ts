@@ -106,6 +106,9 @@ test('在用的 SOCKS 删不了:有线路拿它当出口时先删线路', () => 
   const cid2 = createCustomer(db, { name: 'li' });
   addLine(db, { customer_id: cid2, kind: 'relay', panel_id: a.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'li', exit_kind: 'socks', exit_socks_id: id, exit_label: 'SOCKS att' });
   assert.deepEqual([getSocksView(db, id)!.used_by, getSocksView(db, id)!.customers], [3, 2]);
+  // 是哪几位客户、各有几条线路用到它:按名字排
+  assert.deepEqual(getSocksView(db, id)!.users, [{ id: cid2, name: 'li', lines: 1 }, { id: cid, name: 'zhang', lines: 2 }]);
+  assert.deepEqual(listSocks(db).map((s) => [s.name, s.users.map((u) => u.name)]), [['att', ['li', 'zhang']], ['idle', []]]);
   deleteLine(db, line2.id);
   deleteLine(db, getCustomer(db, cid2)!.lines[0].id);
   assert.throws(() => deleteSocks(db, id), /还有 1 条线路在用这个 SOCKS/);

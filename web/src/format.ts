@@ -1,6 +1,7 @@
 // 展示格式化。文案走 i18n:这些函数在模板里调用,切换语言后跟着重算。
 
 import { locale, t } from './i18n';
+import { regionName } from './geoRegions';
 import type { RouteHop } from './types';
 
 export function fmtBytes(n: number): string {
@@ -168,7 +169,9 @@ export function region(loc: string | null | undefined): string {
   if (!loc) return '';
   // 读一下 locale,模板里用到时切换语言会重算
   void locale.value;
-  return REGIONS.has(loc) ? t(`region.${loc}` as 'region.US') : loc;
+  if (REGIONS.has(loc)) return t(`region.${loc}` as 'region.US');
+  // 其他两位代码(如 CL)用浏览器自带的地区名
+  return /^[A-Z]{2}$/.test(loc) ? regionName(loc, locale.value) : loc;
 }
 
 /** 面板地址只显示主机名和端口 */
