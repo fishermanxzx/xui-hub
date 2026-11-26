@@ -13,7 +13,7 @@ const RANGES = [1, 7, 30, 90];
 const rangeLabel = (n: number) => (n === 1 ? t('traffic.today') : t('traffic.days', { n }));
 
 const by = ref<TrafficBy>('customer');
-const days = ref(30);
+const days = ref(1);
 /** 展开看的那一位客户 / 那一块面板 */
 const focus = ref<{ id: number; name: string } | null>(null);
 const report = ref<TrafficReport | null>(null);
