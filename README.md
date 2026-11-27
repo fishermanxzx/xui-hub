@@ -82,6 +82,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/sc
 
 **客户与线路**
 
+- 客户页默认是机位图:一格一位客户,只显示头像、名字、流量、到期、月费,最近在线的那格屏幕亮着;点开看订阅、线路和操作。也可以切回列表。
 - 一位客户多条线路,每条线路是某块面板上的一个客户端,协议 vless reality 或 hy2。
 - 开线路可一次勾多块面板;批量开线路一次给多位客户各开一条;批量删线路按面板一次删掉。
 - 出口:面板直出,或经登记的 SOCKS 出去;可原地换出口,UUID 不变、客户不用更新订阅。
@@ -133,6 +134,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/fishermanxzx/xui-hub/main/sc
 图中均为演示数据。
 
 ![客户页](docs/images/customers.png)
+
+![客户详情](docs/images/customer.png)
 
 ![开线路](docs/images/open-line.png)
 

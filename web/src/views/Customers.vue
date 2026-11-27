@@ -76,6 +76,44 @@ const offPanel = (l: Line) =>
   (pickedPanels.value.size > 0 && !pickedPanels.value.has(l.panel_id) && !(l.exit_panel_id != null && pickedPanels.value.has(l.exit_panel_id))) ||
   (pickedIps.value.size > 0 && !pickedIps.value.has(lineExitIp(l, panelMap.value, socksMap.value)));
 const filtering = computed(() => !!query.value.q.trim() || !!query.value.panels.length || !!query.value.state || !!query.value.tags.length || !!query.value.lines || !!query.value.exits || !!query.value.ips.length);
+// ---------- 两种看法:机位(像网吧的机位图,一格一位客户,只看头像、名字、流量、到期、月费,点开看全部)和列表;选的哪种记在浏览器里 ----------
+type CustomerView = 'seats' | 'list';
+const VIEW_KEY = 'xui-hub.customerView';
+const view = ref<CustomerView>('seats');
+try {
+  if (localStorage.getItem(VIEW_KEY) === 'list') view.value = 'list';
+} catch {
+  /* 读不了就用机位 */
+}
+/** 机位图里点开的那位(完整卡片在弹窗里) */
+const seatOpen = ref<number | null>(null);
+const seatCustomer = computed(() => (seatOpen.value == null ? null : (customers.value.find((c) => c.id === seatOpen.value) ?? null)));
+watch(view, (v) => {
+  seatOpen.value = null;
+  try {
+    localStorage.setItem(VIEW_KEY, v);
+  } catch {
+    /* 存不了就算了 */
+  }
+});
+/** 完整卡片画哪几位:列表 = 筛出来的全部;机位 = 点开的那一位 */
+const cardList = computed(() => (view.value === 'list' ? shown.value : seatCustomer.value ? [seatCustomer.value] : []));
+/** 最近 5 分钟里在面板上在线过 = 在线(每分钟检查一次面板) */
+const ONLINE_MS = 5 * 60_000;
+const isOnline = (c: Customer) => {
+  const at = lastOnline(c);
+  return at > 0 && Date.now() - at < ONLINE_MS;
+};
+/** 头像上的字:英文 / 数字开头取前两个字母,其他取前两个字 */
+function avatarText(name: string): string {
+  const s = name.trim();
+  const latin = s.match(/^[A-Za-z0-9]{1,2}/);
+  return latin ? latin[0].toUpperCase() : [...s].slice(0, 2).join('') || '?';
+}
+const AVATAR_TONES = 8;
+const avatarTone = (c: Customer) => c.id % AVATAR_TONES;
+const seatNo = (c: Customer) => String(c.id).padStart(3, '0');
+
 // ---------- 线路默认收起:只留一行(条数、节点名、停用了几条),点开看详情;展开了哪些记在浏览器里 ----------
 const OPEN_LINES_KEY = 'xui-hub.openCustomerLines';
 const openLines = ref<Set<number>>(new Set());
@@ -93,8 +131,8 @@ function saveOpenLines(next: Set<number>) {
     /* 存不了就算了 */
   }
 }
-/** 搜索、按面板或落地 IP 过滤时线路都展开(要看的就是线路),这时不显示收起 / 展开 */
-const linesForced = computed(() => !!query.value.q.trim() || query.value.panels.length > 0 || query.value.ips.length > 0);
+/** 搜索、按面板或落地 IP 过滤时线路都展开(要看的就是线路),这时不显示收起 / 展开;机位图点开的那位也全展开 */
+const linesForced = computed(() => view.value === 'seats' || !!query.value.q.trim() || query.value.panels.length > 0 || query.value.ips.length > 0);
 const linesShown = (c: Customer) => linesForced.value || openLines.value.has(c.id);
 function toggleLines(c: Customer) {
   const next = new Set(openLines.value);
@@ -139,6 +177,13 @@ async function focusFromHash() {
   const c = customers.value.find((x) => x.id === Number(m[1]));
   if (!c) return void toast(t('customers.focusGone'), 'err');
   if (!shown.value.some((x) => x.id === c.id)) clearFilters();
+  // 机位图:滚到他的机位,点开他
+  if (view.value === 'seats') {
+    seatOpen.value = c.id;
+    await nextTick();
+    document.getElementById(`seat-${c.id}`)?.scrollIntoView({ block: 'center' });
+    return;
+  }
   if (c.lines.length && !linesShown(c)) toggleLines(c);
   focused.value = c.id;
   await nextTick();
@@ -1049,6 +1094,7 @@ const meterLevel = (c: Customer) => (!c.quota_bytes ? '' : c.used >= c.quota_byt
 const summary = computed(() => {
   const list = customers.value;
   return {
+    online: list.filter(isOnline).length,
     over: list.filter((c) => c.state === 'over_quota').length,
     expired: list.filter((c) => c.state === 'expired').length,
     soon: list.filter((c) => matchState(c, 'soon')).length,
@@ -1107,6 +1153,7 @@ function exitText(l: Line): string {
       <h1>{{ t('customers.title') }}</h1>
       <p v-if="customers.length" class="ph-sum">
         <span>{{ t('customers.sumTotal', { n: customers.length }, customers.length) }}</span>
+        <span v-if="summary.online" class="text-ok" :title="t('customers.onlineHint')">{{ t('customers.sumOnline', { n: summary.online }) }}</span>
         <!-- 点一下就按这一项筛 -->
         <button v-if="summary.over" type="button" class="link sum text-err" :aria-pressed="query.state === 'over_quota'" @click="query.state = 'over_quota'">{{ t('customers.sumOver', { n: summary.over }) }}</button>
         <button v-if="summary.expired" type="button" class="link sum text-err" :aria-pressed="query.state === 'expired'" @click="query.state = 'expired'">{{ t('customers.sumExpired', { n: summary.expired }) }}</button>
@@ -1158,11 +1205,56 @@ function exitText(l: Line): string {
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 3v10M2.5 10.5 5 13l2.5-2.5M11 13V3M8.5 5.5 11 3l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>{{ sortDir }}
       </button>
       <button v-if="!linesForced && withLines.length" type="button" class="link small" @click="toggleAllLines">{{ allLinesOpen ? t('customers.collapseAll') : t('customers.expandAll') }}</button>
+      <span class="seg" role="group" :aria-label="t('customers.viewLabel')">
+        <button type="button" :class="{ on: view === 'seats' }" :aria-pressed="view === 'seats'" @click="view = 'seats'">{{ t('customers.viewSeats') }}</button>
+        <button type="button" :class="{ on: view === 'list' }" :aria-pressed="view === 'list'" @click="view = 'list'">{{ t('customers.viewList') }}</button>
+      </span>
     </span>
   </div>
 
-  <div class="cards">
-    <article v-for="c in shown" :id="`customer-${c.id}`" :key="c.id" class="card sheet" :class="{ focused: focused === c.id }">
+  <!-- 机位图:一格一位客户,在线的屏幕亮着;点开看完整卡片 -->
+  <div v-if="view === 'seats' && shown.length" class="seats">
+    <button
+      v-for="c in shown"
+      :id="`seat-${c.id}`"
+      :key="c.id"
+      type="button"
+      class="seat"
+      :class="[c.state, { online: isOnline(c), picked: seatOpen === c.id }]"
+      :title="t('customers.seatOpen', { name: c.name })"
+      @click="seatOpen = c.id"
+    >
+      <span class="seat-top">
+        <span class="seat-no">#{{ seatNo(c) }}</span>
+        <span class="seat-light"><i aria-hidden="true" />{{ isOnline(c) ? t('customers.seatOnline') : t('customers.seatOffline') }}</span>
+      </span>
+      <span class="monitor" aria-hidden="true">
+        <span class="screen"><span class="avatar" :class="`tone-${avatarTone(c)}`">{{ avatarText(c.name) }}</span></span>
+      </span>
+      <span class="seat-name">
+        <span class="nm">{{ c.name }}</span>
+        <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
+      </span>
+      <span class="seat-use">
+        <span class="fig" :class="{ 'text-err': c.state === 'over_quota' }"><b>{{ fmtBytes(c.used) }}</b><span class="muted"> / {{ c.quota_bytes ? fmtBytes(c.quota_bytes) : t('customers.noQuota') }}</span></span>
+        <span class="meter" :class="[meterLevel(c), { 'no-quota': !c.quota_bytes }]"><span :style="{ width: usePct(c) + '%' }" /></span>
+      </span>
+      <span class="seat-foot">
+        <span :class="{ 'text-warn': dueLevel(c.expire_at) === 'warn', 'text-err': dueLevel(c.expire_at) === 'err', muted: !c.expire_at }">{{ fmtDue(c.expire_at) }}</span>
+        <span v-if="c.monthly_fee != null">{{ t('customers.feeValue', { v: fmtCost(c.monthly_fee) }) }}</span>
+        <span v-else class="muted">{{ t('customers.noFee') }}</span>
+      </span>
+    </button>
+  </div>
+
+  <!-- 完整卡片:列表时一位一张;机位图点开的那位放在弹窗里 -->
+  <component
+    :is="view === 'list' ? 'div' : Modal"
+    v-if="cardList.length"
+    v-bind="view === 'list' ? { class: 'cards' } : { class: 'seat-detail', title: seatCustomer?.name ?? '', wide: true }"
+    @close="seatOpen = null"
+  >
+    <article v-for="c in cardList" :id="`customer-${c.id}`" :key="c.id" class="card sheet" :class="{ focused: focused === c.id }">
       <header class="head">
         <div class="who">
           <div class="who-top">
@@ -1276,7 +1368,7 @@ function exitText(l: Line): string {
       </ul>
       <p v-if="!c.lines.length" class="muted small none">{{ t('customers.noLines') }}</p>
     </article>
-  </div>
+  </component>
   <div v-if="!customers.length" class="empty sheet">{{ t('customers.empty') }}</div>
   <div v-else-if="!shown.length" class="empty sheet">
     {{ t('customers.noMatch') }} <button type="button" class="link" @click="clearFilters">{{ t('customers.clearFilters') }}</button>
@@ -1762,6 +1854,275 @@ function exitText(l: Line): string {
   background: var(--fault-bg);
   color: var(--fault);
 }
+/* ---------- 机位 / 列表切换 ---------- */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--sheet);
+}
+.seg button {
+  border: none;
+  border-radius: 0;
+  background: none;
+  padding: 4px 12px;
+  color: var(--ink-soft);
+}
+.seg button + button {
+  border-left: 1px solid var(--rule);
+}
+.seg button.on {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+/* ---------- 机位图:像网吧的机位一样一格一位客户;在线的那台屏幕亮着,其余黑屏 ---------- */
+.seats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 10px;
+}
+.seat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px 11px;
+  text-align: left;
+  font-weight: 400;
+  line-height: 1.4;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--sheet);
+  box-shadow: var(--shadow);
+  transition:
+    border-color 0.15s,
+    transform 0.15s,
+    box-shadow 0.15s;
+}
+.seat:hover:not(:disabled) {
+  background: var(--sheet);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: var(--lift);
+}
+.seat:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.seat.picked {
+  border-color: var(--accent);
+}
+.seat.expired,
+.seat.over_quota {
+  border-color: color-mix(in srgb, var(--fault) 40%, var(--rule));
+}
+.seat-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--ink-faint);
+}
+.seat-no {
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+}
+.seat-light {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.seat-light i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--rule);
+}
+.seat.online .seat-light {
+  color: var(--ok);
+  font-weight: 500;
+}
+.seat.online .seat-light i {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-bg);
+  animation: seat-blink 2.4s ease-in-out infinite;
+}
+@keyframes seat-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+/* 显示器:屏幕两种主题下都是深色,底下一截支架 */
+.monitor {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.monitor::after {
+  content: '';
+  width: 30px;
+  height: 5px;
+  border-radius: 0 0 4px 4px;
+  background: var(--rule);
+}
+.screen {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 82px;
+  border: 3px solid #29302c;
+  border-radius: 8px;
+  background: #101513;
+}
+.avatar {
+  --av: #3b78c4;
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: var(--av);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  filter: grayscale(0.55) brightness(0.62);
+}
+.avatar.tone-1 {
+  --av: #c2573b;
+}
+.avatar.tone-2 {
+  --av: #23885f;
+}
+.avatar.tone-3 {
+  --av: #8a5cc8;
+}
+.avatar.tone-4 {
+  --av: #b8466f;
+}
+.avatar.tone-5 {
+  --av: #a36d12;
+}
+.avatar.tone-6 {
+  --av: #2f8a93;
+}
+.avatar.tone-7 {
+  --av: #5d6c7b;
+}
+/* 在线:屏幕亮,头像带一圈绿灯 */
+.seat.online .screen {
+  background: radial-gradient(circle at 50% 50%, #1c3b2b 0%, #101513 72%);
+}
+.seat.online .avatar {
+  filter: none;
+  box-shadow:
+    0 0 0 3px #101513,
+    0 0 0 5px #3ad98a,
+    0 0 22px 4px color-mix(in srgb, var(--av) 60%, transparent);
+}
+/* 到期 / 超额:锁屏,头像灰掉 */
+.seat.expired .avatar,
+.seat.over_quota .avatar {
+  filter: grayscale(1) brightness(0.45);
+  box-shadow: none;
+}
+.seat.expired .screen,
+.seat.over_quota .screen {
+  background: repeating-linear-gradient(135deg, #1a1212 0 6px, #141010 6px 12px);
+}
+.seat-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.seat-name .nm {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 14px;
+}
+.seat-name .badge {
+  flex: none;
+}
+.seat-use {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.seat-use .fig {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.seat-use .fig b {
+  font-size: 13px;
+  font-weight: 600;
+}
+.seat-use .meter {
+  height: 4px;
+  min-width: 0;
+}
+.seat-use .meter.no-quota {
+  visibility: hidden;
+}
+.seat-foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: auto;
+  gap: 6px;
+  padding-top: 7px;
+  border-top: 1px dashed var(--rule);
+  font-size: 12px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@media (max-width: 400px) {
+  .seats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .seat-foot {
+    flex-direction: column;
+    gap: 1px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .seat {
+    transition: none;
+  }
+  .seat:hover:not(:disabled) {
+    transform: none;
+  }
+  .seat.online .seat-light i {
+    animation: none;
+  }
+}
+/* 点开的那位:弹窗里放完整卡片,不再套一层卡片边框;名字已经在弹窗标题上 */
+.seat-detail :deep(.modal) {
+  max-width: 1120px;
+}
+.seat-detail .card {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  overflow: visible;
+  margin: -18px -20px;
+}
+.seat-detail .who-top .name {
+  display: none;
+}
+
 /* ---------- 客户:一行账目,五列对齐(名字 / 用量 / 到期 / 月费 / 操作) ---------- */
 .cards {
   display: flex;
