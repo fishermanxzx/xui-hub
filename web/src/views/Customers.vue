@@ -7,7 +7,8 @@ import ClientLinks from '../components/ClientLinks.vue';
 import TopologyGraph from '../components/TopologyGraph.vue';
 import GeoField from '../components/GeoField.vue';
 import Modal from '../components/Modal.vue';
-import CustomerSeat from '../components/CustomerSeat.vue';
+import RoomList from '../components/RoomList.vue';
+import { hallRoom, linesOnline } from '../rooms';
 import CustomerTraffic from '../components/CustomerTraffic.vue';
 import LineExit from '../components/LineExit.vue';
 import CustomerRenew from '../components/CustomerRenew.vue';
@@ -17,7 +18,7 @@ import ActionMenu, { type MenuItem } from '../components/ActionMenu.vue';
 import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, exitIpOwners, exitIps, lastOnline, lineExitIp, matchCount, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort } from '../customerQuery';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
-import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, region, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget, routeWhen } from '../format';
+import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget, routeWhen } from '../format';
 import { toast, toastError } from '../toast';
 import type { Customer, EnforceOp, Line, LineRule, OpenedLine, OpenLineInput, Panel, PanelInbound, PanelRule, RouteHop, Socks, SubDevice, SubFetch, SubTemplate, UpstreamMode } from '../types';
 
@@ -99,88 +100,10 @@ watch(view, (v) => {
 });
 /** 完整卡片画哪几位:列表 = 筛出来的全部;机位 = 点开的那一位 */
 const cardList = computed(() => (view.value === 'list' ? shown.value : seatCustomer.value ? [seatCustomer.value] : []));
-/** 最近 5 分钟里在面板上在线过 = 在线(每分钟检查一次面板) */
-const ONLINE_MS = 5 * 60_000;
-const linesOnline = (lines: Line[]) => lines.some((l) => l.last_online > 0 && Date.now() - l.last_online < ONLINE_MS);
-const isOnline = (c: Customer) => {
-  const at = lastOnline(c);
-  return at > 0 && Date.now() - at < ONLINE_MS;
-};
-/** 线路用到这个 SOCKS:出口是它,或出口规则里用了它(和 SOCKS 页「在用」一样算) */
-const usesSocks = (l: Line, socksId: number) => l.exit_socks_id === socksId || (l.rules ?? []).some((r) => r.to.kind === 'socks' && r.to.socks_id === socksId);
-const anySocks = (l: Line) => l.exit_socks_id != null || (l.rules ?? []).some((r) => r.to.kind === 'socks');
-
-// 机房分房:像网吧的一间间房。按面板 = 一块面板一间,房里是在上面有线路的客户;按 SOCKS = 一个 SOCKS 一间,房里是线路用到它的客户;
-// 一位客户在几间房里有线路就坐在几间房里,在线按这间房里的线路算。选的哪种记在浏览器里
-type RoomBy = 'panel' | 'socks' | 'none';
-const ROOMS_KEY = 'xui-hub.customerRooms';
-const roomBy = ref<RoomBy>('panel');
-try {
-  const v = localStorage.getItem(ROOMS_KEY);
-  if (v === 'socks' || v === 'none') roomBy.value = v;
-} catch {
-  /* 读不了就按面板 */
-}
-watch(roomBy, (v) => {
-  try {
-    localStorage.setItem(ROOMS_KEY, v);
-  } catch {
-    /* 存不了就算了 */
-  }
-});
-interface RoomSeat {
-  c: Customer;
-  online: boolean;
-}
-interface Room {
-  key: string;
-  /** 门牌上的房号;「还没开线路」「没走 SOCKS」这种没有 */
-  no: string;
-  name: string;
-  /** 在哪:城市 / 地区 · IP */
-  where: string;
-  /** 连不上 / 测试不通:关灯 */
-  down: string;
-  empty: string;
-  seats: RoomSeat[];
-  online: number;
-}
-const room = (key: string, name: string, seats: RoomSeat[], extra: Partial<Room> = {}): Room => ({ key, no: '', name, where: '', down: '', empty: '', seats, online: seats.filter((s) => s.online).length, ...extra });
-const rooms = computed<Room[]>(() => {
-  const list = shown.value;
-  if (roomBy.value === 'none') return [room('all', '', list.map((c) => ({ c, online: isOnline(c) })))];
-  const out: Room[] = [];
-  if (roomBy.value === 'panel') {
-    for (const p of panels.value) {
-      const seats = list.flatMap((c) => {
-        const ls = c.lines.filter((l) => l.panel_id === p.id);
-        return ls.length ? [{ c, online: linesOnline(ls) }] : [];
-      });
-      out.push(room(`p${p.id}`, p.name, seats, { no: '·', where: [p.geo_city || region(p.geo_country), p.ip].filter(Boolean).join(' · '), down: p.check_error ? t('customers.roomPanelDown') : '', empty: t('customers.roomEmptyPanel') }));
-    }
-    const rest = list.filter((c) => !c.lines.length);
-    if (rest.length) out.push(room('rest', t('customers.roomNoLines'), rest.map((c) => ({ c, online: false }))));
-  } else {
-    for (const s of socksList.value) {
-      const seats = list.flatMap((c) => {
-        const ls = c.lines.filter((l) => usesSocks(l, s.id));
-        return ls.length ? [{ c, online: linesOnline(ls) }] : [];
-      });
-      const where = s.check?.ok ? [region(s.check.loc), s.check.ip].filter(Boolean).join(' · ') : '';
-      out.push(room(`s${s.id}`, s.name, seats, { no: '·', where, down: s.check && !s.check.ok ? t('customers.roomSocksDown') : '', empty: t('customers.roomEmptySocks') }));
-    }
-    const rest = list.filter((c) => !c.lines.some(anySocks));
-    if (rest.length) out.push(room('rest', t('customers.roomNoSocks'), rest.map((c) => ({ c, online: c.lines.length ? linesOnline(c.lines) : false }))));
-  }
-  // 筛选时只留有人的房间;房号按显示顺序编
-  let n = 0;
-  return (filtering.value ? out.filter((r) => r.seats.length) : out).map((r) => (r.no ? { ...r, no: String(++n).padStart(2, '0') } : r));
-});
-const roomOptions = computed<SelectOption<RoomBy>[]>(() => [
-  { value: 'panel', label: t('customers.roomsByPanel') },
-  { value: 'socks', label: t('customers.roomsBySocks') },
-  { value: 'none', label: t('customers.roomsNone') },
-]);
+/** 在线:最近 5 分钟里有线路在面板上在线过(见 rooms.ts) */
+const isOnline = (c: Customer) => linesOnline(c.lines);
+/** 机位:一间大厅,所有筛出来的客户;一人一台电脑,每条线路一根网线 */
+const hall = computed(() => [hallRoom(shown.value)]);
 
 // ---------- 线路默认收起:只留一行(条数、节点名、停用了几条),点开看详情;展开了哪些记在浏览器里 ----------
 const OPEN_LINES_KEY = 'xui-hub.openCustomerLines';
@@ -1273,7 +1196,6 @@ function exitText(l: Line): string {
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 3v10M2.5 10.5 5 13l2.5-2.5M11 13V3M8.5 5.5 11 3l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>{{ sortDir }}
       </button>
       <button v-if="!linesForced && withLines.length" type="button" class="link small" @click="toggleAllLines">{{ allLinesOpen ? t('customers.collapseAll') : t('customers.expandAll') }}</button>
-      <Select v-if="view === 'seats'" v-model="roomBy" :options="roomOptions" :aria-label="t('customers.roomsLabel')" />
       <span class="seg" role="group" :aria-label="t('customers.viewLabel')">
         <button type="button" :class="{ on: view === 'seats' }" :aria-pressed="view === 'seats'" @click="view = 'seats'">{{ t('customers.viewSeats') }}</button>
         <button type="button" :class="{ on: view === 'list' }" :aria-pressed="view === 'list'" @click="view = 'list'">{{ t('customers.viewList') }}</button>
@@ -1281,33 +1203,8 @@ function exitText(l: Line): string {
     </span>
   </div>
 
-  <!-- 机房:网吧里一间间房(一块面板或一个 SOCKS 一间,也可以不分房),房里一人一台电脑;点开看完整卡片 -->
-  <div v-if="view === 'seats' && shown.length" class="rooms">
-    <section v-for="r in rooms" :key="r.key" class="room" :class="{ down: r.down }">
-      <header v-if="roomBy !== 'none'" class="room-head">
-        <span class="room-sign"><span v-if="r.no" class="room-no">{{ r.no }}</span>{{ r.name }}</span>
-        <span v-if="r.where" class="muted small">{{ r.where }}</span>
-        <span v-if="r.down" class="badge err">{{ r.down }}</span>
-        <span class="room-count small">
-          {{ t('customers.roomCustomers', { n: r.seats.length }, r.seats.length) }}
-          <span v-if="r.online" class="text-ok"> · {{ t('customers.sumOnline', { n: r.online }) }}</span>
-        </span>
-      </header>
-      <div v-if="r.seats.length" class="seats">
-        <CustomerSeat
-          v-for="seat in r.seats"
-          :key="seat.c.id"
-          :customer="seat.c"
-          :online="seat.online"
-          :picked="seatOpen === seat.c.id"
-          :meter="meterLevel(seat.c)"
-          :pct="usePct(seat.c)"
-          @open="seatOpen = seat.c.id"
-        />
-      </div>
-      <p v-else class="room-empty muted small">{{ r.empty }}</p>
-    </section>
-  </div>
+  <!-- 机位:一间大厅,一人一台电脑(等距 3D 小场景),每条线路一根网线;点开看完整卡片 -->
+  <RoomList v-if="view === 'seats' && shown.length" :rooms="hall" :header="false" :picked="seatOpen" :warn-pct="warnPct" @open="(id) => (seatOpen = id)" />
 
   <!-- 完整卡片:列表时一位一张;机位图点开的那位放在弹窗里 -->
   <component
@@ -1916,98 +1813,7 @@ function exitText(l: Line): string {
   background: var(--fault-bg);
   color: var(--fault);
 }
-/* ---------- 机位 / 列表切换 ---------- */
-.seg {
-  display: inline-flex;
-  border: 1px solid var(--rule);
-  border-radius: 7px;
-  overflow: hidden;
-  background: var(--sheet);
-}
-.seg button {
-  border: none;
-  border-radius: 0;
-  background: none;
-  padding: 4px 12px;
-  color: var(--ink-soft);
-}
-.seg button + button {
-  border-left: 1px solid var(--rule);
-}
-.seg button.on {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  font-weight: 600;
-}
 
-/* ---------- 机房:网吧里一间间房(一块面板或一个 SOCKS 一间,也可以不分房),房里一人一台电脑 ---------- */
-.rooms {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.room {
-  border: 1px solid var(--rule);
-  border-radius: 12px;
-  background: var(--sunk);
-  overflow: hidden;
-}
-/* 门牌:房号、房名、在哪、几位客户 / 几位在线 */
-.room-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-  padding: 9px 14px;
-  border-bottom: 1px solid var(--rule);
-  background: var(--sheet);
-}
-.room-sign {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-}
-.room-no {
-  padding: 0 6px;
-  border-radius: 4px;
-  background: #1f2622;
-  color: #e9efe9;
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 20px;
-  letter-spacing: 0.05em;
-}
-.room-count {
-  margin-left: auto;
-  color: var(--ink-soft);
-  font-variant-numeric: tabular-nums;
-}
-.room-empty {
-  margin: 0;
-  padding: 18px 14px;
-}
-/* 面板连不上 / SOCKS 测试不通:这间房关灯(名牌照常看得清) */
-.room.down .seats :deep(.scene) {
-  filter: grayscale(0.75) brightness(0.6);
-}
-.room.down .room-sign {
-  color: var(--fault);
-}
-/* 房里的地面 */
-.seats {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
-  gap: 18px 14px;
-  padding: 16px 14px 18px;
-}
-@media (max-width: 420px) {
-  .seats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px 8px;
-    padding: 12px 8px 14px;
-  }
-}
 /* 点开的那位:弹窗里放完整卡片,不再套一层卡片边框;名字已经在弹窗标题上 */
 .seat-detail :deep(.modal) {
   max-width: 1120px;
