@@ -1,21 +1,66 @@
 <script setup lang="ts">
 // SOCKS 页:登记购买的 SOCKS5 代理,测连通性(出口 IP / 地区 / 延迟),给客户页的中转当出口用。
+// 默认「机房」:一个 SOCKS 一间房,房里坐着线路用到它的客户(点哪位到客户页看他);切到「表格」是原来的列表。
 // 右上角「地球」展开 3D 地球,按出口 IP 看各 SOCKS 分布在哪些地区。
 import { t } from '../i18n';
 import { computed, onMounted, ref } from 'vue';
 import { api } from '../api';
 import AssetRenew from '../components/AssetRenew.vue';
 import GlobeBlock from '../components/GlobeBlock.vue';
+import RoomList from '../components/RoomList.vue';
+import { socksRooms } from '../rooms';
 import { parseCoords, type GlobePoint } from '../geoRegions';
 import Modal from '../components/Modal.vue';
 import { costSummary, dateInputToMs, dueClass, fmtAgo, fmtCost, fmtDate, fmtDue, msToDateInput, region } from '../format';
 import { toast, toastError } from '../toast';
-import type { Socks, SocksInput } from '../types';
+import type { Customer, Socks, SocksInput } from '../types';
 
 const list = ref<Socks[]>([]);
 const summary = computed(() => costSummary(list.value));
 const checkingAll = ref(false);
 const checking = ref(new Set<number>());
+
+// ---------- 机房 / 表格:选的哪种记在浏览器里 ----------
+type SocksView = 'rooms' | 'table';
+const VIEW_KEY = 'xui-hub.socksView';
+const view = ref<SocksView>('rooms');
+try {
+  if (localStorage.getItem(VIEW_KEY) === 'table') view.value = 'table';
+} catch {
+  /* 读不了就用机房 */
+}
+function setView(v: SocksView) {
+  view.value = v;
+  try {
+    localStorage.setItem(VIEW_KEY, v);
+  } catch {
+    /* 存不了就算了 */
+  }
+  if (v === 'rooms') void loadRoomData();
+}
+const customers = ref<Customer[]>([]);
+/** 用量条变黄的百分比,跟设置里的提醒一致 */
+const warnPct = ref(80);
+let settingsRead = false;
+async function loadRoomData() {
+  try {
+    customers.value = await api.customers();
+  } catch (e) {
+    toastError(e);
+  }
+  if (settingsRead) return;
+  settingsRead = true;
+  try {
+    const n = (await api.settings()).notify.quota_warn_pct;
+    if (n) warnPct.value = n;
+  } catch {
+    /* 取不到就按 80 */
+  }
+}
+const rooms = computed(() => socksRooms(customers.value, list.value));
+/** 点房里的人:到客户页弹出他 */
+const openCustomer = (id: number) => (location.hash = `#customers/${id}`);
+if (view.value === 'rooms') void loadRoomData();
 
 async function load() {
   try {
@@ -72,7 +117,7 @@ const unlocated = computed(() => list.value.filter((s) => s.geo_lat == null).map
 const focused = ref<number | null>(null);
 let focusTimer: number | undefined;
 function focusRow(id: number) {
-  document.getElementById(`socks-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.getElementById(view.value === 'rooms' ? `room-s${id}` : `socks-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   focused.value = id;
   clearTimeout(focusTimer);
   focusTimer = window.setTimeout(() => (focused.value = null), 2000);
@@ -196,6 +241,10 @@ async function remove(s: Socks) {
       </details>
     </div>
     <div class="ph-actions">
+      <span class="seg" role="group" :aria-label="t('rooms.view')">
+        <button type="button" :class="{ on: view === 'rooms' }" :aria-pressed="view === 'rooms'" @click="setView('rooms')">{{ t('rooms.viewRooms') }}</button>
+        <button type="button" :class="{ on: view === 'table' }" :aria-pressed="view === 'table'" @click="setView('table')">{{ t('rooms.viewTable') }}</button>
+      </span>
       <button :aria-pressed="showGlobe" :disabled="!list.length" @click="toggleGlobe">{{ showGlobe ? t('globe.hide') : t('globe.show') }}</button>
       <button :disabled="checkingAll || !list.length" @click="checkAll">{{ checkingAll ? t('socks.testing') : t('socks.testAll') }}</button>
       <button class="primary" @click="openForm(null)">{{ t('socks.add') }}</button>
@@ -204,7 +253,11 @@ async function remove(s: Socks) {
 
   <GlobeBlock v-if="showGlobe && list.length" :points="globePoints" :unlocated="unlocated" :locating="locating" summary-key="globe.summarySocks" source-key="globe.sourceSocks" label-key="globe.ariaSocks" @pick="focusRow" />
 
-  <section class="sheet">
+  <template v-if="view === 'rooms' && list.length">
+    <p class="muted small rooms-hint">{{ t('rooms.hintSocks') }}</p>
+    <RoomList :rooms="rooms" :warn-pct="warnPct" @open="openCustomer" />
+  </template>
+  <section v-else class="sheet">
     <div class="table-wrap">
       <table>
         <thead>
@@ -307,6 +360,10 @@ async function remove(s: Socks) {
 </template>
 
 <style scoped>
+.rooms-hint {
+  margin: 0 0 10px;
+  max-width: 80ch;
+}
 tr.focused td {
   background: var(--accent-soft);
   transition: background 0.3s;

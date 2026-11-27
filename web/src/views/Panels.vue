@@ -1,15 +1,18 @@
 <script setup lang="ts">
-// 面板页:每块面板一张卡片,展开看入站和客户端;添加 / 编辑面板用弹窗。右上角「地球」展开 3D 地球,看各面板在哪。
+// 面板页:默认「机房」,一块面板一间房,房里坐着在上面有线路的客户(点哪位到客户页看他);切到「卡片」是每块面板一张卡片,
+// 展开看入站和客户端;添加 / 编辑面板用弹窗。右上角「地球」展开 3D 地球,看各面板在哪。
 import { t } from '../i18n';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { api, ApiError } from '../api';
 import Modal from '../components/Modal.vue';
 import PanelCard from '../components/PanelCard.vue';
 import GlobeBlock from '../components/GlobeBlock.vue';
+import RoomList from '../components/RoomList.vue';
+import { panelRooms } from '../rooms';
 import { parseCoords, type GlobePoint } from '../geoRegions';
 import { costSummary, dateInputToMs, fmtBytes, fmtCost, msToDateInput } from '../format';
 import { toast, toastError } from '../toast';
-import type { Panel, PanelInput, UninstallResult } from '../types';
+import type { Customer, Panel, PanelInput, UninstallResult } from '../types';
 
 const panels = ref<Panel[]>([]);
 const checking = ref(false);
@@ -35,7 +38,49 @@ function toggle(id: number) {
   }
 }
 
+// ---------- 机房 / 卡片:选的哪种记在浏览器里 ----------
+type PanelsView = 'rooms' | 'cards';
+const VIEW_KEY = 'xui-hub.panelsView';
+const view = ref<PanelsView>('rooms');
+try {
+  if (localStorage.getItem(VIEW_KEY) === 'cards') view.value = 'cards';
+} catch {
+  /* 读不了就用机房 */
+}
+function setView(v: PanelsView) {
+  view.value = v;
+  try {
+    localStorage.setItem(VIEW_KEY, v);
+  } catch {
+    /* 存不了就算了 */
+  }
+  if (v === 'rooms') void loadRoomData();
+}
+const customers = ref<Customer[]>([]);
+/** 用量条变黄的百分比,跟设置里的提醒一致 */
+const warnPct = ref(80);
+let settingsRead = false;
+async function loadRoomData() {
+  try {
+    customers.value = await api.customers();
+  } catch (e) {
+    toastError(e);
+  }
+  if (settingsRead) return;
+  settingsRead = true;
+  try {
+    const n = (await api.settings()).notify.quota_warn_pct;
+    if (n) warnPct.value = n;
+  } catch {
+    /* 取不到就按 80 */
+  }
+}
+const rooms = computed(() => panelRooms(customers.value, shownPanels.value));
+/** 点房里的人:到客户页弹出他 */
+const openCustomer = (id: number) => (location.hash = `#customers/${id}`);
+
 async function load() {
+  if (view.value === 'rooms') void loadRoomData();
   try {
     panels.value = await api.panels();
     // 没有面板再带的标签不再选着
@@ -85,7 +130,7 @@ const unlocated = computed(() => shownPanels.value.filter((p) => p.geo_lat == nu
 const focused = ref<number | null>(null);
 let focusTimer: number | undefined;
 function focusPanel(id: number) {
-  document.getElementById(`panel-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.getElementById(view.value === 'rooms' ? `room-p${id}` : `panel-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   focused.value = id;
   clearTimeout(focusTimer);
   focusTimer = window.setTimeout(() => (focused.value = null), 2000);
@@ -236,6 +281,10 @@ onUnmounted(() => clearInterval(timer));
       </details>
     </div>
     <div class="ph-actions">
+      <span class="seg" role="group" :aria-label="t('rooms.view')">
+        <button type="button" :class="{ on: view === 'rooms' }" :aria-pressed="view === 'rooms'" @click="setView('rooms')">{{ t('rooms.viewRooms') }}</button>
+        <button type="button" :class="{ on: view === 'cards' }" :aria-pressed="view === 'cards'" @click="setView('cards')">{{ t('rooms.viewCards') }}</button>
+      </span>
       <button :aria-pressed="showGlobe" :disabled="!panels.length" @click="toggleGlobe">{{ showGlobe ? t('globe.hide') : t('globe.show') }}</button>
       <button :disabled="checking || !panels.length" @click="checkAll">{{ checking ? t('panels.checking') : t('panels.checkAll') }}</button>
       <button class="primary" @click="openForm(null)">{{ t('panels.add') }}</button>
@@ -253,7 +302,11 @@ onUnmounted(() => clearInterval(timer));
 
   <GlobeBlock v-if="showGlobe && panels.length" :points="globePoints" :unlocated="unlocated" :locating="locating" summary-key="globe.summary" source-key="globe.source" label-key="globe.aria" @pick="focusPanel" />
 
-  <div class="cards">
+  <template v-if="view === 'rooms' && shownPanels.length">
+    <p class="muted small rooms-hint">{{ t('rooms.hintPanels') }}</p>
+    <RoomList :rooms="rooms" :warn-pct="warnPct" @open="openCustomer" />
+  </template>
+  <div v-else-if="view === 'cards'" class="cards">
     <div v-for="p in shownPanels" :id="`panel-${p.id}`" :key="p.id" class="card-wrap" :class="{ focused: focused === p.id }">
       <PanelCard :panel="p" :open="open.has(p.id)" :picked-tags="pickedTags" @toggle="toggle(p.id)" @edit="openForm(p)" @remove="remove(p)" @changed="load" @tag="toggleTag" />
     </div>
@@ -303,6 +356,10 @@ onUnmounted(() => clearInterval(timer));
 </template>
 
 <style scoped>
+.rooms-hint {
+  margin: 0 0 10px;
+  max-width: 80ch;
+}
 .cards {
   display: flex;
   flex-direction: column;

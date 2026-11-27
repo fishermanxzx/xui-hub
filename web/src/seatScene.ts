@@ -1,4 +1,4 @@
-// 客户页「机房」里每个机位的等距 3D 小场景:一块地板、桌子、显示器、椅子、方块小人。
+// 机房里每个机位的等距 3D 小场景:一块地板、桌子、显示器、桌上一台小主机、椅子、方块小人,主机后面接出网线(一条线路一根)。
 // 全用长方体拼,按世界坐标(x 往右下、y 往左下、z 朝上)投成等距视角,只画看得见的三个面(顶、+x、+y)。
 // 小人背对我们、面朝显示器;在线坐直打字,不在线趴在桌上睡觉。
 
@@ -48,6 +48,9 @@ const room: SceneFace[] = [
   ...box('metal', 18, 10, 29, 30, 3, 21),
   screenFace,
   { text: true },
+  // 桌上右边一台小主机,网线从它朝 +x 的那面接出去;正面一颗电源灯
+  ...box('case', 48, 8, 23, 8, 12, 9),
+  { cls: 'led', pts: [pt(50, 20, 29), pt(52, 20, 29), pt(52, 20, 30.5), pt(50, 20, 30.5)].join(' ') },
   ...box('metal', 22, 16, 23, 20, 5, 1),
 ];
 
@@ -95,6 +98,30 @@ export const SCENE_SLEEP: SceneFace[] = [
   ...backrest,
 ];
 
+/** 最多画几根网线(线路更多时只画这么多,条数写在名牌上) */
+export const MAX_CABLES = 8;
+/**
+ * 第 i 根网线(共 n 根)的折线:从主机朝 +x 那面的网口出来,翻过桌边,顺着右边桌腿下到地上,
+ * 在地板上散开走到右边沿,再从地板侧面垂下去(接到下面的网络)。
+ */
+function cable(i: number, n: number): string {
+  const py = 10 + (i % 4) * 2.6;
+  const pz = n > 4 ? 25 + Math.floor(i / 4) * 3 : 26.5;
+  const fy = 16 + (n > 1 ? (i * 40) / (n - 1) : 20);
+  return [pt(56, py, pz), pt(59.5, py, pz - 1.5), pt(59.5, py, 1), pt(61, fy, 0.4), pt(64, fy, 0.4), pt(64, fy, -9)].join(' ');
+}
+const cableCache = new Map<number, string[]>();
+/** n 根网线各自的折线点 */
+export function cables(n: number): string[] {
+  const k = Math.min(n, MAX_CABLES);
+  let got = cableCache.get(k);
+  if (!got) {
+    got = Array.from({ length: k }, (_, i) => cable(i, k));
+    cableCache.set(k, got);
+  }
+  return got;
+}
+
 /** 睡觉时冒的 z(画面坐标) */
 export const ZZZ = [
   { x: -9, y: -20 },
@@ -105,7 +132,7 @@ export const ZZZ = [
 export const SEAT_VIEWBOX = (() => {
   const xs: number[] = [];
   const ys: number[] = [];
-  for (const f of [...SCENE_WORK, ...SCENE_SLEEP]) {
+  for (const f of [...SCENE_WORK, ...SCENE_SLEEP, ...cables(MAX_CABLES).map((pts) => ({ pts }))]) {
     for (const p of f.pts?.split(' ') ?? []) {
       const [a, b] = p.split(',').map(Number);
       xs.push(a);

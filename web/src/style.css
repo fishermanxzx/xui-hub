@@ -357,6 +357,33 @@ details.about > p {
   line-height: 1.65;
 }
 
+/* ---------- 两三个选项的切换(机房 / 卡片 之类) ---------- */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--sheet);
+}
+
+.seg button {
+  border: none;
+  border-radius: 0;
+  background: none;
+  padding: 4px 12px;
+  color: var(--ink-soft);
+}
+
+.seg button + button {
+  border-left: 1px solid var(--rule);
+}
+
+.seg button.on {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
 /* ---------- 用量条 ---------- */
 .meter {
   height: 6px;

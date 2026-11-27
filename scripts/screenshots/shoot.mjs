@@ -33,13 +33,10 @@ async function shot(name, { width = 1280, height = 800, hash, before } = {}) {
   await page.screenshot({ path: `${OUT}/${name}.png` });
   console.log('saved', name);
 }
-// 客户页默认是机房(按面板分房):先截机房和点开张三的弹窗;开线路 / geo / 拓扑在列表里截,线路展开(都记在 localStorage 里)
+// 客户页默认是机位(一间大厅,每条线路一根网线):先截机位和点开张三的弹窗;开线路 / geo / 拓扑在列表里截,线路展开(都记在 localStorage 里)
 await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
-await page.evaluate(() => {
-  localStorage.setItem('xui-hub.customerView', 'seats');
-  localStorage.setItem('xui-hub.customerRooms', 'panel');
-});
-await shot('customers', { hash: 'customers', height: 1040 });
+await page.evaluate(() => localStorage.setItem('xui-hub.customerView', 'seats'));
+await shot('customers', { hash: 'customers', height: 640 });
 await shot('customer', { hash: 'customers', height: 760, before: async () => {
   await page.evaluate(() => document.querySelector('[data-seat="1"]')?.click());
   await sleep(400);
@@ -70,7 +67,11 @@ await shot('topology', { hash: 'customers', height: 700, before: async () => {
   await pickMenu('网络拓扑', '.card > .head');
   await sleep(1200);
 } });
-await page.evaluate(() => localStorage.setItem('xui-hub.openPanels', '[1]'));
-await shot('panels', { hash: 'panels', height: 760 });
+// 面板页默认是机房(一块面板一间房);SOCKS 页截表格
+await page.evaluate(() => {
+  localStorage.setItem('xui-hub.panelsView', 'rooms');
+  localStorage.setItem('xui-hub.socksView', 'table');
+});
+await shot('panels', { hash: 'panels', height: 1240 });
 await shot('socks', { hash: 'socks', height: 430 });
 await browser.close();

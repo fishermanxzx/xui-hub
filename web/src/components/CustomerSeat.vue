@@ -1,22 +1,48 @@
 <script setup lang="ts">
-// 客户页「机房」里的一个机位:一张桌子一台电脑(等距 3D 小场景,见 seatScene.ts),小人坐在那儿;
-// 在线坐着打字、屏幕亮,不在线趴着睡觉;下面一块名牌写编号、在线、名字、流量、到期、月费。点了发 open。
+// 机房里的一个机位:一张桌子一台电脑(等距 3D 小场景,见 seatScene.ts),小人坐在那儿;桌上小主机接出网线,一条线路一根:
+// 颜色按面板分(同一块面板到处同一种颜色),停用的灰色虚线,最近在线的线上有数据在流;悬停网线看是哪块面板。
+// 在线坐着打字、屏幕亮,不在线趴着睡觉;下面一块名牌写编号、线路条数、在线、名字、流量、到期、月费。点了发 open。
+import { computed } from 'vue';
 import { t } from '../i18n';
 import { dueLevel, fmtBytes, fmtCost, fmtDue, stateLabel } from '../format';
-import { SCENE_SLEEP, SCENE_WORK, SCREEN_TEXT_TRANSFORM, SEAT_VIEWBOX, ZZZ } from '../seatScene';
-import type { Customer } from '../types';
+import { lineOnline } from '../rooms';
+import { cables, MAX_CABLES, SCENE_SLEEP, SCENE_WORK, SCREEN_TEXT_TRANSFORM, SEAT_VIEWBOX, ZZZ } from '../seatScene';
+import type { Customer, Line } from '../types';
 
-defineProps<{
-  customer: Customer;
-  /** 这间房里算在线(分房时按这间房的线路算) */
-  online: boolean;
-  /** 正在弹窗里看的那位 */
-  picked: boolean;
-  /** 用量条:'' / 'warn' / 'full' 和百分比 */
-  meter: string;
-  pct: number;
-}>();
+const props = withDefaults(
+  defineProps<{
+    customer: Customer;
+    /** 这间房里算在线(房间按这间房的线路算) */
+    online: boolean;
+    /** 正在弹窗里看的那位 */
+    picked?: boolean;
+    /** 用量到额度的多少 % 时用量条变黄 */
+    warnPct?: number;
+    /** 哪些网线接在这间房里(其余的画淡);不给 = 全算 */
+    lineIn?: (l: Line) => boolean;
+  }>(),
+  { picked: false, warnPct: 80, lineIn: undefined },
+);
 defineEmits<{ open: [] }>();
+
+const pct = computed(() => (props.customer.quota_bytes ? Math.min(100, (props.customer.used / props.customer.quota_bytes) * 100) : 0));
+const meter = computed(() => (!props.customer.quota_bytes ? '' : props.customer.used >= props.customer.quota_bytes ? 'full' : pct.value >= props.warnPct ? 'warn' : ''));
+
+/** 网线颜色:按面板 id 轮换,同一块面板到处同一种颜色 */
+const CABLE_COLORS = ['#4f8ff7', '#f08a3c', '#3fbf7f', '#a77bf3', '#e2c13f', '#ee6fa8', '#36c3c9', '#9acd47'];
+const wires = computed(() => {
+  const lines = props.customer.lines.slice(0, MAX_CABLES);
+  const pts = cables(lines.length);
+  return lines.map((l, i) => ({
+    id: l.id,
+    pts: pts[i],
+    color: l.enable ? CABLE_COLORS[l.panel_id % CABLE_COLORS.length] : '#7d8681',
+    off: !l.enable,
+    live: l.enable && lineOnline(l),
+    dim: props.lineIn ? !props.lineIn(l) : false,
+    title: [l.panel_name + (l.node_name || l.panel_node_name ? `「${l.node_name || l.panel_node_name}」` : ''), !l.enable ? t('rooms.lineOff') : lineOnline(l) ? t('customers.seatOnline') : t('customers.seatOffline')].join(' · '),
+  }));
+});
 
 /** 屏幕上的字:英文 / 数字开头取前两个字母,其他取前两个字 */
 function avatarText(name: string): string {
@@ -46,10 +72,15 @@ const seatNo = (id: number) => String(id).padStart(3, '0');
       <g v-if="!online" class="zzz">
         <text v-for="(z, i) in ZZZ" :key="i" :x="z.x" :y="z.y">z</text>
       </g>
+      <g v-for="w in wires" :key="w.id" class="wire" :class="{ off: w.off, dim: w.dim }">
+        <title>{{ w.title }}</title>
+        <polyline class="cable" :points="w.pts" :style="{ stroke: w.color }" />
+        <polyline v-if="w.live && !w.dim" class="flow" :points="w.pts" />
+      </g>
     </svg>
     <span class="plate">
       <span class="seat-top">
-        <span class="seat-no">#{{ seatNo(customer.id) }}</span>
+        <span class="seat-no">#{{ seatNo(customer.id) }}<span v-if="customer.lines.length" class="seat-lines"> · {{ t('customers.lineCount', { n: customer.lines.length }, customer.lines.length) }}</span></span>
         <span class="seat-light"><i aria-hidden="true" />{{ online ? t('customers.seatOnline') : t('customers.seatOffline') }}</span>
       </span>
       <span class="seat-name">
@@ -204,6 +235,48 @@ const seatNo = (id: number) => String(id).padStart(3, '0');
 .shirt.r {
   fill: color-mix(in srgb, var(--av) 70%, #000);
 }
+.case.t {
+  fill: #6a746f;
+}
+.case.l {
+  fill: #545d59;
+}
+.case.r {
+  fill: #3f4643;
+}
+.led {
+  fill: #39413d;
+}
+.seat.online .led {
+  fill: #4ee08f;
+}
+/* 网线:一条线路一根,颜色按面板;停用的灰色虚线;最近在线的线上有数据在流;不在这间房的画淡 */
+.cable {
+  fill: none;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.wire.off .cable {
+  stroke-dasharray: 1.6 1.4;
+}
+.wire.dim {
+  opacity: 0.18;
+}
+.flow {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 0.7;
+  stroke-linecap: round;
+  stroke-dasharray: 0.6 6;
+  opacity: 0.9;
+  animation: seat-flow 1.2s linear infinite;
+}
+@keyframes seat-flow {
+  to {
+    stroke-dashoffset: -6.6;
+  }
+}
 .screen {
   fill: #0d1210;
 }
@@ -303,6 +376,10 @@ const seatNo = (id: number) => String(id).padStart(3, '0');
   font-family: var(--mono);
   letter-spacing: 0.04em;
 }
+.seat-lines {
+  font-family: var(--font);
+  letter-spacing: 0;
+}
 .seat-light {
   display: inline-flex;
   align-items: center;
@@ -388,7 +465,8 @@ const seatNo = (id: number) => String(id).padStart(3, '0');
     transform: none;
   }
   .zzz text,
-  .seat.online .arm {
+  .seat.online .arm,
+  .flow {
     animation: none;
   }
   .zzz text {
