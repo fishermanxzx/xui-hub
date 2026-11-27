@@ -7,6 +7,7 @@ import ClientLinks from '../components/ClientLinks.vue';
 import TopologyGraph from '../components/TopologyGraph.vue';
 import GeoField from '../components/GeoField.vue';
 import Modal from '../components/Modal.vue';
+import { SCENE_SLEEP, SCENE_WORK, SCREEN_TEXT_TRANSFORM, SEAT_VIEWBOX, ZZZ } from '../seatScene';
 import CustomerTraffic from '../components/CustomerTraffic.vue';
 import LineExit from '../components/LineExit.vue';
 import CustomerRenew from '../components/CustomerRenew.vue';
@@ -1212,7 +1213,7 @@ function exitText(l: Line): string {
     </span>
   </div>
 
-  <!-- 机位图:一格一位客户,在线的屏幕亮着;点开看完整卡片 -->
+  <!-- 机房:一人一台电脑(等距 3D 小场景),小人坐在那儿;在线的屏幕亮着在打字,不在线的趴着睡觉;点开看完整卡片 -->
   <div v-if="view === 'seats' && shown.length" class="seats">
     <button
       v-for="c in shown"
@@ -1220,29 +1221,37 @@ function exitText(l: Line): string {
       :key="c.id"
       type="button"
       class="seat"
-      :class="[c.state, { online: isOnline(c), picked: seatOpen === c.id }]"
+      :class="[c.state, `tone-${avatarTone(c)}`, { online: isOnline(c), picked: seatOpen === c.id }]"
       :title="t('customers.seatOpen', { name: c.name })"
       @click="seatOpen = c.id"
     >
-      <span class="seat-top">
-        <span class="seat-no">#{{ seatNo(c) }}</span>
-        <span class="seat-light"><i aria-hidden="true" />{{ isOnline(c) ? t('customers.seatOnline') : t('customers.seatOffline') }}</span>
-      </span>
-      <span class="monitor" aria-hidden="true">
-        <span class="screen"><span class="avatar" :class="`tone-${avatarTone(c)}`">{{ avatarText(c.name) }}</span></span>
-      </span>
-      <span class="seat-name">
-        <span class="nm">{{ c.name }}</span>
-        <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
-      </span>
-      <span class="seat-use">
-        <span class="fig" :class="{ 'text-err': c.state === 'over_quota' }"><b>{{ fmtBytes(c.used) }}</b><span class="muted"> / {{ c.quota_bytes ? fmtBytes(c.quota_bytes) : t('customers.noQuota') }}</span></span>
-        <span class="meter" :class="[meterLevel(c), { 'no-quota': !c.quota_bytes }]"><span :style="{ width: usePct(c) + '%' }" /></span>
-      </span>
-      <span class="seat-foot">
-        <span :class="{ 'text-warn': dueLevel(c.expire_at) === 'warn', 'text-err': dueLevel(c.expire_at) === 'err', muted: !c.expire_at }">{{ fmtDue(c.expire_at) }}</span>
-        <span v-if="c.monthly_fee != null">{{ t('customers.feeValue', { v: fmtCost(c.monthly_fee) }) }}</span>
-        <span v-else class="muted">{{ t('customers.noFee') }}</span>
+      <svg class="scene" :viewBox="SEAT_VIEWBOX" aria-hidden="true">
+        <template v-for="(f, i) in isOnline(c) ? SCENE_WORK : SCENE_SLEEP" :key="i">
+          <text v-if="f.text" class="screen-text" :transform="SCREEN_TEXT_TRANSFORM">{{ avatarText(c.name) }}</text>
+          <polygon v-else :class="f.cls" :points="f.pts" />
+        </template>
+        <g v-if="!isOnline(c)" class="zzz">
+          <text v-for="(z, i) in ZZZ" :key="i" :x="z.x" :y="z.y">z</text>
+        </g>
+      </svg>
+      <span class="plate">
+        <span class="seat-top">
+          <span class="seat-no">#{{ seatNo(c) }}</span>
+          <span class="seat-light"><i aria-hidden="true" />{{ isOnline(c) ? t('customers.seatOnline') : t('customers.seatOffline') }}</span>
+        </span>
+        <span class="seat-name">
+          <span class="nm">{{ c.name }}</span>
+          <span v-if="c.state !== 'active'" class="badge" :class="c.state">{{ stateLabel(c.state) }}</span>
+        </span>
+        <span class="seat-use">
+          <span class="fig" :class="{ 'text-err': c.state === 'over_quota' }"><b>{{ fmtBytes(c.used) }}</b><span class="muted"> / {{ c.quota_bytes ? fmtBytes(c.quota_bytes) : t('customers.noQuota') }}</span></span>
+          <span class="meter" :class="[meterLevel(c), { 'no-quota': !c.quota_bytes }]"><span :style="{ width: usePct(c) + '%' }" /></span>
+        </span>
+        <span class="seat-foot">
+          <span :class="{ 'text-warn': dueLevel(c.expire_at) === 'warn', 'text-err': dueLevel(c.expire_at) === 'err', muted: !c.expire_at }">{{ fmtDue(c.expire_at) }}</span>
+          <span v-if="c.monthly_fee != null">{{ t('customers.feeValue', { v: fmtCost(c.monthly_fee) }) }}</span>
+          <span v-else class="muted">{{ t('customers.noFee') }}</span>
+        </span>
       </span>
     </button>
   </div>
@@ -1878,45 +1887,234 @@ function exitText(l: Line): string {
   font-weight: 600;
 }
 
-/* ---------- 机位图:像网吧的机位一样一格一位客户;在线的那台屏幕亮着,其余黑屏 ---------- */
+/* ---------- 机房:一人一台电脑,小人坐在那儿 ---------- */
+/* 机房地面 */
 .seats {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+  gap: 18px 14px;
+  padding: 16px 14px 18px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--sunk);
 }
 .seat {
+  --av: #3b78c4;
   display: flex;
   flex-direction: column;
-  gap: 8px;
   min-width: 0;
-  padding: 9px 10px 11px;
+  padding: 0;
   text-align: left;
   font-weight: 400;
   line-height: 1.4;
-  border: 1px solid var(--rule);
+  border: none;
   border-radius: 10px;
+  background: none;
+  transition: transform 0.15s;
+}
+.seat:hover:not(:disabled) {
+  background: none;
+  transform: translateY(-2px);
+}
+.seat:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+.seat.tone-1 {
+  --av: #c2573b;
+}
+.seat.tone-2 {
+  --av: #23885f;
+}
+.seat.tone-3 {
+  --av: #8a5cc8;
+}
+.seat.tone-4 {
+  --av: #b8466f;
+}
+.seat.tone-5 {
+  --av: #a36d12;
+}
+.seat.tone-6 {
+  --av: #2f8a93;
+}
+.seat.tone-7 {
+  --av: #5d6c7b;
+}
+
+/* 场景:等距 3D,长方体顶面最亮、左下面(+y)次之、右下面(+x)最暗;屏幕和机身两种主题下都是深色 */
+.scene {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.floor.t {
+  fill: color-mix(in srgb, var(--ink) 6%, var(--sheet));
+}
+.floor.l {
+  fill: color-mix(in srgb, var(--ink) 16%, var(--sheet));
+}
+.floor.r {
+  fill: color-mix(in srgb, var(--ink) 26%, var(--sheet));
+}
+.wood.t {
+  fill: #c4935f;
+}
+.wood.l {
+  fill: #a77a4d;
+}
+.wood.r {
+  fill: #86603d;
+}
+.metal.t {
+  fill: #505955;
+}
+.metal.l {
+  fill: #3b423e;
+}
+.metal.r {
+  fill: #2a302d;
+}
+.chair.t {
+  fill: #6e7784;
+}
+.chair.l {
+  fill: #575f6b;
+}
+.chair.r {
+  fill: #434a54;
+}
+.pants.t {
+  fill: #61709a;
+}
+.pants.l {
+  fill: #4b5778;
+}
+.pants.r {
+  fill: #3a435d;
+}
+.shoe.t {
+  fill: #3b3b3b;
+}
+.shoe.l {
+  fill: #2b2b2b;
+}
+.shoe.r {
+  fill: #1e1e1e;
+}
+.skin.t {
+  fill: #f5d0a9;
+}
+.skin.l {
+  fill: #e8ba8e;
+}
+.skin.r {
+  fill: #cf9d71;
+}
+.hair.t {
+  fill: #4a3e35;
+}
+.hair.l {
+  fill: #33291f;
+}
+.hair.r {
+  fill: #241d17;
+}
+.shirt.t {
+  fill: color-mix(in srgb, var(--av) 70%, #fff);
+}
+.shirt.l {
+  fill: var(--av);
+}
+.shirt.r {
+  fill: color-mix(in srgb, var(--av) 70%, #000);
+}
+.screen {
+  fill: #0d1210;
+}
+.screen-text {
+  fill: #4c5550;
+  font-size: 9px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+/* 不在线:冒 z */
+.zzz text {
+  fill: var(--ink-faint);
+  font-size: 7px;
+  font-weight: 700;
+  animation: seat-zzz 3s ease-in-out infinite;
+}
+.zzz text + text {
+  font-size: 9px;
+  animation-delay: 1.5s;
+}
+@keyframes seat-zzz {
+  0% {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  40%,
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+/* 在线:屏幕亮,手在敲键盘 */
+.seat.online .screen {
+  fill: color-mix(in srgb, var(--av) 60%, #0d1210);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--av) 85%, transparent));
+}
+.seat.online .screen-text {
+  fill: #fff;
+}
+.seat.online .arm {
+  animation: seat-type 0.45s steps(2) infinite;
+}
+@keyframes seat-type {
+  50% {
+    transform: translateY(-0.8px);
+  }
+}
+/* 到期 / 超额:屏幕变红 */
+.seat.expired .screen,
+.seat.over_quota .screen {
+  fill: #3d1616;
+  filter: none;
+}
+.seat.expired .screen-text,
+.seat.over_quota .screen-text {
+  fill: #e0736b;
+}
+
+/* 名牌:编号、在线、名字、流量、到期、月费 */
+.plate {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  margin-top: 6px;
+  padding: 8px 10px 9px;
+  border: 1px solid var(--rule);
+  border-radius: 9px;
   background: var(--sheet);
   box-shadow: var(--shadow);
   transition:
     border-color 0.15s,
-    transform 0.15s,
     box-shadow 0.15s;
 }
-.seat:hover:not(:disabled) {
-  background: var(--sheet);
+.seat:hover .plate,
+.seat.picked .plate {
   border-color: var(--accent);
-  transform: translateY(-1px);
   box-shadow: var(--lift);
 }
-.seat:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.seat.picked {
-  border-color: var(--accent);
-}
-.seat.expired,
-.seat.over_quota {
+.seat.expired .plate,
+.seat.over_quota .plate {
   border-color: color-mix(in srgb, var(--fault) 40%, var(--rule));
 }
 .seat-top {
@@ -1949,90 +2147,6 @@ function exitText(l: Line): string {
 .seat.online .seat-light i {
   background: var(--ok);
   box-shadow: 0 0 0 3px var(--ok-bg);
-  animation: seat-blink 2.4s ease-in-out infinite;
-}
-@keyframes seat-blink {
-  50% {
-    opacity: 0.35;
-  }
-}
-/* 显示器:屏幕两种主题下都是深色,底下一截支架 */
-.monitor {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.monitor::after {
-  content: '';
-  width: 30px;
-  height: 5px;
-  border-radius: 0 0 4px 4px;
-  background: var(--rule);
-}
-.screen {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 82px;
-  border: 3px solid #29302c;
-  border-radius: 8px;
-  background: #101513;
-}
-.avatar {
-  --av: #3b78c4;
-  display: grid;
-  place-items: center;
-  width: 50px;
-  height: 50px;
-  border-radius: 50%;
-  background: var(--av);
-  color: #fff;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  filter: grayscale(0.55) brightness(0.62);
-}
-.avatar.tone-1 {
-  --av: #c2573b;
-}
-.avatar.tone-2 {
-  --av: #23885f;
-}
-.avatar.tone-3 {
-  --av: #8a5cc8;
-}
-.avatar.tone-4 {
-  --av: #b8466f;
-}
-.avatar.tone-5 {
-  --av: #a36d12;
-}
-.avatar.tone-6 {
-  --av: #2f8a93;
-}
-.avatar.tone-7 {
-  --av: #5d6c7b;
-}
-/* 在线:屏幕亮,头像带一圈绿灯 */
-.seat.online .screen {
-  background: radial-gradient(circle at 50% 50%, #1c3b2b 0%, #101513 72%);
-}
-.seat.online .avatar {
-  filter: none;
-  box-shadow:
-    0 0 0 3px #101513,
-    0 0 0 5px #3ad98a,
-    0 0 22px 4px color-mix(in srgb, var(--av) 60%, transparent);
-}
-/* 到期 / 超额:锁屏,头像灰掉 */
-.seat.expired .avatar,
-.seat.over_quota .avatar {
-  filter: grayscale(1) brightness(0.45);
-  box-shadow: none;
-}
-.seat.expired .screen,
-.seat.over_quota .screen {
-  background: repeating-linear-gradient(135deg, #1a1212 0 6px, #141010 6px 12px);
 }
 .seat-name {
   display: flex;
@@ -2077,19 +2191,20 @@ function exitText(l: Line): string {
 .seat-foot {
   display: flex;
   justify-content: space-between;
-  margin-top: auto;
   gap: 6px;
-  padding-top: 7px;
+  margin-top: auto;
+  padding-top: 6px;
   border-top: 1px dashed var(--rule);
   font-size: 12px;
   color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-@media (max-width: 400px) {
+@media (max-width: 420px) {
   .seats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    gap: 14px 8px;
+    padding: 12px 8px 14px;
   }
   .seat-foot {
     flex-direction: column;
@@ -2103,8 +2218,12 @@ function exitText(l: Line): string {
   .seat:hover:not(:disabled) {
     transform: none;
   }
-  .seat.online .seat-light i {
+  .zzz text,
+  .seat.online .arm {
     animation: none;
+  }
+  .zzz text {
+    opacity: 1;
   }
 }
 /* 点开的那位:弹窗里放完整卡片,不再套一层卡片边框;名字已经在弹窗标题上 */
