@@ -888,6 +888,7 @@ const en: Messages = {
     viewList: 'List',
     seatOnline: 'Online',
     seatOffline: 'Offline',
+    seatSeen: 'Seen {ago}',
     act: { smoke: 'Smoking', drink: 'Drinking', snack: 'Snacking', stretch: 'Stretching' },
     seatOpen: 'Open {name}: subscription, lines and actions',
     noFee: 'No fee set',

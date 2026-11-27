@@ -886,6 +886,7 @@ export default {
     viewList: '列表',
     seatOnline: '在线',
     seatOffline: '离线',
+    seatSeen: '{ago}在线',
     act: { smoke: '抽根烟', drink: '喝饮料', snack: '吃零食', stretch: '伸懒腰' },
     seatOpen: '点开看「{name}」的订阅、线路和操作',
     noFee: '没填月费',

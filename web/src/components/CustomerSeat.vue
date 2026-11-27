@@ -2,10 +2,10 @@
 // 机房里的一个机位:一张桌子一台电脑(等距 3D 小场景,见 seatScene.ts),小人坐在那儿;桌上小主机接出网线,一条线路一根:
 // 颜色按面板分(同一块面板到处同一种颜色),停用的灰色虚线,最近在线的线上有数据在流;悬停网线看是哪块面板。
 // 在线坐着打字、屏幕亮,时不时随机抽根烟、喝口饮料、吃零食、伸个懒腰;不在线趴着睡觉。
-// 下面一块名牌写编号、线路条数、在线(正在做小动作时写在干嘛,灯还是绿的)、名字、流量、到期、月费。点了发 open。
+// 下面一块名牌写编号、线路条数、在线(正在做小动作时写在干嘛,灯还是绿的;不在线写最近一次在线是多久前)、名字、流量、到期、月费。点了发 open。
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { t } from '../i18n';
-import { dueLevel, fmtBytes, fmtCost, fmtDue, stateLabel } from '../format';
+import { dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDue, stateLabel } from '../format';
 import { lineOnline } from '../rooms';
 import { ACT_MS, cables, MAX_CABLES, SCENE_ACT, SCENE_SLEEP, SCENE_WORK, SCREEN_TEXT_TRANSFORM, SEAT_ACTS, SEAT_VIEWBOX, ZZZ, type SeatAct } from '../seatScene';
 import type { Customer, Line } from '../types';
@@ -25,6 +25,16 @@ const props = withDefaults(
   { picked: false, warnPct: 80, lineIn: undefined },
 );
 defineEmits<{ open: [] }>();
+
+/** 最近一次在线:这间房里的几条线路(大厅里是全部线路)在面板上记的最近在线时间里最新的那次;0 = 没记到过 */
+const seen = computed(() => props.customer.lines.reduce((m, l) => (props.lineIn && !props.lineIn(l) ? m : Math.max(m, l.last_online || 0)), 0));
+const lightTitle = computed(() =>
+  act.value
+    ? `${t('customers.seatOnline')} · ${t(`customers.act.${act.value}`)}`
+    : !props.online && seen.value
+      ? `${t('customers.seatOffline')} · ${t('customers.lastOnline', { ago: fmtAgo(seen.value) })}`
+      : undefined,
+);
 
 const pct = computed(() => (props.customer.quota_bytes ? Math.min(100, (props.customer.used / props.customer.quota_bytes) * 100) : 0));
 const meter = computed(() => (!props.customer.quota_bytes ? '' : props.customer.used >= props.customer.quota_bytes ? 'full' : pct.value >= props.warnPct ? 'warn' : ''));
@@ -115,8 +125,12 @@ const seatNo = (id: number) => String(id).padStart(3, '0');
     <span class="plate">
       <span class="seat-top">
         <span class="seat-no">#{{ seatNo(customer.id) }}<span v-if="customer.lines.length" class="seat-lines"> · {{ t('customers.lineCount', { n: customer.lines.length }, customer.lines.length) }}</span></span>
-        <span class="seat-light" :title="act ? `${t('customers.seatOnline')} · ${t(`customers.act.${act}`)}` : undefined"
-          ><i aria-hidden="true" />{{ act ? t(`customers.act.${act}`) : online ? t('customers.seatOnline') : t('customers.seatOffline') }}</span
+        <span class="seat-light" :title="lightTitle"
+          ><i aria-hidden="true" /><template v-if="act">{{ t(`customers.act.${act}`) }}</template
+          ><template v-else-if="online">{{ t('customers.seatOnline') }}</template
+          ><template v-else-if="seen"
+            ><span class="seen-long">{{ t('customers.seatSeen', { ago: fmtAgo(seen) }) }}</span><span class="seen-short">{{ fmtAgo(seen) }}</span></template
+          ><template v-else>{{ t('customers.seatOffline') }}</template></span
         >
       </span>
       <span class="seat-name">
@@ -512,6 +526,7 @@ const seatNo = (id: number) => String(id).padStart(3, '0');
   padding: 8px 10px 9px;
   border: 1px solid var(--rule);
   border-radius: 9px;
+  container-type: inline-size;
   background: var(--sheet);
   box-shadow: var(--shadow);
   transition:
@@ -547,6 +562,32 @@ const seatNo = (id: number) => String(id).padStart(3, '0');
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+.seat-light .seen-short {
+  display: none;
+}
+/* 名牌窄的时候(比如一排六个)「3 小时前在线」放不下,只写「3 小时前」,悬停看全 */
+@container (max-width: 179px) {
+  .seat-light .seen-long {
+    display: none;
+  }
+  .seat-light .seen-short {
+    display: inline;
+  }
+}
+/* 再窄(手机一排两个)一行放不下:编号和在线分两行,在线那行写全 */
+@container (max-width: 149px) {
+  .seat-top {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+  }
+  .seat-light .seen-long {
+    display: inline;
+  }
+  .seat-light .seen-short {
+    display: none;
+  }
 }
 .seat-light i {
   width: 7px;
