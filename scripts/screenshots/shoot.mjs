@@ -33,12 +33,15 @@ async function shot(name, { width = 1280, height = 800, hash, before } = {}) {
   await page.screenshot({ path: `${OUT}/${name}.png` });
   console.log('saved', name);
 }
-// 客户页默认是机房(机位图):先截机房和点开张三的弹窗;开线路 / geo / 拓扑在列表里截,线路展开(都记在 localStorage 里)
+// 客户页默认是机房(按面板分房):先截机房和点开张三的弹窗;开线路 / geo / 拓扑在列表里截,线路展开(都记在 localStorage 里)
 await page.goto(`${BASE}/`, { waitUntil: 'networkidle0' });
-await page.evaluate(() => localStorage.setItem('xui-hub.customerView', 'seats'));
-await shot('customers', { hash: 'customers', height: 580 });
+await page.evaluate(() => {
+  localStorage.setItem('xui-hub.customerView', 'seats');
+  localStorage.setItem('xui-hub.customerRooms', 'panel');
+});
+await shot('customers', { hash: 'customers', height: 1040 });
 await shot('customer', { hash: 'customers', height: 760, before: async () => {
-  await page.evaluate(() => document.getElementById('seat-1')?.click());
+  await page.evaluate(() => document.querySelector('[data-seat="1"]')?.click());
   await sleep(400);
 } });
 await page.evaluate(() => {
