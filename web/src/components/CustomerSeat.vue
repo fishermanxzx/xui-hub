@@ -1,12 +1,13 @@
 <script setup lang="ts">
 // 机房里的一个机位:一张桌子一台电脑(等距 3D 小场景,见 seatScene.ts),小人坐在那儿;桌上小主机接出网线,一条线路一根:
 // 颜色按面板分(同一块面板到处同一种颜色),停用的灰色虚线,最近在线的线上有数据在流;悬停网线看是哪块面板。
-// 在线坐着打字、屏幕亮,不在线趴着睡觉;下面一块名牌写编号、线路条数、在线、名字、流量、到期、月费。点了发 open。
-import { computed } from 'vue';
+// 在线坐着打字、屏幕亮,时不时随机抽根烟、喝口饮料、吃零食、伸个懒腰;不在线趴着睡觉。
+// 下面一块名牌写编号、线路条数、在线(正在做小动作时写在干嘛,灯还是绿的)、名字、流量、到期、月费。点了发 open。
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { t } from '../i18n';
 import { dueLevel, fmtBytes, fmtCost, fmtDue, stateLabel } from '../format';
 import { lineOnline } from '../rooms';
-import { cables, MAX_CABLES, SCENE_SLEEP, SCENE_WORK, SCREEN_TEXT_TRANSFORM, SEAT_VIEWBOX, ZZZ } from '../seatScene';
+import { ACT_MS, cables, MAX_CABLES, SCENE_ACT, SCENE_SLEEP, SCENE_WORK, SCREEN_TEXT_TRANSFORM, SEAT_ACTS, SEAT_VIEWBOX, ZZZ, type SeatAct } from '../seatScene';
 import type { Customer, Line } from '../types';
 
 const props = withDefaults(
@@ -27,6 +28,36 @@ defineEmits<{ open: [] }>();
 
 const pct = computed(() => (props.customer.quota_bytes ? Math.min(100, (props.customer.used / props.customer.quota_bytes) * 100) : 0));
 const meter = computed(() => (!props.customer.quota_bytes ? '' : props.customer.used >= props.customer.quota_bytes ? 'full' : pct.value >= props.warnPct ? 'warn' : ''));
+
+/**
+ * 在线时的小动作:歇一会儿(头一次 2–20 秒,之后 12–40 秒)随机挑一个做,做完接着打字;不连着做同一个。
+ * 每个机位各算各的,所以一屋子人不会一起动。系统设了减少动态效果就不做。
+ */
+const act = ref<SeatAct | null>(null);
+let actTimer: ReturnType<typeof setTimeout> | undefined;
+const rand = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
+const calm = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+function rest(first = false) {
+  act.value = null;
+  actTimer = setTimeout(startAct, first ? rand(2000, 20000) : rand(12000, 40000));
+}
+function startAct() {
+  const last = act.value;
+  const pick = SEAT_ACTS.filter((a) => a !== last);
+  act.value = pick[Math.floor(Math.random() * pick.length)];
+  actTimer = setTimeout(rest, ACT_MS[act.value]);
+}
+watch(
+  () => props.online,
+  (on) => {
+    clearTimeout(actTimer);
+    if (on && !calm) rest(true);
+    else act.value = null;
+  },
+  { immediate: true },
+);
+onBeforeUnmount(() => clearTimeout(actTimer));
+const scene = computed(() => (!props.online ? SCENE_SLEEP : act.value ? SCENE_ACT[act.value] : SCENE_WORK));
 
 /** 网线颜色:按面板 id 轮换,同一块面板到处同一种颜色 */
 const CABLE_COLORS = ['#4f8ff7', '#f08a3c', '#3fbf7f', '#a77bf3', '#e2c13f', '#ee6fa8', '#36c3c9', '#9acd47'];
@@ -64,9 +95,12 @@ const seatNo = (id: number) => String(id).padStart(3, '0');
     :title="t('customers.seatOpen', { name: customer.name })"
     @click="$emit('open')"
   >
-    <svg class="scene" :viewBox="SEAT_VIEWBOX" aria-hidden="true">
-      <template v-for="(f, i) in online ? SCENE_WORK : SCENE_SLEEP" :key="i">
+    <svg class="scene" :class="act && `act-${act}`" :viewBox="SEAT_VIEWBOX" aria-hidden="true">
+      <template v-for="(f, i) in scene" :key="i">
         <text v-if="f.text" class="screen-text" :transform="SCREEN_TEXT_TRANSFORM">{{ avatarText(customer.name) }}</text>
+        <g v-else-if="f.fx" class="fx" :class="[f.fx, f.cls]" :transform="`translate(${f.at![0]} ${f.at![1]})`">
+          <circle v-for="k in 3" :key="k" :r="f.fx === 'puff' ? 1.6 + k * 0.6 : 0.9 + k * 0.2" :cx="f.fx === 'puff' ? (k - 2) * 2 : 0" />
+        </g>
         <polygon v-else :class="f.cls" :points="f.pts" />
       </template>
       <g v-if="!online" class="zzz">
@@ -81,7 +115,9 @@ const seatNo = (id: number) => String(id).padStart(3, '0');
     <span class="plate">
       <span class="seat-top">
         <span class="seat-no">#{{ seatNo(customer.id) }}<span v-if="customer.lines.length" class="seat-lines"> · {{ t('customers.lineCount', { n: customer.lines.length }, customer.lines.length) }}</span></span>
-        <span class="seat-light"><i aria-hidden="true" />{{ online ? t('customers.seatOnline') : t('customers.seatOffline') }}</span>
+        <span class="seat-light" :title="act ? `${t('customers.seatOnline')} · ${t(`customers.act.${act}`)}` : undefined"
+          ><i aria-hidden="true" />{{ act ? t(`customers.act.${act}`) : online ? t('customers.seatOnline') : t('customers.seatOffline') }}</span
+        >
       </span>
       <span class="seat-name">
         <span class="nm">{{ customer.name }}</span>
@@ -246,6 +282,133 @@ const seatNo = (id: number) => String(id).padStart(3, '0');
 }
 .led {
   fill: #39413d;
+}
+/* 小动作用到的东西:一罐饮料、一根烟、一包薯片、烟 */
+.can.t {
+  fill: #e4655a;
+}
+.can.l {
+  fill: #d0413a;
+}
+.can.r {
+  fill: #a32e28;
+}
+.lid.t {
+  fill: #dfe3e6;
+}
+.lid.l {
+  fill: #b9bfc4;
+}
+.lid.r {
+  fill: #949a9f;
+}
+.cig {
+  fill: #f4f1ea;
+}
+.cig.r {
+  fill: #d8d4cb;
+}
+.ember {
+  fill: #ff7a3c;
+}
+.bag.t {
+  fill: #8a5a17;
+}
+.bag.l {
+  fill: #f2bd3a;
+}
+.bag.r {
+  fill: #cf9a22;
+}
+.band.l {
+  fill: #e2483d;
+}
+.band.r {
+  fill: #b93a31;
+}
+.fx circle {
+  fill: #c9cdcb;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* 两段的动作:一个循环里前 65% 画 pa、后 35% 画 pb(循环多长按动作定) */
+.act-smoke {
+  --cyc: 4.6s;
+}
+.act-drink {
+  --cyc: 4s;
+}
+.act-snack {
+  --cyc: 2.4s;
+}
+.pa {
+  animation: seat-pa var(--cyc, 4s) step-end infinite;
+}
+.pb {
+  animation: seat-pb var(--cyc, 4s) step-end infinite;
+}
+@keyframes seat-pa {
+  0% {
+    opacity: 1;
+  }
+  65%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes seat-pb {
+  0% {
+    opacity: 0;
+  }
+  65%,
+  100% {
+    opacity: 1;
+  }
+}
+/* 烟头上一缕缕往上飘的烟 */
+.fx.smoke circle {
+  animation: seat-smoke 2.4s ease-out infinite;
+}
+.fx.smoke circle:nth-child(2) {
+  animation-delay: 0.8s;
+}
+.fx.smoke circle:nth-child(3) {
+  animation-delay: 1.6s;
+}
+@keyframes seat-smoke {
+  0% {
+    opacity: 0.75;
+    transform: translate(0, 0) scale(0.6);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(2px, -13px) scale(2.2);
+  }
+}
+/* 吸完放下手吐一口:跟着循环,刚回到 pa 时冒出来 */
+.fx.puff circle {
+  animation: seat-puff var(--cyc, 4s) ease-out infinite;
+}
+@keyframes seat-puff {
+  0% {
+    opacity: 0.8;
+    transform: translate(0, 0) scale(0.5);
+  }
+  45%,
+  100% {
+    opacity: 0;
+    transform: translate(-2px, -10px) scale(1.7);
+  }
+}
+/* 伸懒腰:两只手往上够一够 */
+.reach {
+  animation: seat-reach 1.5s ease-in-out infinite alternate;
+}
+@keyframes seat-reach {
+  to {
+    transform: translateY(-1.5px);
+  }
 }
 .seat.online .led {
   fill: #4ee08f;
@@ -466,7 +629,9 @@ const seatNo = (id: number) => String(id).padStart(3, '0');
   }
   .zzz text,
   .seat.online .arm,
-  .flow {
+  .flow,
+  .reach,
+  .fx circle {
     animation: none;
   }
   .zzz text {

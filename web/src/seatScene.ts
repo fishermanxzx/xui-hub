@@ -1,6 +1,6 @@
 // 机房里每个机位的等距 3D 小场景:一块地板、桌子、显示器、桌上一台小主机、椅子、方块小人,主机后面接出网线(一条线路一根)。
 // 全用长方体拼,按世界坐标(x 往右下、y 往左下、z 朝上)投成等距视角,只画看得见的三个面(顶、+x、+y)。
-// 小人背对我们、面朝显示器;在线坐直打字,不在线趴在桌上睡觉。
+// 小人背对我们、面朝显示器;在线坐直打字,时不时抽根烟、喝口饮料、吃零食、伸个懒腰(SCENE_ACT);不在线趴在桌上睡觉。
 
 export interface SceneFace {
   /** 多边形顶点(SVG points);屏幕上的字用 text */
@@ -9,6 +9,9 @@ export interface SceneFace {
   cls?: string;
   /** 这里画屏幕上的字 */
   text?: true;
+  /** 这里冒烟:smoke 烟头上一缕缕的烟,puff 吐出来的一口烟;at 是画面坐标 */
+  fx?: 'smoke' | 'puff';
+  at?: [number, number];
 }
 
 const iso = (x: number, y: number, z: number): [number, number] => [x - y, (x + y) / 2 - z];
@@ -26,6 +29,64 @@ function box(mat: string, x: number, y: number, z: number, w: number, d: number,
     { cls: `${mat} l`, pts: [pt(x, Y, z), pt(X, Y, z), pt(X, Y, Z), pt(x, Y, Z)].join(' ') },
   ];
 }
+
+type V3 = [number, number, number];
+const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const mul = (a: V3, k: number): V3 => [a[0] * k, a[1] * k, a[2] * k];
+const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const unit = (a: V3): V3 => mul(a, 1 / Math.hypot(...a));
+const ptv = (q: V3) => pt(q[0], q[1], q[2]);
+
+/**
+ * 斜放的长方体:从 o 出发、三条棱 u / v / w。只画朝着我们的面(法线朝 (1,1,1) 那边),
+ * 明暗按法线最偏哪个轴:偏上算顶面、偏 +x 算 r、偏 +y 算 l,跟 box 一样。
+ */
+function solid(mat: string, o: V3, u: V3, v: V3, w: V3): SceneFace[] {
+  const c = add(o, mul(add(add(u, v), w), 0.5));
+  const sides: [V3, V3, V3][] = [
+    [o, u, v],
+    [o, u, w],
+    [o, v, w],
+    [add(o, w), u, v],
+    [add(o, v), u, w],
+    [add(o, u), v, w],
+  ];
+  const out: SceneFace[] = [];
+  for (const [p, a, b] of sides) {
+    let n = cross(a, b);
+    if (dot(n, sub(add(p, mul(add(a, b), 0.5)), c)) < 0) n = mul(n, -1);
+    if (n[0] + n[1] + n[2] <= 1e-6) continue;
+    const side = n[2] >= n[0] && n[2] >= n[1] ? 't' : n[0] >= n[1] ? 'r' : 'l';
+    out.push({ cls: `${mat} ${side}`, pts: [p, add(p, a), add(add(p, a), b), add(p, b)].map(ptv).join(' ') });
+  }
+  return out;
+}
+
+/** 一截胳膊 / 一罐饮料 / 一根烟:从 a 到 b、截面 s×s 的方条,两头各多出 ext(关节处好接上) */
+function limb(mat: string, a: V3, b: V3, s: number, ext = 0): SceneFace[] {
+  const d = unit(sub(b, a));
+  let e1 = cross(d, [0, 0, 1]);
+  if (Math.hypot(...e1) < 1e-3) e1 = [1, 0, 0];
+  e1 = unit(e1);
+  const e2 = cross(d, e1);
+  const len = Math.hypot(...sub(b, a)) + 2 * ext;
+  return solid(mat, sub(sub(a, mul(d, ext)), mul(add(e1, e2), s / 2)), mul(d, len), mul(e1, s), mul(e2, s));
+}
+
+/** 一条胳膊:肩 → 肘 → 腕 → 手指尖;袖子是衣服色、手是皮肤色。几截按远近排好(远的先画) */
+function arm(cls: string, shoulder: V3, elbow: V3, wrist: V3, tip: V3): SceneFace[] {
+  const parts: [V3, SceneFace[]][] = [
+    [mul(add(shoulder, elbow), 0.5), limb(`shirt ${cls}`, shoulder, elbow, 4, 1.5)],
+    [mul(add(elbow, wrist), 0.5), limb(`shirt ${cls}`, elbow, wrist, 3.6, 1.2)],
+    [mul(add(wrist, tip), 0.5), limb(`skin ${cls}`, wrist, tip, 3.2, 0.3)],
+  ];
+  return parts.sort((x, y) => dot(x[0], [1, 1, 1]) - dot(y[0], [1, 1, 1])).flatMap((x) => x[1]);
+}
+
+/** 画面坐标 */
+const at = (x: number, y: number, z: number): [number, number] => iso(x, y, z).map((n) => Math.round(n * 10) / 10) as [number, number];
 
 // 显示器屏幕:在显示器朝 +y 的那一面上,留一圈边框
 const SCREEN = { x0: 20, x1: 46, y: 13, z0: 31, z1: 48 };
@@ -54,6 +115,9 @@ const room: SceneFace[] = [
   ...box('metal', 22, 16, 23, 20, 5, 1),
 ];
 
+/** 桌子右前角一罐饮料(喝的时候拿在手里) */
+const deskCan: SceneFace[] = [...box('can', 50, 20.5, 23, 3, 3, 5), ...box('lid', 50, 20.5, 28, 3, 3, 0.6)];
+
 /** 头:皮肤 + 头发(背对我们,后脑勺和头顶是头发) */
 const head = (x: number, y: number, z: number): SceneFace[] => [
   ...box('skin', x, y, z, 12, 11, 10),
@@ -71,25 +135,25 @@ const lower: SceneFace[] = [
   ...box('pants', 25, 30, 15, 14, 14, 5),
 ];
 const backrest = box('chair', 23, 48, 15, 18, 3, 15);
+const torso = box('shirt', 25, 38, 15, 14, 8, 18);
+const sitHead = head(26, 36, 34);
+
+/** 打字的两只手:搭在键盘上 */
+const typeLeft: SceneFace[] = [...box('skin arm', 21, 16, 24, 4, 3, 3), ...box('shirt arm', 21, 19, 24, 4, 15, 3), ...box('shirt arm', 21, 34, 24, 4, 8, 8)];
+const typeRight: SceneFace[] = [...box('skin arm', 39, 16, 24, 4, 3, 3), ...box('shirt arm', 39, 19, 24, 4, 15, 3), ...box('shirt arm', 39, 34, 24, 4, 8, 8)];
+
+/** 坐着的一个人:左手(在身子后面)、身子、右手、头、靠背;front 在头之后画(举到脸边的右手、吐的烟要盖在头上) */
+function sitting(desk: SceneFace[], left: SceneFace[], right: SceneFace[], front: SceneFace[] = []): SceneFace[] {
+  return [...room, ...desk, ...lower, ...left, ...torso, ...right, ...sitHead, ...front, ...backrest];
+}
 
 /** 在线:坐直,两只手在键盘上 */
-export const SCENE_WORK: SceneFace[] = [
-  ...room,
-  ...lower,
-  ...box('skin arm', 21, 16, 24, 4, 3, 3),
-  ...box('shirt arm', 21, 19, 24, 4, 15, 3),
-  ...box('shirt arm', 21, 34, 24, 4, 8, 8),
-  ...box('shirt', 25, 38, 15, 14, 8, 18),
-  ...box('skin arm', 39, 16, 24, 4, 3, 3),
-  ...box('shirt arm', 39, 19, 24, 4, 15, 3),
-  ...box('shirt arm', 39, 34, 24, 4, 8, 8),
-  ...head(26, 36, 34),
-  ...backrest,
-];
+export const SCENE_WORK: SceneFace[] = sitting(deskCan, typeLeft, typeRight);
 
 /** 不在线:往前趴到桌上,脸埋在胳膊上睡觉 */
 export const SCENE_SLEEP: SceneFace[] = [
   ...room,
+  ...deskCan,
   ...box('shirt', 19, 15, 23, 26, 9, 4),
   ...head(21, 15, 27),
   ...box('shirt', 23, 23, 23, 18, 9, 6),
@@ -97,6 +161,68 @@ export const SCENE_SLEEP: SceneFace[] = [
   ...box('shirt', 25, 30, 15, 14, 14, 13),
   ...backrest,
 ];
+
+const R_SHOULDER: V3 = [41, 41, 30.5];
+const L_SHOULDER: V3 = [23, 41, 30.5];
+
+/**
+ * 在线时随机做的小动作。有的分两段来回切(类名 pa / pb:一个循环里前 65% 画 pa、后 35% 画 pb),
+ * 另一只手接着打字。
+ */
+export type SeatAct = 'smoke' | 'drink' | 'snack' | 'stretch';
+export const SEAT_ACTS: SeatAct[] = ['smoke', 'drink', 'snack', 'stretch'];
+
+/** 抽烟:右手夹着烟搁在肩膀边上冒烟(pa),时不时送到嘴边吸一口(pb),放下来吐一口 */
+const smoke: SceneFace[] = (() => {
+  const elbow: V3 = [42.5, 37, 22.5];
+  const hold = [
+    ...arm('pa', R_SHOULDER, elbow, [43.8, 33, 30.5], [44, 32.4, 34]),
+    ...limb('cig pa', [44.2, 32.6, 33.5], [47, 31.8, 36.9], 0.9),
+    ...limb('ember pa', [47, 31.8, 36.9], [47.4, 31.7, 37.4], 1),
+    { fx: 'smoke' as const, cls: 'pa', at: at(47.6, 31.6, 38.1) },
+  ];
+  const puff = [
+    ...arm('pb', R_SHOULDER, elbow, [40, 32, 35], [38.5, 31.5, 37.6]),
+    ...limb('cig pb', [38.6, 31.8, 38.4], [35.8, 31, 39.2], 0.9),
+  ];
+  return sitting(deskCan, typeLeft, [], [...hold, ...puff, { fx: 'puff', at: at(33, 31, 44) }]);
+})();
+
+/** 喝饮料:桌上那罐拿起来仰着喝(pa),放下来歇一下(pb) */
+const drink: SceneFace[] = (() => {
+  const sip = [
+    ...arm('pa', R_SHOULDER, [46, 35.5, 31.5], [40.8, 31, 38.4], [39.6, 30.6, 40.4]),
+    ...limb('can pa', [38.4, 31.4, 39.4], [43.2, 29.4, 45], 3.4),
+  ];
+  const rest = [
+    ...box('can pb', 43, 27.5, 25, 3.2, 3.2, 6),
+    ...box('lid pb', 43, 27.5, 31, 3.2, 3.2, 0.6),
+    ...arm('pb', R_SHOULDER, [43.5, 37, 22.5], [44.2, 31.5, 26.5], [44.4, 29.6, 28.2]),
+  ];
+  return sitting([], typeLeft, [], [...sip, ...rest]);
+})();
+
+/** 吃零食:键盘右边一包薯片,右手伸进去抓(pb),送到嘴边嚼(pa);左手接着打字 */
+const snack: SceneFace[] = (() => {
+  const [bagTop, ...bagSides] = box('bag', 42, 13.5, 23, 5.5, 6, 7.5);
+  const band = box('band', 42, 13.5, 26, 5.5, 6, 2.2).slice(1);
+  const reach = arm('pb', R_SHOULDER, [44, 32, 24], [45.2, 21, 30.5], [45, 17.8, 28]);
+  const eat = arm('pa', R_SHOULDER, [45, 35.5, 25], [40.5, 32, 35.5], [38.8, 31.6, 37.8]);
+  // 桌上的东西(薯片袋子正面、那罐饮料)要盖住伸进袋子里的那只手,所以画在手后面
+  return sitting([bagTop], typeLeft, [], [...reach, ...bagSides, ...band, ...deskCan, ...eat]);
+})();
+
+/** 伸懒腰:两只手举过头顶 */
+const stretch: SceneFace[] = sitting(
+  deskCan,
+  arm('reach', L_SHOULDER, [20.5, 41.5, 40.5], [20, 41, 49.5], [20, 41, 53]),
+  [],
+  arm('reach', R_SHOULDER, [43.5, 41.5, 40.5], [44, 41, 49.5], [44, 41, 53]),
+);
+
+export const SCENE_ACT: Record<SeatAct, SceneFace[]> = { smoke, drink, snack, stretch };
+/** 每个动作做多久(毫秒) */
+export const ACT_MS: Record<SeatAct, number> = { smoke: 13000, drink: 8000, snack: 10000, stretch: 4500 };
 
 /** 最多画几根网线(线路更多时只画这么多,条数写在名牌上) */
 export const MAX_CABLES = 8;
