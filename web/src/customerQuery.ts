@@ -14,6 +14,20 @@ export type CountFilter = '' | '0' | '1' | '2' | '3' | '4' | '5+';
 export const COUNT_FILTERS: Exclude<CountFilter, ''>[] = ['0', '1', '2', '3', '4', '5+'];
 export const matchCount = (n: number, f: CountFilter) => !f || (f === '5+' ? n >= 5 : n === Number(f));
 
+/** 规则分流:'' = 不限;any = 有线路按规则分了出口;hub = 有在 xui-hub 里配的出口规则;panel = 有面板上手配的分流规则;none = 都没有 */
+export type SplitFilter = '' | 'any' | 'hub' | 'panel' | 'none';
+export const SPLIT_FILTERS: Exclude<SplitFilter, ''>[] = ['any', 'hub', 'panel', 'none'];
+/** 线路在 xui-hub 里配了出口规则 */
+const splitByHub = (l: Line) => (l.rules?.length ?? 0) > 0;
+/** 面板上读到点名这条线路、带条件的规则,又不是 xui-hub 写的(3x-ui 里手配的,只点名他或点名了好几个人) */
+const splitByPanel = (l: Line) => !!l.routes?.some((h) => !h.fallback && h.origin !== 'xui');
+export function matchSplit(c: Customer, f: SplitFilter): boolean {
+  if (!f) return true;
+  const hub = c.lines.some(splitByHub);
+  const panel = c.lines.some(splitByPanel);
+  return f === 'hub' ? hub : f === 'panel' ? panel : f === 'none' ? !hub && !panel : hub || panel;
+}
+
 export interface CustomerQuery {
   /** 搜名字、备注、线路 email、节点名 */
   q: string;
@@ -28,6 +42,8 @@ export interface CustomerQuery {
   exits: CountFilter;
   /** 有线路落地在这些 IP 上(任一个;按线路主出口算,见 lineExitIp) */
   ips: string[];
+  /** 规则分流 */
+  split: SplitFilter;
   sort: CustomerSort;
   /** 反过来排 */
   reverse: boolean;
@@ -153,7 +169,8 @@ export function queryCustomers(list: Customer[], f: CustomerQuery, now = Date.no
       matchState(c, f.state, now) &&
       matchCount(c.lines.length, f.lines) &&
       (!f.exits || matchCount(exitIps(c, pm, sm).length, f.exits)) &&
-      (!ips.size || exitIps(c, pm, sm).some((ip) => ips.has(ip))),
+      (!ips.size || exitIps(c, pm, sm).some((ip) => ips.has(ip))) &&
+      matchSplit(c, f.split),
   );
   const key = KEY[f.sort];
   const flip = DESC[f.sort] !== f.reverse;

@@ -15,7 +15,7 @@ import CustomerRenew from '../components/CustomerRenew.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import MultiSelect from '../components/MultiSelect.vue';
 import ActionMenu, { type MenuItem } from '../components/ActionMenu.vue';
-import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, exitIpOwners, exitIps, lastOnline, lineExitIp, matchCount, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort } from '../customerQuery';
+import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, SPLIT_FILTERS, exitIpOwners, exitIps, lastOnline, lineExitIp, matchCount, matchSplit, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort, type SplitFilter } from '../customerQuery';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget, routeWhen } from '../format';
@@ -46,7 +46,7 @@ function savedSort(): Pick<CustomerQuery, 'sort' | 'reverse'> {
   }
   return { sort: 'name', reverse: false };
 }
-const query = ref<CustomerQuery>({ q: '', panels: [], state: '', tags: [], lines: '', exits: '', ips: [], ...savedSort() });
+const query = ref<CustomerQuery>({ q: '', panels: [], state: '', tags: [], lines: '', exits: '', ips: [], split: '', ...savedSort() });
 watch(
   () => [query.value.sort, query.value.reverse],
   () => {
@@ -77,7 +77,7 @@ const pickedIps = computed(() => new Set(query.value.ips));
 const offPanel = (l: Line) =>
   (pickedPanels.value.size > 0 && !pickedPanels.value.has(l.panel_id) && !(l.exit_panel_id != null && pickedPanels.value.has(l.exit_panel_id))) ||
   (pickedIps.value.size > 0 && !pickedIps.value.has(lineExitIp(l, panelMap.value, socksMap.value)));
-const filtering = computed(() => !!query.value.q.trim() || !!query.value.panels.length || !!query.value.state || !!query.value.tags.length || !!query.value.lines || !!query.value.exits || !!query.value.ips.length);
+const filtering = computed(() => !!query.value.q.trim() || !!query.value.panels.length || !!query.value.state || !!query.value.tags.length || !!query.value.lines || !!query.value.exits || !!query.value.ips.length || !!query.value.split);
 // ---------- 两种看法:机位(像网吧的机位图,一格一位客户,只看头像、名字、流量、到期、月费,点开看全部)和列表;选的哪种记在浏览器里 ----------
 type CustomerView = 'seats' | 'list';
 const VIEW_KEY = 'xui-hub.customerView';
@@ -153,7 +153,7 @@ const nodeNamePh = (panelId: number) => (panelNodeName(panelId) ? t('customers.f
 const linesOff = (c: Customer) => c.lines.filter((l) => !l.enable).length;
 
 function clearFilters() {
-  query.value = { ...query.value, q: '', panels: [], state: '', tags: [], lines: '', exits: '', ips: [] };
+  query.value = { ...query.value, q: '', panels: [], state: '', tags: [], lines: '', exits: '', ips: [], split: '' };
 }
 
 // ---------- 从别的页跳过来看某位客户(#customers/5,如面板页客户端后面的客户名) ----------
@@ -229,6 +229,10 @@ const ipFilterLabel = computed(() => {
   if (!picked.length) return t('customers.allExitIps');
   return picked.length === 1 ? picked[0] : t('customers.exitIpsPicked', { n: picked.length });
 });
+const splitFilterOptions = computed<SelectOption<SplitFilter>[]>(() => [
+  { value: '', label: t('customers.allSplits') },
+  ...SPLIT_FILTERS.map((f) => ({ value: f, label: t(`customers.split.${f}`, { n: customers.value.filter((c) => matchSplit(c, f)).length }) })),
+]);
 const panelFilterOptions = computed<SelectOption<number>[]>(() =>
   panels.value.map((p) => ({ value: p.id, label: t('customers.panelOption', { name: p.name, n: customers.value.filter((c) => usesPanel(c, new Set([p.id]))).length }) })),
 );
@@ -1164,43 +1168,49 @@ function exitText(l: Line): string {
     </div>
   </header>
 
+  <!-- 上面一行:搜索 + 排序 / 视图;下面一行:各种筛选,窄屏时两列排 -->
   <div v-if="customers.length" class="filters">
-    <label class="search">
-      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5" /><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
-      <input v-model="query.q" type="search" :placeholder="t('customers.searchPlaceholder')" :aria-label="t('customers.search')" />
-    </label>
-    <MultiSelect v-model="query.panels" :options="panelFilterOptions" :label="panelFilterLabel" :all-label="t('customers.allPanels')" :aria-label="t('customers.filterPanels')" :class="{ set: query.panels.length }" />
-    <MultiSelect v-if="allTags.length" v-model="query.tags" :options="tagFilterOptions" :label="tagFilterLabel" :all-label="t('customers.allTags')" :aria-label="t('customers.filterTags')" searchable :class="{ set: query.tags.length }" />
-    <Select v-model="query.state" :options="stateOptions" :aria-label="t('customers.filterState')" :class="{ set: query.state }" />
-    <Select v-model="query.lines" :options="linesFilterOptions" :aria-label="t('customers.filterLineCount')" :class="{ set: query.lines }" />
-    <Select v-model="query.exits" :options="exitsFilterOptions" :aria-label="t('customers.filterExitCount')" :class="{ set: query.exits }" />
-    <MultiSelect
-      v-if="ipFilterOptions.length"
-      v-model="query.ips"
-      :options="ipFilterOptions"
-      :label="ipFilterLabel"
-      :all-label="t('customers.allExitIps')"
-      :aria-label="t('customers.filterExitIp')"
-      :title="t('customers.filterExitIpHint')"
-      searchable
-      :search-placeholder="t('customers.searchExitIp')"
-      :class="{ set: query.ips.length }"
-    />
-    <template v-if="filtering">
-      <span class="muted small">{{ t('customers.shown', { n: shown.length, total: customers.length }) }}</span>
-      <button type="button" class="link small" @click="clearFilters">{{ t('customers.clearFilters') }}</button>
-    </template>
-    <span class="sort">
-      <Select v-model="query.sort" :options="sortOptions" :aria-label="t('customers.sortBy')" />
-      <button type="button" class="dir" :title="t('customers.sortDirHint')" :aria-pressed="query.reverse" @click="query.reverse = !query.reverse">
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 3v10M2.5 10.5 5 13l2.5-2.5M11 13V3M8.5 5.5 11 3l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>{{ sortDir }}
-      </button>
-      <button v-if="!linesForced && withLines.length" type="button" class="link small" @click="toggleAllLines">{{ allLinesOpen ? t('customers.collapseAll') : t('customers.expandAll') }}</button>
-      <span class="seg" role="group" :aria-label="t('customers.viewLabel')">
-        <button type="button" :class="{ on: view === 'seats' }" :aria-pressed="view === 'seats'" @click="view = 'seats'">{{ t('customers.viewSeats') }}</button>
-        <button type="button" :class="{ on: view === 'list' }" :aria-pressed="view === 'list'" @click="view = 'list'">{{ t('customers.viewList') }}</button>
+    <div class="filters-top">
+      <label class="search">
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5" /><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
+        <input v-model="query.q" type="search" :placeholder="t('customers.searchPlaceholder')" :aria-label="t('customers.search')" />
+      </label>
+      <span class="sort">
+        <Select v-model="query.sort" :options="sortOptions" :aria-label="t('customers.sortBy')" />
+        <button type="button" class="dir" :title="t('customers.sortDirHint')" :aria-pressed="query.reverse" @click="query.reverse = !query.reverse">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5 3v10M2.5 10.5 5 13l2.5-2.5M11 13V3M8.5 5.5 11 3l2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>{{ sortDir }}
+        </button>
+        <button v-if="!linesForced && withLines.length" type="button" class="link small" @click="toggleAllLines">{{ allLinesOpen ? t('customers.collapseAll') : t('customers.expandAll') }}</button>
+        <span class="seg" role="group" :aria-label="t('customers.viewLabel')">
+          <button type="button" :class="{ on: view === 'seats' }" :aria-pressed="view === 'seats'" @click="view = 'seats'">{{ t('customers.viewSeats') }}</button>
+          <button type="button" :class="{ on: view === 'list' }" :aria-pressed="view === 'list'" @click="view = 'list'">{{ t('customers.viewList') }}</button>
+        </span>
       </span>
-    </span>
+    </div>
+    <div class="filters-row" role="group" :aria-label="t('customers.filterGroup')">
+      <MultiSelect v-model="query.panels" :options="panelFilterOptions" :label="panelFilterLabel" :all-label="t('customers.allPanels')" :aria-label="t('customers.filterPanels')" :class="{ set: query.panels.length }" />
+      <MultiSelect v-if="allTags.length" v-model="query.tags" :options="tagFilterOptions" :label="tagFilterLabel" :all-label="t('customers.allTags')" :aria-label="t('customers.filterTags')" searchable :class="{ set: query.tags.length }" />
+      <Select v-model="query.state" :options="stateOptions" :aria-label="t('customers.filterState')" :class="{ set: query.state }" />
+      <Select v-model="query.lines" :options="linesFilterOptions" :aria-label="t('customers.filterLineCount')" :class="{ set: query.lines }" />
+      <Select v-model="query.exits" :options="exitsFilterOptions" :aria-label="t('customers.filterExitCount')" :class="{ set: query.exits }" />
+      <MultiSelect
+        v-if="ipFilterOptions.length"
+        v-model="query.ips"
+        :options="ipFilterOptions"
+        :label="ipFilterLabel"
+        :all-label="t('customers.allExitIps')"
+        :aria-label="t('customers.filterExitIp')"
+        :title="t('customers.filterExitIpHint')"
+        searchable
+        :search-placeholder="t('customers.searchExitIp')"
+        :class="{ set: query.ips.length }"
+      />
+      <Select v-model="query.split" :options="splitFilterOptions" :aria-label="t('customers.filterSplit')" :title="t('customers.filterSplitHint')" :class="{ set: query.split }" />
+      <span v-if="filtering" class="filter-sum">
+        <span class="muted small">{{ t('customers.shown', { n: shown.length, total: customers.length }) }}</span>
+        <button type="button" class="link small" @click="clearFilters">{{ t('customers.clearFilters') }}</button>
+      </span>
+    </div>
   </div>
 
   <!-- 机位:一间大厅,一人一台电脑(等距 3D 小场景),每条线路一根网线;点开看完整卡片 -->
@@ -1729,17 +1739,28 @@ function exitText(l: Line): string {
 /* ---------- 搜索 / 过滤 / 排序 ---------- */
 .filters {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.filters-top {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 8px;
-  margin-bottom: 14px;
+  gap: 8px;
+}
+.filters-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
 }
 .search {
   display: flex;
   align-items: center;
   gap: 7px;
-  flex: 1 1 220px;
-  max-width: 300px;
+  flex: 1 1 240px;
+  max-width: 360px;
   padding: 0 10px;
   border: 1px solid var(--rule);
   border-radius: 7px;
@@ -1759,22 +1780,29 @@ function exitText(l: Line): string {
   background: none;
   outline: none;
 }
-/* 过滤器平时是灰字,选了条件的变成浅青底 */
-.filters :deep(button.select) {
-  max-width: 200px;
+/* 过滤器平时是灰字,选了条件的变成浅青底;字太长就省略,鼠标停上去看全 */
+.filters-row :deep(button.select) {
+  max-width: 220px;
   padding: 5px 8px;
   border-color: transparent;
   background: transparent;
   color: var(--ink-soft);
 }
-.filters :deep(button.select:hover:not(:disabled)) {
+.filters-row :deep(button.select:hover:not(:disabled)) {
   border-color: var(--rule);
   background: var(--sheet);
 }
-.filters :deep(button.select.set) {
+.filters-row :deep(button.select.set) {
   color: var(--accent-strong);
   background: var(--accent-soft);
   border-color: transparent;
+}
+.filter-sum {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 8px;
+  white-space: nowrap;
 }
 .sort {
   margin-left: auto;
@@ -1782,6 +1810,38 @@ function exitText(l: Line): string {
   align-items: center;
   gap: 2px 8px;
   flex-wrap: wrap;
+}
+.sort :deep(button.select) {
+  padding: 5px 8px;
+  border-color: transparent;
+  background: transparent;
+}
+.sort :deep(button.select:hover:not(:disabled)) {
+  border-color: var(--rule);
+  background: var(--sheet);
+}
+@media (max-width: 640px) {
+  .search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}
+/* 不够一行放下时:筛选按列对齐(平板三四列、手机两列),不再一个挨一个乱折行 */
+@media (max-width: 900px) {
+  .filters-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 4px;
+  }
+  .filters-row :deep(button.select) {
+    max-width: none;
+    width: 100%;
+    border-color: var(--rule);
+  }
+  .filter-sum {
+    grid-column: 1 / -1;
+    padding-left: 2px;
+  }
 }
 .sort :deep(button.select) {
   color: var(--ink);
