@@ -15,7 +15,7 @@ import CustomerRenew from '../components/CustomerRenew.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import MultiSelect from '../components/MultiSelect.vue';
 import ActionMenu, { type MenuItem } from '../components/ActionMenu.vue';
-import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, SPLIT_FILTERS, exitIpOwners, exitIps, lastOnline, lineExitIp, matchCount, matchSplit, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort, type SplitFilter } from '../customerQuery';
+import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, SPLIT_FILTERS, exitIpOwners, exitIps, lastOnline, lineExitIps, matchCount, matchSplit, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort, type SplitFilter } from '../customerQuery';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget, routeWhen } from '../format';
@@ -68,7 +68,7 @@ watch(panels, (list) => {
 const shown = computed(() => queryCustomers(customers.value, query.value, Date.now(), { panels: panels.value, socks: socksList.value }));
 const panelMap = computed(() => new Map(panels.value.map((p) => [p.id, p])));
 const socksMap = computed(() => new Map(socksList.value.map((s) => [s.id, s])));
-/** 每位客户的落地 IP(去重;按线路主出口算,见 lineExitIp) */
+/** 每位客户的落地 IP(去重;主出口和分流出去的都算,见 lineExitIps) */
 const exitsOf = computed(() => new Map(customers.value.map((c) => [c.id, exitIps(c, panelMap.value, socksMap.value)])));
 const exitCount = (c: Customer) => exitsOf.value.get(c.id)?.length ?? 0;
 /** 按面板 / 落地 IP 过滤时,客户卡片里不在这些面板上、不落地在这些 IP 上的线路淡一点 */
@@ -76,7 +76,7 @@ const pickedPanels = computed(() => new Set([...query.value.panels, ...(query.va
 const pickedIps = computed(() => new Set(query.value.ips));
 const offPanel = (l: Line) =>
   (pickedPanels.value.size > 0 && !pickedPanels.value.has(l.panel_id) && !(l.exit_panel_id != null && pickedPanels.value.has(l.exit_panel_id))) ||
-  (pickedIps.value.size > 0 && !pickedIps.value.has(lineExitIp(l, panelMap.value, socksMap.value)));
+  (pickedIps.value.size > 0 && !lineExitIps(l, panelMap.value, socksMap.value).some((ip) => pickedIps.value.has(ip)));
 const filtering = computed(() => !!query.value.q.trim() || !!query.value.panels.length || !!query.value.state || !!query.value.tags.length || !!query.value.lines || !!query.value.exits || !!query.value.ips.length || !!query.value.split);
 // ---------- 两种看法:机位(像网吧的机位图,一格一位客户,只看头像、名字、流量、到期、月费,点开看全部)和列表;选的哪种记在浏览器里 ----------
 type CustomerView = 'seats' | 'list';

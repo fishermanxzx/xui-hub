@@ -110,7 +110,7 @@ const globePoints = computed<GlobePoint[]>(() =>
       // 手动填的坐标没有国家代码,用测试时测出的地区
       country: s.geo_country || s.check?.loc || '',
       down: s.check?.ok === false,
-      meta: [s.check?.ip, s.check ? (s.check.ok ? `${s.check.ms} ms` : t('globe.socksDown')) : '', s.used_by ? t('globe.customers', { n: s.customers }) : ''].filter(Boolean).join(' · '),
+      meta: [s.check?.ip, s.check ? (s.check.ok ? `${s.check.ms} ms` : t('globe.socksDown')) : '', s.seen_by ? t('globe.customers', { n: s.customers }) : ''].filter(Boolean).join(' · '),
     })),
 );
 const unlocated = computed(() => list.value.filter((s) => s.geo_lat == null).map((s) => ({ id: s.id, name: s.name, reason: s.geo_error })));
@@ -286,7 +286,7 @@ async function remove(s: Socks) {
               <span v-else class="muted">—</span>
             </td>
             <td class="small nowrap">
-              <button v-if="s.used_by" class="link" :title="t('socks.usedLines', { n: s.used_by }, s.used_by)" @click="usersFor = s">{{ t('socks.usedBy', { n: s.customers }, s.customers) }}</button>
+              <button v-if="s.seen_by" class="link" :title="t('socks.usedLines', { n: s.seen_by }, s.seen_by)" @click="usersFor = s">{{ t('socks.usedBy', { n: s.customers }, s.customers) }}</button>
               <span v-else class="muted">—</span>
             </td>
             <td class="small mono"><template v-if="s.monthly_cost != null">{{ fmtCost(s.monthly_cost) }}</template><span v-else class="muted">—</span></td>

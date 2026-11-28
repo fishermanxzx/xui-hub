@@ -48,8 +48,12 @@ export interface SocksUser {
   lines: number;
 }
 
-/** used_by:用到它的线路数(出口是它,或出口规则里用了它);customers:这些线路属于几位客户;users:是哪几位(按名字排) */
-export type SocksView = Omit<SocksProxy, 'password'> & { has_password: boolean; check: SocksCheck | null; used_by: number; customers: number; users: SocksUser[] };
+/**
+ * used_by:xui-hub 让它当出口的线路数(出口是它,或出口规则里用了它);还有这种线路时不让删
+ * seen_by:用到它的线路数,再加上面板上读到的分流规则(含 3x-ui 里手配的)指向它的线路
+ * customers / users:seen_by 这些线路属于几位客户、是哪几位(按名字排)
+ */
+export type SocksView = Omit<SocksProxy, 'password'> & { has_password: boolean; check: SocksCheck | null; used_by: number; seen_by: number; customers: number; users: SocksUser[] };
 
 export interface SocksInput {
   name?: unknown;
@@ -145,6 +149,7 @@ function rowToView(row: any, users: SocksUser[]): SocksView {
     ...rest,
     has_password: password !== '',
     used_by: row.used_by ?? 0,
+    seen_by: row.seen_by ?? 0,
     customers: row.customers ?? 0,
     users,
     check: row.check_at == null ? null : { at: row.check_at, ok: row.check_ok === 1, ms: row.check_ms, ip: row.check_ip, loc: row.check_loc, error: row.check_error },
@@ -152,14 +157,17 @@ function rowToView(row: any, users: SocksUser[]): SocksView {
 }
 
 const USES = `l.exit_socks_id = s.id OR EXISTS (SELECT 1 FROM json_each(l.rules) r WHERE json_extract(r.value, '$.to.socks_id') = s.id)`;
+/** 面板上读到的出口(同步时记下的路由规则,含 3x-ui 里手配的分流)有一条指向它 */
+const SEEN = `${USES} OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(l.routes) THEN l.routes ELSE '[]' END) h WHERE json_extract(h.value, '$.to.socks_id') = s.id)`;
 const USING = `FROM lines l WHERE ${USES}`;
-const VIEW_SQL = `SELECT s.*, (SELECT COUNT(*) ${USING}) AS used_by, (SELECT COUNT(DISTINCT l.customer_id) ${USING}) AS customers FROM socks_proxies s`;
+const SEEING = `FROM lines l WHERE ${SEEN}`;
+const VIEW_SQL = `SELECT s.*, (SELECT COUNT(*) ${USING}) AS used_by, (SELECT COUNT(*) ${SEEING}) AS seen_by, (SELECT COUNT(DISTINCT l.customer_id) ${SEEING}) AS customers FROM socks_proxies s`;
 
 /** 各 SOCKS 被哪些客户用着(socks id → 客户);只查一个时传 id */
 function usersOf(db: DB, id?: number): Map<number, SocksUser[]> {
   const rows = db
     .prepare(
-      `SELECT s.id AS sid, c.id, c.name, COUNT(*) AS lines FROM socks_proxies s JOIN lines l ON ${USES} JOIN customers c ON c.id = l.customer_id
+      `SELECT s.id AS sid, c.id, c.name, COUNT(*) AS lines FROM socks_proxies s JOIN lines l ON (${SEEN}) JOIN customers c ON c.id = l.customer_id
        ${id == null ? '' : 'WHERE s.id = @id'} GROUP BY s.id, c.id ORDER BY c.name COLLATE NOCASE, c.id`,
     )
     .all(id == null ? {} : { id }) as (SocksUser & { sid: number })[];

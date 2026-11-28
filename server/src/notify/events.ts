@@ -170,7 +170,7 @@ export function assetEvents(db: DB, s: Settings['notify'], now: number): Message
     const key = `asset_expiring:socks:${x.id}:${x.expire_at}`;
     if (alreadyNotified(db, key)) continue;
     markNotified(db, key, now);
-    const use = x.used_by ? `${x.used_by} 条线路拿它当出口(${x.customers} 位客户)` : '还没有线路用它';
+    const use = x.seen_by ? `${x.seen_by} 条线路用到它(${x.customers} 位客户)` : '还没有线路用它';
     out.push({ event: 'socks_expiring', title: `SOCKS「${x.name}」${dueText(x.expire_at, now)}`, text: `到期日 ${fmtDate(x.expire_at)}${cost(x.monthly_cost)};${use}\n续了以后在后台点「续费」顺延到期日`, at: now });
   }
   return out;

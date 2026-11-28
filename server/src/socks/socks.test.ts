@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer, type AddressInfo } from 'node:net';
 import { test } from 'node:test';
-import { addLine, createCustomer, deleteLine, getCustomer } from '../customers/repo';
+import { addLine, createCustomer, deleteLine, getCustomer, setLineRoutes } from '../customers/repo';
 import { addPanel, memoryDb } from '../testUtil';
 import { checkSocks, parseTrace } from './check';
 import { createSocks, deleteSocks, getSocks, getSocksView, listSocks, parseSocksAddress, planSocksUpdate, saveCheck, updateSocks } from './repo';
@@ -109,6 +109,18 @@ test('在用的 SOCKS 删不了:有线路拿它当出口时先删线路', () => 
   // 是哪几位客户、各有几条线路用到它:按名字排
   assert.deepEqual(getSocksView(db, id)!.users, [{ id: cid2, name: 'li', lines: 1 }, { id: cid, name: 'zhang', lines: 2 }]);
   assert.deepEqual(listSocks(db).map((s) => [s.name, s.users.map((u) => u.name)]), [['att', ['li', 'zhang']], ['idle', []]]);
+  // 面板上读到的分流规则(3x-ui 里手配的)指向它:客户算进去,但不挡删除
+  const cid3 = createCustomer(db, { name: 'wang' });
+  const line3 = addLine(db, { customer_id: cid3, kind: 'direct', panel_id: a.id, inbound_id: 1, inbound_remark: 'r', protocol: 'vless', email: 'wang' });
+  setLineRoutes(db, line3.id, [
+    { when: { domain: ['geosite:openai'] }, to: { kind: 'socks', tag: 'hand', address: '1.2.3.4:5', socks_id: id }, fallback: false, origin: 'own' },
+    { when: {}, to: { kind: 'direct', tag: 'direct' }, fallback: true },
+  ]);
+  db.prepare('UPDATE lines SET routes = ? WHERE id = ?').run('not json', line.id);
+  const seen = getSocksView(db, id)!;
+  assert.deepEqual([seen.used_by, seen.seen_by, seen.customers, seen.users.map((u) => u.name)], [3, 4, 3, ['li', 'wang', 'zhang']]);
+  assert.deepEqual(listSocks(db).map((s) => [s.name, s.seen_by]), [['att', 4], ['idle', 0]]);
+  deleteLine(db, line3.id);
   deleteLine(db, line2.id);
   deleteLine(db, getCustomer(db, cid2)!.lines[0].id);
   assert.throws(() => deleteSocks(db, id), /还有 1 条线路在用这个 SOCKS/);

@@ -128,8 +128,11 @@ export interface Socks {
   created_at: number;
   updated_at: number;
   check: SocksCheck | null;
-  /** 拿它当出口的线路数(出口是它,或出口规则里用了它);这些线路属于几位客户 */
+  /** xui-hub 让它当出口的线路数(出口是它,或出口规则里用了它);不为 0 时不能删 */
   used_by: number;
+  /** 用到它的线路数,再加上面板上读到的分流规则指向它的(含 3x-ui 里手配的);customers / users 按这些算 */
+  seen_by: number;
+  /** seen_by 这些线路属于几位客户 */
   customers: number;
   /** 是哪几位客户,各有几条线路用到它(按名字排) */
   users: { id: number; name: string; lines: number }[];
