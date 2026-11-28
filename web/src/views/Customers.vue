@@ -11,6 +11,10 @@ import RoomList from '../components/RoomList.vue';
 import { hallRoom, linesOnline } from '../rooms';
 import CustomerTraffic from '../components/CustomerTraffic.vue';
 import LineExit from '../components/LineExit.vue';
+import RuleEditor from '../components/RuleEditor.vue';
+import LineRulesBatch from '../components/LineRulesBatch.vue';
+import ExitSwap from '../components/ExitSwap.vue';
+import { fromRow, toRow, type RuleRow } from '../ruleRows';
 import CustomerRenew from '../components/CustomerRenew.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
 import MultiSelect from '../components/MultiSelect.vue';
@@ -906,36 +910,9 @@ async function showLinks(line: Line) {
 
 // ---------- 线路:改节点名 ----------
 // ---------- 出口规则(写到面板的 Xray 路由) ----------
-interface RuleRow {
-  domain: string;
-  ip: string;
-  port: string;
-  network: string;
-  /** 'direct' / 'block' / 'socks:<id>' */
-  to: string;
-}
 const rulesFor = ref<Line | null>(null);
 const ruleRows = ref<RuleRow[]>([]);
 const savingRules = ref(false);
-const toRow = (r: LineRule): RuleRow => ({ domain: r.domain.join('\n'), ip: r.ip.join(', '), port: r.port, network: r.network, to: r.to.kind === 'socks' ? `socks:${r.to.socks_id}` : r.to.kind });
-const fromRow = (r: RuleRow): LineRule => ({
-  domain: r.domain.split(/[\n,]/).map((x) => x.trim()).filter(Boolean),
-  ip: r.ip.split(/[\n,]/).map((x) => x.trim()).filter(Boolean),
-  port: r.port.trim(),
-  network: r.network,
-  to: r.to.startsWith('socks:') ? { kind: 'socks', socks_id: Number(r.to.slice(6)) } : r.to === 'block' ? { kind: 'block' } : { kind: 'direct' },
-});
-const ruleTargets = computed<SelectOption<string>[]>(() => [
-  ...socksList.value.map((s) => ({ value: `socks:${s.id}`, label: t('customers.routeSocks', { name: s.name }) })),
-  { value: 'direct', label: t('customers.direct') },
-  { value: 'block', label: t('customers.routeBlock') },
-]);
-const networkOptions = computed<SelectOption<string>[]>(() => [
-  { value: '', label: t('customers.rulesNetworkAny') },
-  { value: 'tcp', label: 'TCP' },
-  { value: 'udp', label: 'UDP' },
-]);
-const defaultTarget = () => (socksList.value[0] ? `socks:${socksList.value[0].id}` : 'direct');
 function openRules(line: Line) {
   rulesFor.value = line;
   ruleRows.value = (line.rules ?? []).map(toRow);
@@ -984,15 +961,6 @@ async function actPanelRule(r: PanelRule, adopt: boolean) {
 }
 /** 出口里不归 xui-hub 管的那一跳:手配只点名他的 / 多人共用的 */
 const foreign = (h?: RouteHop) => (h?.origin === 'own' || h?.origin === 'shared' ? h.origin : null);
-function addRule() {
-  ruleRows.value.push({ domain: '', ip: '', port: '', network: '', to: defaultTarget() });
-}
-function moveRule(i: number, d: number) {
-  const j = i + d;
-  if (j < 0 || j >= ruleRows.value.length) return;
-  const rows = ruleRows.value;
-  [rows[i], rows[j]] = [rows[j], rows[i]];
-}
 /** 线路原来的出口(规则没命中的流量走它) */
 const baseExit = (l: Line) => (l.kind === 'direct' ? t('customers.direct') : l.exit_socks_name ? t('customers.routeSocks', { name: l.exit_socks_name }) : l.exit_label || t('customers.gone'));
 async function saveRules() {
@@ -1038,6 +1006,14 @@ async function saveRename() {
 const exitFor = ref<{ customer: Customer; lines: Line[] } | null>(null);
 async function exitDone() {
   exitFor.value = null;
+  await load();
+}
+// ---------- 一位客户:批量改出口规则 / 换出口 IP ----------
+const rulesAllFor = ref<Customer | null>(null);
+const swapFor = ref<Customer | null>(null);
+async function bulkDone() {
+  rulesAllFor.value = null;
+  swapFor.value = null;
   await load();
 }
 
@@ -1114,7 +1090,9 @@ async function enableLine(c: Customer, l: Line) {
 const customerMenu = (c: Customer): MenuItem[] => [
   { label: t('customers.trafficTrend'), run: () => (trafficFor.value = c) },
   { label: t('customers.topology'), run: () => (topoFor.value = c), disabled: !c.lines.length },
+  { label: t('customers.swapExit'), run: () => (swapFor.value = c), disabled: !c.lines.length },
   { label: t('customers.exitAll'), run: () => (exitFor.value = { customer: c, lines: c.lines }), disabled: !c.lines.length },
+  { label: t('customers.rulesAll'), run: () => (rulesAllFor.value = c), disabled: !c.lines.length },
   { label: t('customers.resetUsage'), run: () => resetUsage(c), disabled: !c.lines.length, divide: true },
   { label: t('customers.resetLink'), run: () => resetLink(c) },
   { label: t('customers.deleteCustomer'), run: () => remove(c), danger: true, divide: true },
@@ -1663,30 +1641,18 @@ function exitText(l: Line): string {
     <TopologyGraph :customer="topoFor" :panels="panels" :socks="socksList" :height="420" />
   </Modal>
 
+  <Modal v-if="swapFor" :title="t('exitSwap.title', { name: swapFor.name })" @close="swapFor = null">
+    <ExitSwap :customer="swapFor" :socks="socksList" :panels="panels" @done="bulkDone" />
+  </Modal>
+
+  <Modal v-if="rulesAllFor" :title="t('rulesBatch.title', { name: rulesAllFor.name })" @close="rulesAllFor = null">
+    <LineRulesBatch :customer="rulesAllFor" :lines="rulesAllFor.lines" :socks="socksList" @done="bulkDone" />
+  </Modal>
+
   <Modal v-if="rulesFor" :title="t('customers.rulesTitle', { panel: rulesFor.panel_name, email: rulesFor.email })" @close="rulesFor = null">
     <form id="rules-form" class="form" @submit.prevent="saveRules">
       <p class="muted small">{{ t('customers.rulesIntro') }}</p>
-      <div v-for="(r, i) in ruleRows" :key="i" class="rule-card">
-        <div class="rule-head">
-          <strong class="small">{{ t('customers.ruleN', { n: i + 1 }) }}</strong>
-          <span class="spacer" />
-          <button type="button" class="link" :disabled="i === 0" :title="t('customers.ruleUp')" @click="moveRule(i, -1)">↑</button>
-          <button type="button" class="link" :disabled="i === ruleRows.length - 1" :title="t('customers.ruleDown')" @click="moveRule(i, 1)">↓</button>
-          <button type="button" class="link danger" @click="ruleRows.splice(i, 1)">{{ t('common.delete') }}</button>
-        </div>
-        <GeoField v-model="r.domain" kind="site" multiline :panel-id="rulesFor.panel_id" :panel-name="rulesFor.panel_name" :label="t('customers.ruleDomain')" :placeholder="t('customers.ruleDomainPlaceholder')" />
-        <div class="two">
-          <GeoField v-model="r.ip" kind="ip" :panel-id="rulesFor.panel_id" :panel-name="rulesFor.panel_name" :label="t('customers.ruleIp')" :placeholder="t('customers.ruleIpPlaceholder')" />
-          <label class="field">{{ t('customers.rulePort') }}<input v-model="r.port" spellcheck="false" :placeholder="t('customers.rulePortPlaceholder')" /></label>
-        </div>
-        <div class="two">
-          <label class="field">{{ t('customers.ruleNetwork') }}<Select v-model="r.network" :options="networkOptions" /></label>
-          <label class="field">{{ t('customers.ruleTo') }}<Select v-model="r.to" :options="ruleTargets" /></label>
-        </div>
-      </div>
-      <div class="row rule-add">
-        <button v-if="ruleRows.length < 20" type="button" class="link" @click="addRule()">{{ t('customers.ruleAdd') }}</button>
-      </div>
+      <RuleEditor v-model="ruleRows" :socks="socksList" :panel-id="rulesFor.panel_id" :panel-name="rulesFor.panel_name" />
       <p class="small">{{ t('customers.rulesRest', { exit: baseExit(rulesFor) }) }}</p>
       <p class="muted small hint">{{ t('customers.rulesHint') }}</p>
       <section v-if="panelRulesError || panelRules?.length" class="panel-rules">
@@ -2079,23 +2045,6 @@ function exitText(l: Line): string {
 }
 .names {
   cursor: help;
-}
-.rule-card {
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.rule-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.rule-add {
-  flex-wrap: wrap;
-  gap: 6px 12px;
 }
 /* 出口规则弹窗下面:面板上手配的规则 */
 .panel-rules {
