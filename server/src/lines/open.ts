@@ -12,7 +12,7 @@ import { errorText, panelKey, serial, using } from '../util';
 import { allSocks, getSocks, type SocksEndpoint } from '../socks/repo';
 import { renameLinks, validNodeName } from '../subscription/nodeName';
 import { XUIError } from '../xui/client';
-import { editXray, editXrayChecked, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, sameServer, setUserRules, socksServer, unrouteUserExit, userExit, type ExitServer, type ResolvedRule, type RouteAdmin, type UserRoute } from './relay';
+import { editXray, editXrayChecked, isManagedRule, parseExitSocksId, prepareExit, removeRoutes, routeUserToExit, sameServer, setUserRules, socksServer, unrouteUserExit, userExit, type ExitServer, type ResolvedRule, type RouteAdmin, type UserRoute } from './relay';
 import { routesForClient } from './routes';
 import { checkRulesGeo, type GeoValidator } from './geodata';
 import { validRules, type LineRule } from './rules';
@@ -255,6 +255,130 @@ export async function changeLineExits(db: DB, lines: Line[], target: ExitTarget,
     const known = allSocks(db).map((s) => ({ id: s.id, host: s.host, port: s.port }));
     for (const l of group) {
       setLineExit(db, l.id, exit ? { socks_id: exit.socks_id, label: exit.label } : null);
+      setLineRoutes(db, l.id, routesForClient(back, tags.get(l.inbound_id)!, l.email, known));
+      changed.push(getLine(db, l.id) ?? l);
+    }
+  });
+  return {
+    changed,
+    failed: [...failed.flatMap((f) => f.lines.map((line) => ({ line, error: f.error }))), ...gone.map((line) => ({ line, error: new InputError('这条线路的面板已经不在了') }))],
+  };
+}
+
+/** 读回来核对:每个客户端在面板上由 xui-hub 写的出口规则条数和要写的一样 */
+const managedCount = (xray: any, tag: string, email: string) => (Array.isArray(xray?.routing?.rules) ? xray.routing.rules : []).filter((r: any) => isManagedRule(r, tag, email)).length;
+
+/** 面板上这些线路的入站 tag;找不到入站(或入站没有 tag)的线路报错,整块面板不动 */
+async function inboundTags(admin: LineAdmin, group: Line[]): Promise<Map<number, string>> {
+  const tags = new Map((await admin.listInbounds()).map((ib) => [Number(ib.id), String(ib.tag ?? '')]));
+  const lost = group.filter((l) => !tags.get(l.inbound_id));
+  if (lost.length) throw new InputError(`面板上找不到这些线路的入站(或入站没有 tag):${lost.map((l) => l.email).join('、')}`);
+  return tags;
+}
+
+/**
+ * 一批线路的出口规则整组换成同一组 rules(空 = 都去掉),比如给一位客户的几条线路配一样的分流。
+ * 同一块面板上的一起改:只连一次、核对一遍 geo 规则、写回并重启一次 Xray(都已经是这组规则就不写不重启),
+ * 读回核对后才改记录,并按读回的配置马上算一遍实际出口。哪块面板没成,只有那块上的线路不改,返回里带原因
+ */
+export async function applyRulesToLines(db: DB, lines: Line[], rules: LineRule[], adminFor: (panel: Panel) => LineAdmin): Promise<{ changed: Line[]; failed: { line: Line; error: unknown }[] }> {
+  const resolved = resolveRules(db, rules);
+  const gone = lines.filter((l) => !getPanel(db, l.panel_id));
+  const changed: Line[] = [];
+  const failed = await onEachPanel(db, lines, adminFor, async (admin, group) => {
+    const tags = await inboundTags(admin, group);
+    await checkRulesGeo(admin, rules);
+    const back = await editXrayChecked(
+      admin,
+      (xray) => {
+        if (!Array.isArray(xray.outbounds) || !xray.outbounds.length) throw new Error('读到的 Xray 配置不完整(没有出站)');
+        for (const l of group) setUserRules(xray, tags.get(l.inbound_id)!, l.email, resolved);
+      },
+      (cfg) => {
+        const wrong = group.filter((l) => managedCount(cfg, tags.get(l.inbound_id)!, l.email) !== rules.length);
+        if (wrong.length) throw new XUIError(`改完读回来,这些客户端的出口规则不对:${wrong.map((l) => l.email).join('、')}`);
+      },
+    );
+    const known = allSocks(db).map((s) => ({ id: s.id, host: s.host, port: s.port }));
+    for (const l of group) {
+      setLineRules(db, l.id, rules);
+      setLineRoutes(db, l.id, routesForClient(back, tags.get(l.inbound_id)!, l.email, known));
+      changed.push(getLine(db, l.id) ?? l);
+    }
+  });
+  return {
+    changed,
+    failed: [...failed.flatMap((f) => f.lines.map((line) => ({ line, error: f.error }))), ...gone.map((line) => ({ line, error: new InputError('这条线路的面板已经不在了') }))],
+  };
+}
+
+const sameTarget = (a: ExitTarget, b: ExitTarget) => a.kind === b.kind && (a.kind === 'direct' || a.socks_id === (b as { socks_id: number }).socks_id);
+/** 线路主出口是不是这个(中转到别的面板的老线路不算) */
+const mainIs = (l: Line, t: ExitTarget) => (t.kind === 'direct' ? l.kind === 'direct' : l.kind === 'relay' && l.exit_kind === 'socks' && l.exit_socks_id === t.socks_id);
+/** 出口规则的去向是不是这个 */
+const ruleIs = (r: LineRule, t: ExitTarget) => (t.kind === 'direct' ? r.to.kind === 'direct' : r.to.kind === 'socks' && r.to.socks_id === t.socks_id);
+
+/** 换出口 IP 时一条线路要改什么:主出口要不要换、换完的出口规则(null = 规则不用动) */
+export function swapPlan(l: Line, from: ExitTarget, to: ExitTarget): { main: boolean; rules: LineRule[] | null } {
+  const hit = l.rules.some((r) => ruleIs(r, from));
+  return { main: mainIs(l, from), rules: hit ? l.rules.map((r) => (ruleIs(r, from) ? { ...r, to: to.kind === 'direct' ? { kind: 'direct' } : { kind: 'socks', socks_id: to.socks_id } } : r)) : null };
+}
+
+/**
+ * 换出口 IP:这些线路里用到 from 出口的地方都换成 to —— 主出口是它的换主出口,出口规则里指向它的换掉规则的去向
+ * (条件不动)。面板上手配的规则不碰。不删线路、UUID 不变,客户不用更新订阅。
+ * 同一块面板上的一起改,只写回、重启一次 Xray,读回核对后才改记录;哪块面板没成,只有那块上的线路不改,返回里带原因。
+ * 一条线路都没用到 from 时报错
+ */
+export async function swapLinesExit(
+  db: DB,
+  lines: Line[],
+  from: ExitTarget,
+  to: ExitTarget,
+  adminFor: (panel: Panel) => LineAdmin,
+): Promise<{ changed: Line[]; failed: { line: Line; error: unknown }[] }> {
+  if (sameTarget(from, to)) throw new InputError('换成的出口和原来的一样');
+  const exit = to.kind === 'socks' ? prepareExit(db, to.socks_id) : null;
+  const plans = new Map(lines.map((l) => [l.id, swapPlan(l, from, to)]));
+  const todo = lines.filter((l) => plans.get(l.id)!.main || plans.get(l.id)!.rules);
+  if (!todo.length) throw new InputError('选中的线路都没用到这个出口');
+  // 先把要写的规则都解析好(SOCKS 不在了就整个不做)
+  const resolved = new Map(todo.flatMap((l) => (plans.get(l.id)!.rules ? [[l.id, resolveRules(db, plans.get(l.id)!.rules!)] as const] : [])));
+  const gone = todo.filter((l) => !getPanel(db, l.panel_id));
+  const changed: Line[] = [];
+  const failed = await onEachPanel(db, todo, adminFor, async (admin, group) => {
+    const tags = await inboundTags(admin, group);
+    const back = await editXrayChecked(
+      admin,
+      (xray) => {
+        if (!Array.isArray(xray.outbounds) || !xray.outbounds.length) throw new Error('读到的 Xray 配置不完整(没有出站)');
+        for (const l of group) {
+          const tag = tags.get(l.inbound_id)!;
+          if (plans.get(l.id)!.main) {
+            if (exit) routeUserToExit(xray, tag, l.email, exit.server);
+            else unrouteUserExit(xray, tag, l.email);
+          }
+          const rs = resolved.get(l.id);
+          if (rs) setUserRules(xray, tag, l.email, rs);
+        }
+      },
+      (cfg) => {
+        const wrong = group.filter((l) => {
+          const tag = tags.get(l.inbound_id)!;
+          const plan = plans.get(l.id)!;
+          if (plan.rules && managedCount(cfg, tag, l.email) !== plan.rules.length) return true;
+          if (!plan.main) return false;
+          const now = userExit(cfg, tag, l.email);
+          return exit ? !now?.server || !sameServer(now.server, exit.server) : now != null;
+        });
+        if (wrong.length) throw new XUIError(`改完读回来,这些客户端的出口不对:${wrong.map((l) => l.email).join('、')}`);
+      },
+    );
+    const known = allSocks(db).map((s) => ({ id: s.id, host: s.host, port: s.port }));
+    for (const l of group) {
+      const plan = plans.get(l.id)!;
+      if (plan.main) setLineExit(db, l.id, exit ? { socks_id: exit.socks_id, label: exit.label } : null);
+      if (plan.rules) setLineRules(db, l.id, plan.rules);
       setLineRoutes(db, l.id, routesForClient(back, tags.get(l.inbound_id)!, l.email, known));
       changed.push(getLine(db, l.id) ?? l);
     }

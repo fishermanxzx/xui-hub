@@ -8,6 +8,9 @@ import Modal from '../components/Modal.vue';
 import PanelCard from '../components/PanelCard.vue';
 import GlobeBlock from '../components/GlobeBlock.vue';
 import RoomList from '../components/RoomList.vue';
+import MultiSelect from '../components/MultiSelect.vue';
+import type { SelectOption } from '../components/Select.vue';
+import { panelIp } from '../customerQuery';
 import { panelRooms } from '../rooms';
 import { parseCoords, type GlobePoint } from '../geoRegions';
 import { costSummary, dateInputToMs, fmtBytes, fmtCost, msToDateInput } from '../format';
@@ -172,8 +175,40 @@ const pickedTags = ref<string[]>([]);
 function toggleTag(tag: string) {
   pickedTags.value = pickedTags.value.includes(tag) ? pickedTags.value.filter((x) => x !== tag) : [...pickedTags.value, tag];
 }
-/** 选了标签:带其中任一个的面板 */
-const shownPanels = computed(() => (pickedTags.value.length ? panels.value.filter((p) => p.tags?.some((x) => pickedTags.value.includes(x))) : panels.value));
+// ---------- 搜索 / 按面板 IP 筛 ----------
+const panelQ = ref('');
+const pickedIps = ref<string[]>([]);
+/** IP 的选项:每个面板 IP,带上是哪几块面板(同一个 IP 可能挂了好几块) */
+const ipOptions = computed<SelectOption<string>[]>(() => {
+  const names = new Map<string, string[]>();
+  for (const p of panels.value) {
+    const ip = panelIp(p);
+    if (ip) names.set(ip, [...(names.get(ip) ?? []), p.name]);
+  }
+  // 选了但现在没有面板在上面的(面板换了 IP)也留着,能取消
+  for (const ip of pickedIps.value) if (!names.has(ip)) names.set(ip, []);
+  return [...names]
+    .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
+    .map(([ip, list]) => ({ value: ip, label: list.length ? t('panels.ipOption', { ip, names: list.join('、') }) : ip }));
+});
+const ipLabel = computed(() => (!pickedIps.value.length ? t('panels.allIps') : pickedIps.value.length === 1 ? pickedIps.value[0] : t('panels.ipsPicked', { n: pickedIps.value.length })));
+const filtering = computed(() => !!panelQ.value.trim() || !!pickedIps.value.length || !!pickedTags.value.length);
+function clearFilters() {
+  panelQ.value = '';
+  pickedIps.value = [];
+  pickedTags.value = [];
+}
+/** 按标签(任一个)、IP(任一个)、搜索(名称 / IP / 地址 / 节点名)筛出来的面板 */
+const shownPanels = computed(() => {
+  const q = panelQ.value.trim().toLowerCase();
+  const ips = new Set(pickedIps.value);
+  return panels.value.filter(
+    (p) =>
+      (!pickedTags.value.length || p.tags?.some((x) => pickedTags.value.includes(x))) &&
+      (!ips.size || ips.has(panelIp(p))) &&
+      (!q || [p.name, panelIp(p), p.base_url, p.node_name].some((x) => x?.toLowerCase().includes(q))),
+  );
+});
 
 function openForm(panel: Panel | null) {
   editing.value = panel;
@@ -291,13 +326,32 @@ onUnmounted(() => clearInterval(timer));
     </div>
   </header>
 
+  <div v-if="panels.length" class="p-filters">
+    <label class="search">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5" /><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
+      <input v-model="panelQ" type="search" :placeholder="t('panels.searchPlaceholder')" :aria-label="t('panels.search')" />
+    </label>
+    <MultiSelect
+      v-model="pickedIps"
+      :options="ipOptions"
+      :label="ipLabel"
+      :all-label="t('panels.allIps')"
+      :aria-label="t('panels.filterIps')"
+      searchable
+      :search-placeholder="t('panels.searchIp')"
+      :class="{ set: pickedIps.length }"
+    />
+    <span v-if="filtering" class="filter-sum">
+      <span class="muted small">{{ t('panels.shown', { n: shownPanels.length, total: panels.length }) }}</span>
+      <button type="button" class="link small" @click="clearFilters">{{ t('panels.clearFilters') }}</button>
+    </span>
+  </div>
   <div v-if="allTags.length" class="tag-filter small" role="group" :aria-label="t('panels.filterTags')">
     <span class="muted">{{ t('panels.filterTags') }}</span>
     <button type="button" class="tag-btn" :aria-pressed="!pickedTags.length" @click="pickedTags = []">{{ t('panels.allTags') }}</button>
     <button v-for="tag in allTags" :key="tag" type="button" class="tag-btn" :aria-pressed="pickedTags.includes(tag)" @click="toggleTag(tag)">
       {{ tag }} <span class="muted">{{ panels.filter((p) => p.tags?.includes(tag)).length }}</span>
     </button>
-    <span v-if="pickedTags.length" class="muted">{{ t('panels.shown', { n: shownPanels.length, total: panels.length }) }}</span>
   </div>
 
   <GlobeBlock v-if="showGlobe && panels.length" :points="globePoints" :unlocated="unlocated" :locating="locating" summary-key="globe.summary" source-key="globe.source" label-key="globe.aria" @pick="focusPanel" />
@@ -382,6 +436,66 @@ onUnmounted(() => clearInterval(timer));
 }
 .node-hint {
   margin-top: -6px;
+}
+.p-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-bottom: 10px;
+}
+.search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 240px;
+  max-width: 360px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: var(--sheet);
+  color: var(--ink-faint);
+}
+.search:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+.search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  padding: 5px 0;
+  background: none;
+  outline: none;
+}
+.p-filters :deep(button.select) {
+  max-width: 260px;
+  padding: 5px 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-soft);
+}
+.p-filters :deep(button.select:hover:not(:disabled)) {
+  border-color: var(--rule);
+  background: var(--sheet);
+}
+.p-filters :deep(button.select.set) {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+.filter-sum {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .search {
+    flex-basis: 100%;
+    max-width: none;
+  }
 }
 .tag-filter {
   display: flex;

@@ -156,6 +156,12 @@ export const api = {
   changeLineExit: (customerId: number, lineId: number, exit: LineExitTarget) => call<Line>('PUT', `/api/customers/${customerId}/lines/${lineId}/exit`, { exit }),
   batchLineExit: (body: { customer_id?: number; line_ids?: number[]; exit: LineExitTarget }) =>
     call<{ changed: number[]; lines: Line[]; failed: { id: number; line: string; error: string }[] }>('POST', '/api/lines/batch-exit', body),
+  /** 批量改出口规则:挑的线路整组换成 rules(空 = 都去掉),每块面板只重启一次 Xray */
+  batchLineRules: (body: { customer_id?: number; line_ids?: number[]; rules: LineRule[] }) =>
+    call<{ changed: number[]; lines: Line[]; failed: { id: number; line: string; error: string }[] }>('POST', '/api/lines/batch-rules', body),
+  /** 换出口 IP:这位客户用到 from 的主出口和出口规则都换成 to */
+  swapCustomerExit: (customerId: number, body: { from: LineExitTarget; to: LineExitTarget; line_ids?: number[] }) =>
+    call<{ changed: number[]; lines: Line[]; failed: { id: number; line: string; error: string }[] }>('POST', `/api/customers/${customerId}/swap-exit`, body),
   /** 批量删线路:面板上删成了的删记录;force = 面板上删没删成都删记录 */
   deleteLines: (lineIds: number[], force = false) => call<{ deleted: number[]; missing: number[]; failed: { id: number; line: string; error: string }[] }>('POST', '/api/lines/batch-delete', { line_ids: lineIds, force }),
   /** 把面板上已有的客户端归到客户名下(成为直连线路),面板上不改 */

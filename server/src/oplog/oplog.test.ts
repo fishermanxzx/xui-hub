@@ -180,7 +180,7 @@ test('操作日志的存取:翻页、筛选、清掉一年前的;内部通道带
   for (const bad of [undefined, '', '%E0', encodeURIComponent('{"x":1}')]) assert.equal(decodeActor(bad), null);
 });
 
-test('操作日志:线路换出口写成「直出 → SOCKS isp」;批量写换好几条;已经是这个出口的不记', async () => {
+test('操作日志:线路换出口写成「直出 → SOCKS isp」;批量写换好几条;已经是这个出口的不记;批量改规则、换出口 IP 也记', async () => {
   const db = memoryDb();
   const p = addPanel(db, 'hk');
   const data: Record<string, FakePanel> = { hk: { inbounds: [vlessInbound(5, 500)], clients: [], xray: relayXray(), restarts: 0 } };
@@ -206,6 +206,13 @@ test('操作日志:线路换出口写成「直出 → SOCKS isp」;批量写换�
     await call('POST', '/lines/batch-exit', { customer_id: c.id, exit: { kind: 'direct' } });
     const row = listOpLog(db).rows[0];
     assert.deepEqual([row.summary, row.customer_id], [`批量换出口 → 直出(换好 1 条):「张三」hk · ${l.email}`, c.id]);
+    // 批量改出口规则、换出口 IP
+    await call('POST', '/lines/batch-rules', { customer_id: c.id, rules: [{ domain: ['netflix.com'], to: { kind: 'socks', socks_id: s.id } }] });
+    const rr = listOpLog(db).rows[0];
+    assert.deepEqual([rr.summary, rr.customer_id], [`批量改出口规则 → 1 条规则(改好 1 条):「张三」hk · ${l.email}`, c.id]);
+    await call('POST', `/customers/${c.id}/swap-exit`, { from: { kind: 'socks', socks_id: s.id }, to: { kind: 'direct' } });
+    const sw = listOpLog(db).rows[0];
+    assert.deepEqual([sw.summary, sw.customer_id], ['给「张三」换出口 IP:SOCKS isp → 直出(换好 1 条线路)', c.id]);
   } finally {
     await new Promise((r) => server.close(r));
   }

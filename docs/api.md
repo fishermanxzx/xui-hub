@@ -96,6 +96,8 @@ Authorization: Bearer xh_……
 | GET | `/customers/:id/lines/:lineId/links` | 这条线路的分享链接 |
 | PUT | `/customers/:id/lines/:lineId/exit` | 原地换出口。请求体:`exit`,`{ "kind": "socks", "socks_id": 3 }`(SOCKS 页登记的代理)或 `{ "kind": "direct" }`(直出,从线路所在的面板出去)。不删线路、面板上的客户端和 UUID 不变,客户不用更新订阅;换掉这个客户端的「入站 + user → 出站」规则(直出就去掉它),写回并重启这块面板的 Xray,读回核对后才改记录,并马上刷新实际出口(`routes`)。已经是这个出口就不动、不重启。线路上带条件的出口规则和面板上手配的规则不碰。返回线路;面板连不上回 502 |
 | POST | `/lines/batch-exit` | 批量换出口。请求体:`exit`(同上),`line_ids`(线路 id 数组,1-1000 个)或 `customer_id`(这位客户的全部线路;两个都给 = 这位客户的这几条)。同一块面板上的一起改,只连一次、Xray 只重启一次;哪块面板没成,只有那块上的线路不改。返回 `changed`(换好的线路 id)、`lines`(换好的线路)、`failed`(`id`、`line`、`error`) |
+| POST | `/lines/batch-rules` | 批量改出口规则:挑的线路(`line_ids` / `customer_id`,同 `batch-exit`)的出口规则整组换成 `rules`(格式同单条线路的出口规则,空数组 = 都去掉)。同一块面板上的一起改,Xray 只重启一次,面板上手配的规则不动;返回同 `batch-exit` |
+| POST | `/customers/:id/swap-exit` | 换出口 IP:这位客户(给了 `line_ids` 就只看这几条)用到 `from` 出口的地方都换成 `to`:主出口是它的换主出口,出口规则里指向它的换去向,条件不动。`from` / `to` = `{ "kind": "socks", "socks_id": 3 }` 或 `{ "kind": "direct" }`;面板上手配的规则不碰;一条都没用到 `from` 时 400。返回同 `batch-exit` |
 | PUT | `/customers/:id/lines/:lineId/rules` | 设置出口规则(整组替换,空数组 = 去掉),见下。写到面板的 Xray 路由并重启 Xray,这块面板上的客户端会断几秒 |
 | GET | `/customers/:id/lines/:lineId/panel-rules` | 读面板,列出面板上手配的、点名这条线路的规则(不归 xui-hub 管的),见下 |
 | DELETE | `/customers/:id/lines/:lineId/panel-rules/:key` | 删掉其中一条(只点名这个客户端的才能删);出站没人用了一起删。重启 Xray,读回核对,没成就改回去。返回 `{ rule, line }` |

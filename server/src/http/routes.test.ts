@@ -960,6 +960,127 @@ test('批量换出口:哪块面板没成,只有那块上的线路不改记录、
   }
 });
 
+test('批量改出口规则:挑的线路整组换成同一组规则、每块面板只重启一次;手配规则不动;已经一样不重启;哪块面板没成只那块不改', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  const b = addPanel(db, 'b');
+  const data = { a: relayPanel(), b: relayPanel() };
+  const { call, close } = await serve(db, data);
+  try {
+    const s1 = (await call('POST', '/socks', { name: 'isp1', address: 'socks5://u:p@isp1.example.com:1080' })).body.id;
+    const c = (await call('POST', '/customers', { name: 'zhang' })).body;
+    const open = async (panel_id: number, exit?: number) => (await call('POST', `/customers/${c.id}/lines`, { panel_id, inbound: { id: 5 }, ...(exit ? { exit: { kind: 'socks', socks_id: exit } } : {}) })).body.line;
+    const l1 = await open(a.id);
+    const l2 = await open(a.id, s1);
+    const l3 = await open(b.id);
+    // l1 原来有一条规则;面板 a 上还有一条手配的、点名 l2 的规则
+    await call('PUT', `/customers/${c.id}/lines/${l1.id}/rules`, { rules: [{ domain: ['ads.example.com'], to: { kind: 'block' } }] });
+    data.a.xray.routing.rules.unshift({ type: 'field', inboundTag: ['in-500'], user: [l2.email], port: '25', outboundTag: 'direct' });
+    const restarts = () => [data.a.restarts, data.b.restarts];
+    const r0 = restarts();
+    const rules = [
+      { domain: ['netflix.com'], to: { kind: 'socks', socks_id: s1 } },
+      { ip: ['8.8.8.8'], to: { kind: 'direct' } },
+    ];
+    const managed = (d: FakePanel, email: string) => d.xray.routing.rules.filter((r: any) => r.ruleTag?.startsWith('xui-hub:') && r.user?.[0] === email);
+
+    const r = await call('POST', '/lines/batch-rules', { customer_id: c.id, rules });
+    assert.deepEqual([r.status, r.body.changed.sort(), r.body.failed], [200, [l1.id, l2.id, l3.id], []]);
+    assert.deepEqual(restarts(), [r0[0] + 1, r0[1] + 1]);
+    for (const [d, e] of [[data.a, l1.email], [data.a, l2.email], [data.b, l3.email]] as const) assert.deepEqual(managed(d, e).map((x: any) => x.domain?.[0] ?? x.ip?.[0]), ['netflix.com', '8.8.8.8'], e);
+    // 原来那条 ads 规则换掉了;手配的还在;主出口不变
+    assert.ok(!data.a.xray.routing.rules.some((x: any) => x.domain?.[0] === 'ads.example.com'));
+    assert.ok(data.a.xray.routing.rules.some((x: any) => x.port === '25' && x.user?.[0] === l2.email));
+    const lines = getCustomer(db, c.id)!.lines;
+    assert.deepEqual(lines.map((l) => [l.kind, l.rules.length, l.routes!.filter((h) => !h.fallback).length >= 2]), [['direct', 2, true], ['relay', 2, true], ['direct', 2, true]]);
+
+    // 已经是这组规则:不写不重启
+    await call('POST', '/lines/batch-rules', { line_ids: [l1.id, l3.id], rules });
+    assert.deepEqual(restarts(), [r0[0] + 1, r0[1] + 1]);
+
+    // 只挑几条、清空:只动挑的那块面板
+    const cleared = await call('POST', '/lines/batch-rules', { customer_id: c.id, line_ids: [l3.id], rules: [] });
+    assert.deepEqual([cleared.body.changed, getCustomer(db, c.id)!.lines.map((l) => l.rules.length)], [[l3.id], [2, 2, 0]]);
+    assert.deepEqual(restarts(), [r0[0] + 1, r0[1] + 2]);
+
+    // 面板 b 写不进去:b 上的不改,a 上的照常
+    data.b.fail = { updateXray: new XUIError('连接失败:超时') };
+    const part = await call('POST', '/lines/batch-rules', { customer_id: c.id, rules: [{ port: '443', to: { kind: 'block' } }] });
+    assert.deepEqual([part.body.changed.sort(), part.body.failed.map((f: any) => [f.id, f.error])], [[l1.id, l2.id], [[l3.id, '连接失败:超时']]]);
+    assert.deepEqual(getCustomer(db, c.id)!.lines.map((l) => l.rules.length), [1, 1, 0]);
+    delete data.b.fail;
+
+    // 写错的:规则不对、线路不是这位客户的、啥都没给
+    const other = (await call('POST', '/customers', { name: 'li' })).body;
+    for (const body of [
+      { customer_id: c.id, rules: [{ to: { kind: 'block' } }] },
+      { customer_id: c.id, rules: [{ domain: ['x.com'], to: { kind: 'socks', socks_id: 999 } }] },
+      { customer_id: other.id, line_ids: [l1.id], rules: [] },
+      { rules: [] },
+    ])
+      assert.equal((await call('POST', '/lines/batch-rules', body)).status, 400, JSON.stringify(body));
+  } finally {
+    await close();
+  }
+});
+
+test('换出口 IP:这位客户用到旧出口的主出口和出口规则一起换、每块面板只重启一次;没用到的线路不动;换成直出;没用到就报错', async () => {
+  const db = memoryDb();
+  const a = addPanel(db, 'a');
+  const b = addPanel(db, 'b');
+  const data = { a: relayPanel(), b: relayPanel() };
+  const { call, close } = await serve(db, data);
+  try {
+    const s1 = (await call('POST', '/socks', { name: 'isp1', address: 'socks5://u:p@isp1.example.com:1080' })).body.id;
+    const s2 = (await call('POST', '/socks', { name: 'isp2', address: 'socks5://u2:p2@isp2.example.com:2080' })).body.id;
+    const c = (await call('POST', '/customers', { name: 'zhang' })).body;
+    const open = async (panel_id: number, exit?: number) => (await call('POST', `/customers/${c.id}/lines`, { panel_id, inbound: { id: 5 }, ...(exit ? { exit: { kind: 'socks', socks_id: exit } } : {}) })).body.line;
+    const l1 = await open(a.id, s1); // 主出口 isp1
+    const l2 = await open(a.id); // 直出,规则里 netflix 走 isp1
+    const l3 = await open(b.id, s2); // 和 isp1 无关
+    await call('PUT', `/customers/${c.id}/lines/${l2.id}/rules`, { rules: [{ domain: ['netflix.com'], to: { kind: 'socks', socks_id: s1 } }, { port: '25', to: { kind: 'block' } }] });
+    const uuids = () => [...data.a.clients, ...data.b.clients].map((x) => `${x.email}:${x.id}`).sort();
+    const before = uuids();
+    const restarts = () => [data.a.restarts, data.b.restarts];
+    const r0 = restarts();
+
+    const r = await call('POST', `/customers/${c.id}/swap-exit`, { from: { kind: 'socks', socks_id: s1 }, to: { kind: 'socks', socks_id: s2 } });
+    assert.deepEqual([r.status, r.body.changed.sort(), r.body.failed], [200, [l1.id, l2.id], []]);
+    assert.deepEqual(restarts(), [r0[0] + 1, r0[1]]);
+    let lines = getCustomer(db, c.id)!.lines;
+    assert.deepEqual(
+      lines.map((l) => [l.kind, l.exit_socks_id, l.rules.map((x) => (x.to.kind === 'socks' ? `socks:${x.to.socks_id}` : x.to.kind))]),
+      [['relay', s2, []], ['direct', null, [`socks:${s2}`, 'block']], ['relay', s2, []]],
+    );
+    // 面板 a 上 isp1 的出站没人用了,删掉
+    assert.ok(!data.a.xray.outbounds.some((o: any) => o.protocol === 'socks' && o.settings.servers[0].address === 'isp1.example.com'));
+    assert.deepEqual(uuids(), before);
+
+    // isp2 → 直出:l1、l3 主出口直出,l2 的 netflix 规则改直出;两块面板各重启一次
+    const d = await call('POST', `/customers/${c.id}/swap-exit`, { from: { kind: 'socks', socks_id: s2 }, to: { kind: 'direct' } });
+    assert.deepEqual(d.body.changed.sort(), [l1.id, l2.id, l3.id]);
+    assert.deepEqual(restarts(), [r0[0] + 2, r0[1] + 1]);
+    lines = getCustomer(db, c.id)!.lines;
+    assert.deepEqual(lines.map((l) => [l.kind, l.rules[0]?.to.kind ?? null]), [['direct', null], ['direct', 'direct'], ['direct', null]]);
+
+    // 只挑几条:直出 → isp1 只换 l3
+    const one = await call('POST', `/customers/${c.id}/swap-exit`, { line_ids: [l3.id], from: { kind: 'direct' }, to: { kind: 'socks', socks_id: s1 } });
+    assert.deepEqual([one.body.changed, getCustomer(db, c.id)!.lines.map((l) => l.kind)], [[l3.id], ['direct', 'direct', 'relay']]);
+
+    // 写错的:一样的出口、没人用到、换成不存在的 SOCKS、线路不是他的
+    const other = (await call('POST', '/customers', { name: 'li' })).body;
+    for (const [path, body] of [
+      [`/customers/${c.id}/swap-exit`, { from: { kind: 'direct' }, to: { kind: 'direct' } }],
+      [`/customers/${c.id}/swap-exit`, { from: { kind: 'socks', socks_id: s2 }, to: { kind: 'direct' } }],
+      [`/customers/${c.id}/swap-exit`, { from: { kind: 'direct' }, to: { kind: 'socks', socks_id: 999 } }],
+      [`/customers/${other.id}/swap-exit`, { line_ids: [l1.id], from: { kind: 'direct' }, to: { kind: 'socks', socks_id: s1 } }],
+    ] as const)
+      assert.equal((await call('POST', path, body)).status, 400, JSON.stringify(body));
+  } finally {
+    await close();
+  }
+});
+
 test('面板的节点名:改面板节点名不动线路记录;一键改名把这块面板上线路各自设的清掉、跟着面板的;没填节点名不让一键改', async () => {
   const db = memoryDb();
   const a = addPanel(db, 'a');

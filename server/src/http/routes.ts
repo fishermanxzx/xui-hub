@@ -45,7 +45,7 @@ import { lookupGeo, refreshPanelGeo, refreshSocksGeo, type GeoLookup } from '../
 import { createToken, deleteToken, listTokens, TOKEN_BLOCKED, tokenName, verifyToken } from './tokens';
 import { listGrants, revokeGrant } from '../mcp/oauth';
 import { enforceCustomers } from '../lines/enforce';
-import { applyLineRules, changeLineExits, openLine, parseExitTarget, removeLine, removeLines, repointSocksLines, type LineAdmin } from '../lines/open';
+import { applyLineRules, applyRulesToLines, changeLineExits, openLine, parseExitTarget, removeLine, removeLines, repointSocksLines, swapLinesExit, type LineAdmin } from '../lines/open';
 import { validRules } from '../lines/rules';
 import { adoptPanelRule, deletePanelRule, panelRulesOf } from '../lines/panelRules';
 import { checkSocks } from '../socks/check';
@@ -810,27 +810,55 @@ export function apiRouter(deps: RouteDeps): Router {
   );
   // 批量换出口:line_ids(挑几条)或 customer_id(这位客户的全部线路;两个都给 = 这位客户的这几条)。
   // 同一块面板上的一起改,只连一次、只重启一次 Xray;哪块面板没成,只有那块上的线路不改,带原因返回
+  /** 批量操作挑的线路:line_ids(挑几条)或 customer_id(这位客户的全部线路;两个都给 = 这位客户的这几条) */
+  const pickLines = (body: any, what: string): Line[] => {
+    const raw = body?.line_ids;
+    const owner = body?.customer_id == null ? null : plainCustomer(Number(body.customer_id));
+    let lines: Line[];
+    if (raw == null) {
+      if (!owner) throw new InputError('要给 line_ids 或 customer_id');
+      lines = owner.lines;
+    } else {
+      if (!Array.isArray(raw) || !raw.length || raw.length > 1000) throw new InputError('line_ids 要是 1 到 1000 个线路 id 的数组');
+      lines = [...new Set(raw.map(Number))].map((id) => {
+        const line = Number.isInteger(id) && id > 0 ? getLine(db, id) : undefined;
+        if (!line || (owner && line.customer_id !== owner.id)) throw new InputError(`线路 ${raw.find((x: unknown) => Number(x) === id)} 不存在${owner ? `或不是「${owner.name}」的` : ''}`);
+        return line;
+      });
+    }
+    if (!lines.length) throw new InputError(`没有要${what}的线路`);
+    return lines;
+  };
+  const batchResult = ({ changed, failed }: { changed: Line[]; failed: { line: Line; error: unknown }[] }) => ({
+    changed: changed.map((l) => l.id),
+    lines: changed,
+    failed: failed.map(({ line, error }) => ({ id: line.id, line: lineLabel(line), error: errorText(error) })),
+  });
   r.post(
     '/lines/batch-exit',
     wrap(async (req) => {
       const target = parseExitTarget(req.body?.exit);
-      const raw = req.body?.line_ids;
-      const owner = req.body?.customer_id == null ? null : plainCustomer(Number(req.body.customer_id));
-      let lines: Line[];
-      if (raw == null) {
-        if (!owner) throw new InputError('要给 line_ids 或 customer_id');
-        lines = owner.lines;
-      } else {
-        if (!Array.isArray(raw) || !raw.length || raw.length > 1000) throw new InputError('line_ids 要是 1 到 1000 个线路 id 的数组');
-        lines = [...new Set(raw.map(Number))].map((id) => {
-          const line = Number.isInteger(id) && id > 0 ? getLine(db, id) : undefined;
-          if (!line || (owner && line.customer_id !== owner.id)) throw new InputError(`线路 ${raw.find((x: unknown) => Number(x) === id)} 不存在${owner ? `或不是「${owner.name}」的` : ''}`);
-          return line;
-        });
-      }
-      if (!lines.length) throw new InputError('没有要换出口的线路');
-      const { changed, failed } = await changeLineExits(db, lines, target, deps.clientFor);
-      return { changed: changed.map((l) => l.id), lines: changed, failed: failed.map(({ line, error }) => ({ id: line.id, line: lineLabel(line), error: errorText(error) })) };
+      return batchResult(await changeLineExits(db, pickLines(req.body, '换出口'), target, deps.clientFor));
+    }),
+  );
+  // 批量改出口规则:挑的线路(同 batch-exit)的出口规则整组换成 rules,空数组 = 都去掉。
+  // 同一块面板上的一起改,只重启一次 Xray;面板上手配的规则不动;哪块面板没成,只有那块上的线路不改,带原因返回
+  r.post(
+    '/lines/batch-rules',
+    wrap(async (req) => {
+      const rules = validRules(db, req.body?.rules);
+      return batchResult(await applyRulesToLines(db, pickLines(req.body, '改出口规则'), rules, deps.clientFor));
+    }),
+  );
+  // 换出口 IP:这位客户(line_ids 给了就只看这几条)用到 from 出口的地方都换成 to —— 主出口是它的换主出口,
+  // 出口规则里指向它的换去向。from / to = { kind: 'socks', socks_id } 或 { kind: 'direct' }。面板上手配的规则不碰
+  r.post(
+    '/customers/:id/swap-exit',
+    wrap(async (req) => {
+      const from = parseExitTarget(req.body?.from);
+      const to = parseExitTarget(req.body?.to);
+      const lines = pickLines({ ...req.body, customer_id: Number(req.params.id) }, '换出口');
+      return batchResult(await swapLinesExit(db, lines, from, to, deps.clientFor));
     }),
   );
   // 重新启用一条停着的线路(面板上被手动停的、或者本系统停了没恢复的):在面板上启用这个客户端,再读一遍面板核对。

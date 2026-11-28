@@ -146,8 +146,8 @@ export function snapshot(db: DB, path: string, body: unknown): Before {
       break;
     case 'lines': {
       const { line_ids: ids, customer_id: owner } = (body ?? {}) as { line_ids?: unknown; customer_id?: unknown };
-      if ((segs[1] === 'batch-delete' || segs[1] === 'batch-exit') && Array.isArray(ids)) b.lines = ids.slice(0, 1000).flatMap((x) => getLine(db, Number(x)) ?? []);
-      else if (segs[1] === 'batch-exit' && owner != null) b.lines = getCustomer(db, Number(owner))?.lines ?? [];
+      if ((segs[1] === 'batch-delete' || segs[1] === 'batch-exit' || segs[1] === 'batch-rules') && Array.isArray(ids)) b.lines = ids.slice(0, 1000).flatMap((x) => getLine(db, Number(x)) ?? []);
+      else if ((segs[1] === 'batch-exit' || segs[1] === 'batch-rules') && owner != null) b.lines = getCustomer(db, Number(owner))?.lines ?? [];
       break;
     }
   }
@@ -381,6 +381,21 @@ export function describe(db: DB, action: string, b: Before, req: { body?: any; q
       const names = lines.slice(0, 5).map((l) => `「${getCustomer(db, l.customer_id)?.name ?? `#${l.customer_id}`}」${lineName(l)}`);
       const counts = ok ? `换好 ${done} 条${failed ? `,${failed} 条没成` : ''}` : `${lines.length} 条`;
       return S(`批量换出口 → ${exitTarget(db, body.exit)}(${counts}):${names.join('、')}${lines.length > 5 ? ' 等' : ''}`, owners.size === 1 ? [...owners][0] : null);
+    }
+    case 'POST /lines/batch-rules': {
+      const lines = b.lines ?? [];
+      const owners = new Set(lines.map((l) => l.customer_id));
+      const n = Array.isArray(body.rules) ? body.rules.length : 0;
+      const done = Array.isArray(result?.changed) ? result.changed.length : 0;
+      const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
+      const names = lines.slice(0, 5).map((l) => `「${getCustomer(db, l.customer_id)?.name ?? `#${l.customer_id}`}」${lineName(l)}`);
+      const counts = ok ? `改好 ${done} 条${failed ? `,${failed} 条没成` : ''}` : `${lines.length} 条`;
+      return S(`批量改出口规则 → ${n ? `${n} 条规则` : '全部去掉'}(${counts}):${names.join('、')}${lines.length > 5 ? ' 等' : ''}`, owners.size === 1 ? [...owners][0] : null);
+    }
+    case 'POST /customers/:id/swap-exit': {
+      const done = Array.isArray(result?.changed) ? result.changed.length : 0;
+      const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
+      return S(`给${cname}换出口 IP:${exitTarget(db, body.from)} → ${exitTarget(db, body.to)}${ok ? `(换好 ${done} 条线路${failed ? `,${failed} 条没成` : ''})` : ''}`);
     }
     case 'DELETE /customers/:id/lines/:lid':
       return S(`删除${cname}的线路${b.line ? ` ${lineName(b.line)}` : ''}`);
