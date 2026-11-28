@@ -1,7 +1,7 @@
 // 客户页的搜索 / 过滤 / 排序(纯前端:客户列表本来就整个取回来)。
 
 import { dueLevel } from './format';
-import type { Customer, Line, Panel, Socks } from './types';
+import type { Customer, Line, Panel, RouteHop, Socks } from './types';
 
 export type CustomerSort = 'name' | 'expire' | 'used' | 'fee' | 'created' | 'fetched' | 'online';
 /** '' = 全部;soon = 7 天内到期(还没到期);lines_off = 客户正常,但有线路停着(面板上被停了、或面板上已经没这个客户端) */
@@ -14,6 +14,20 @@ export type CountFilter = '' | '0' | '1' | '2' | '3' | '4' | '5+';
 export const COUNT_FILTERS: Exclude<CountFilter, ''>[] = ['0', '1', '2', '3', '4', '5+'];
 export const matchCount = (n: number, f: CountFilter) => !f || (f === '5+' ? n >= 5 : n === Number(f));
 
+/** 规则分流:'' = 不限;any = 有线路按规则分了出口;hub = 有在 xui-hub 里配的出口规则;panel = 有面板上手配的分流规则;none = 都没有 */
+export type SplitFilter = '' | 'any' | 'hub' | 'panel' | 'none';
+export const SPLIT_FILTERS: Exclude<SplitFilter, ''>[] = ['any', 'hub', 'panel', 'none'];
+/** 线路在 xui-hub 里配了出口规则 */
+const splitByHub = (l: Line) => (l.rules?.length ?? 0) > 0;
+/** 面板上读到点名这条线路、带条件的规则,又不是 xui-hub 写的(3x-ui 里手配的,只点名他或点名了好几个人) */
+const splitByPanel = (l: Line) => !!l.routes?.some((h) => !h.fallback && h.origin !== 'xui');
+export function matchSplit(c: Customer, f: SplitFilter): boolean {
+  if (!f) return true;
+  const hub = c.lines.some(splitByHub);
+  const panel = c.lines.some(splitByPanel);
+  return f === 'hub' ? hub : f === 'panel' ? panel : f === 'none' ? !hub && !panel : hub || panel;
+}
+
 export interface CustomerQuery {
   /** 搜名字、备注、线路 email、节点名 */
   q: string;
@@ -24,10 +38,12 @@ export interface CustomerQuery {
   tags: string[];
   /** 线路条数 */
   lines: CountFilter;
-  /** 落地 IP 个数(见 exitIps) */
+  /** 落地 IP 个数(主出口和分流出去的都算,见 exitIps) */
   exits: CountFilter;
-  /** 有线路落地在这些 IP 上(任一个;按线路主出口算,见 lineExitIp) */
+  /** 有线路落地在这些 IP 上(任一个;主出口和分流出去的都算,见 lineExitIps) */
   ips: string[];
+  /** 规则分流 */
+  split: SplitFilter;
   sort: CustomerSort;
   /** 反过来排 */
   reverse: boolean;
@@ -81,6 +97,15 @@ const hostOf = (address: string) => address.replace(/:\d+$/, '').replace(/^\[|\]
  * 面板上实际的出口读到了就按实际的算,带条件的规则(如流媒体单走)不算。
  */
 export function lineExitIp(l: Line, panels: Map<number, Panel>, socks: Map<number, Socks>): string {
+  const { ipOfPanel, ipOfSocks, ipOfHop } = ipLookups(l, panels, socks);
+  if (l.kind === 'relay' && l.exit_kind === 'panel') return ipOfPanel(l.exit_panel_id);
+  const hop = l.routes?.find((h) => h.fallback);
+  if (hop) return ipOfHop(hop.to);
+  if (l.kind === 'relay' && l.exit_kind === 'socks') return ipOfSocks(l.exit_socks_id);
+  return l.kind === 'direct' ? ipOfPanel(l.panel_id) : '';
+}
+
+function ipLookups(l: Line, panels: Map<number, Panel>, socks: Map<number, Socks>) {
   const ipOfPanel = (id: number | null | undefined) => {
     const p = id != null ? panels.get(id) : undefined;
     return p ? panelIp(p) : '';
@@ -89,10 +114,8 @@ export function lineExitIp(l: Line, panels: Map<number, Panel>, socks: Map<numbe
     const s = id != null ? socks.get(id) : undefined;
     return s ? socksIp(s) : '';
   };
-  if (l.kind === 'relay' && l.exit_kind === 'panel') return ipOfPanel(l.exit_panel_id);
-  const hop = l.routes?.find((h) => h.fallback);
-  if (hop) {
-    const to = hop.to;
+  /** 面板路由规则里一个出口落地的 IP:规则写在线路所在(入口)面板上,直出就是这块面板 */
+  const ipOfHop = (to: RouteHop['to']) => {
     if (to.socks_id != null) return ipOfSocks(to.socks_id) || (to.address ? hostOf(to.address) : '');
     if (to.kind === 'direct') return ipOfPanel(l.panel_id);
     if (to.address) {
@@ -102,14 +125,25 @@ export function lineExitIp(l: Line, panels: Map<number, Panel>, socks: Map<numbe
       return host;
     }
     return '';
-  }
-  if (l.kind === 'relay' && l.exit_kind === 'socks') return ipOfSocks(l.exit_socks_id);
-  return l.kind === 'direct' ? ipOfPanel(l.panel_id) : '';
+  };
+  return { ipOfPanel, ipOfSocks, ipOfHop };
 }
 
-/** 客户所有线路的落地 IP(去重) */
+/**
+ * 一条线路所有落地的 IP(去重):主出口,加上按规则分流出去的。
+ * 读到了面板的路由规则就按面板上实际的(含 3x-ui 里手配的);还没读到就按 xui-hub 里配的出口规则。拦截的不算。
+ */
+export function lineExitIps(l: Line, panels: Map<number, Panel>, socks: Map<number, Socks>): string[] {
+  const { ipOfPanel, ipOfSocks, ipOfHop } = ipLookups(l, panels, socks);
+  const out = [lineExitIp(l, panels, socks)];
+  if (l.routes) for (const h of l.routes) if (!h.fallback) out.push(ipOfHop(h.to));
+  if (!l.routes) for (const r of l.rules ?? []) out.push(r.to.kind === 'socks' ? ipOfSocks(r.to.socks_id) : r.to.kind === 'direct' ? ipOfPanel(l.panel_id) : '');
+  return [...new Set(out.filter(Boolean))];
+}
+
+/** 客户所有线路的落地 IP(去重;主出口和分流出去的都算) */
 export function exitIps(c: Customer, panels: Map<number, Panel>, socks: Map<number, Socks>): string[] {
-  return [...new Set(c.lines.map((l) => lineExitIp(l, panels, socks)).filter(Boolean))];
+  return [...new Set(c.lines.flatMap((l) => lineExitIps(l, panels, socks)))];
 }
 
 /** 落地 IP 是谁的:面板的 IP → 面板名,SOCKS 的出口 IP → SOCKS 名(同一个 IP 可能有好几个) */
@@ -153,7 +187,8 @@ export function queryCustomers(list: Customer[], f: CustomerQuery, now = Date.no
       matchState(c, f.state, now) &&
       matchCount(c.lines.length, f.lines) &&
       (!f.exits || matchCount(exitIps(c, pm, sm).length, f.exits)) &&
-      (!ips.size || exitIps(c, pm, sm).some((ip) => ips.has(ip))),
+      (!ips.size || exitIps(c, pm, sm).some((ip) => ips.has(ip))) &&
+      matchSplit(c, f.split),
   );
   const key = KEY[f.sort];
   const flip = DESC[f.sort] !== f.reverse;

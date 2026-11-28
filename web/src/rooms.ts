@@ -8,8 +8,9 @@ import type { Customer, Line, Panel, Socks } from './types';
 export const ONLINE_MS = 5 * 60_000;
 export const lineOnline = (l: Line, now = Date.now()) => l.last_online > 0 && now - l.last_online < ONLINE_MS;
 export const linesOnline = (lines: Line[]) => lines.some((l) => lineOnline(l));
-/** 线路用到这个 SOCKS:出口是它,或出口规则里用了它(和 SOCKS 页「在用」一样算) */
-export const usesSocks = (l: Line, socksId: number) => l.exit_socks_id === socksId || (l.rules ?? []).some((r) => r.to.kind === 'socks' && r.to.socks_id === socksId);
+/** 线路用到这个 SOCKS:出口是它、出口规则里用了它,或面板上读到的分流规则(含 3x-ui 里手配的)指向它(和 SOCKS 页「N 位客户」一样算) */
+export const usesSocks = (l: Line, socksId: number) =>
+  l.exit_socks_id === socksId || (l.rules ?? []).some((r) => r.to.kind === 'socks' && r.to.socks_id === socksId) || !!l.routes?.some((h) => h.to.socks_id === socksId);
 
 export interface RoomSeat {
   c: Customer;

@@ -176,7 +176,7 @@ Authorization: Bearer xh_……
 | POST | `/panels/:id/line-names` | 一键改名:这块面板上的线路都用面板的节点名(清掉各自设的 `node_name`)。只改订阅里显示的名字,面板上的客户端、UUID、出口都不动,客户更新订阅后生效。面板没填节点名时报 400。返回 `changed`(原来单独设过名字、这次清掉的条数)和 `panel` |
 | POST | `/panels/:id/restart` | 重启面板和 Xray 内核,等两个都恢复才返回(一般十几秒);上面所有客户端会断流几秒 |
 | POST | `/panels/:id/renew`、`/socks/:id/renew` | 面板 / SOCKS 续了费:到期日在现在的到期日上加 `months`(1–120)或 `days`(1–3650),两个给一个;已过期或没填到期日的从现在起算。填了 `amount`(大于 0)就在账本记一笔关联它的支出,另可带 `paid_at`(毫秒,不填 = 现在)、`category`、`note`;不填金额只顺延。返回 `name`、`months`、`days`、`expire_before`、`expire_after`、`entry`(记下的支出,没记为 `null`),以及更新后的 `panel` / `socks` |
-| GET | `/socks` | SOCKS 代理列表。每个带 `used_by`(用到它的线路数:出口是它,或出口规则里用了它)、`customers`(这些线路属于几位客户)、`users`(是哪几位:`id`、`name`、`lines` 他名下几条线路用到它,按名字排) |
+| GET | `/socks` | SOCKS 代理列表。每个带 `used_by`(xui-hub 让它当出口的线路数:出口是它,或出口规则里用了它;不为 0 时不能删)、`seen_by`(用到它的线路数,再加上面板上读到的分流规则指向它的,含 3x-ui 里手配的)、`customers`(`seen_by` 这些线路属于几位客户)、`users`(是哪几位:`id`、`name`、`lines` 他名下几条线路用到它,按名字排) |
 | POST / PATCH | `/socks`、`/socks/:id` | 登记 / 修改 SOCKS:`name`、`address`(修改时留空 = 不改)、`remark`、`monthly_cost`、`expire_at`、`location`(手动填位置,写法同面板;`null` = 按出口 IP 自动查) |
 | GET | `/socks/geo` | SOCKS 列表,顺带把还没定位的按出口 IP 查一下地理位置(用最近一次测试测出的出口 IP,也就是流量实际从哪出去;还没测过就按地址里的 IP;测试失败时已有的位置留着)。规则和 `/panels/geo` 一样,字段也是 `geo_*` |
 | GET | `/sub-templates` | 内置的订阅模板 |

@@ -104,9 +104,11 @@ const panelRules = {
 for (const l of lines) Object.assign(l, { panel_node_name: panels.find((x) => x.id === l.panel_id)?.node_name ?? '', panel_ratio: 1, used_up: l.up, used_down: l.down });
 for (const x of panels) Object.assign(x, { line_count: lines.filter((l) => l.panel_id === x.id).length, exit_line_count: lines.filter((l) => l.exit_panel_id === x.id).length, customer_count: new Set(lines.filter((l) => l.panel_id === x.id).map((l) => l.customer_id)).size });
 for (const x of socks) {
-  const using = lines.filter((l) => l.exit_socks_id === x.id);
+  // 和服务端一样:used_by = xui-hub 让它当出口的(出口 / 出口规则);seen_by 再加上面板路由规则指向它的
+  const managed = (l) => l.exit_socks_id === x.id || l.rules.some((r) => r.to.socks_id === x.id);
+  const using = lines.filter((l) => managed(l) || l.routes?.some((h) => h.to.socks_id === x.id));
   const users = customers.filter((c) => using.some((l) => l.customer_id === c.id)).map((c) => ({ id: c.id, name: c.name, lines: using.filter((l) => l.customer_id === c.id).length }));
-  Object.assign(x, { used_by: using.length, customers: users.length, users });
+  Object.assign(x, { used_by: lines.filter(managed).length, seen_by: using.length, customers: users.length, users });
 }
 for (const d of Object.values(details)) for (const i of d.inbounds) i.accepts_clients = i.protocol !== 'mixed';
 
