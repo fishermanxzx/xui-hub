@@ -14,12 +14,12 @@ import LineExit from '../components/LineExit.vue';
 import RuleEditor from '../components/RuleEditor.vue';
 import LineRulesBatch from '../components/LineRulesBatch.vue';
 import ExitSwap from '../components/ExitSwap.vue';
+import CustomerFilters from '../components/CustomerFilters.vue';
 import { fromRow, toRow, type RuleRow } from '../ruleRows';
 import CustomerRenew from '../components/CustomerRenew.vue';
 import Select, { type SelectOption } from '../components/Select.vue';
-import MultiSelect from '../components/MultiSelect.vue';
 import ActionMenu, { type MenuItem } from '../components/ActionMenu.vue';
-import { COUNT_FILTERS, CUSTOMER_SORTS, CUSTOMER_STATES, SPLIT_FILTERS, exitIpOwners, exitIps, lastOnline, lineExitIps, matchCount, matchSplit, matchState, panelsTagged, queryCustomers, usesPanel, type CountFilter, type CustomerQuery, type CustomerSort, type SplitFilter } from '../customerQuery';
+import { CUSTOMER_SORTS, exitIps, lastOnline, lineExitIps, matchState, panelsTagged, queryCustomers, type CustomerQuery, type CustomerSort } from '../customerQuery';
 import { copyText } from '../clipboard';
 import QrCode from '../components/QrCode.vue';
 import { bytesToGb, dateInputToMs, dueLevel, fmtAgo, fmtBytes, fmtCost, fmtDate, fmtDateTime, fmtDue, fmtSignedBytes, gbToBytes, msToDateInput, shortUa, stateLabel, subUrl, customSubUrl, routeHopText, routeTarget, routeWhen } from '../format';
@@ -81,7 +81,6 @@ const pickedIps = computed(() => new Set(query.value.ips));
 const offPanel = (l: Line) =>
   (pickedPanels.value.size > 0 && !pickedPanels.value.has(l.panel_id) && !(l.exit_panel_id != null && pickedPanels.value.has(l.exit_panel_id))) ||
   (pickedIps.value.size > 0 && !lineExitIps(l, panelMap.value, socksMap.value).some((ip) => pickedIps.value.has(ip)));
-const filtering = computed(() => !!query.value.q.trim() || !!query.value.panels.length || !!query.value.state || !!query.value.tags.length || !!query.value.lines || !!query.value.exits || !!query.value.ips.length || !!query.value.split);
 // ---------- 两种看法:机位(像网吧的机位图,一格一位客户,只看头像、名字、流量、到期、月费,点开看全部)和列表;选的哪种记在浏览器里 ----------
 type CustomerView = 'seats' | 'list';
 const VIEW_KEY = 'xui-hub.customerView';
@@ -193,63 +192,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('hashchange', onHash);
   clearTimeout(focusTimer);
 });
-/** 面板上用到的所有标签(按面板顺序出现的先后) */
-const allTags = computed(() => [...new Set(panels.value.flatMap((p) => p.tags ?? []))]);
-const tagFilterOptions = computed<SelectOption<string>[]>(() =>
-  allTags.value.map((tag) => {
-    const ids = panelsTagged(panels.value, [tag]);
-    return { value: tag, label: t('customers.panelOption', { name: tag, n: customers.value.filter((c) => usesPanel(c, ids)).length }) };
-  }),
-);
-const tagFilterLabel = computed(() => {
-  const picked = query.value.tags;
-  if (!picked.length) return t('customers.allTags');
-  return picked.length === 1 ? picked[0] : t('customers.tagsPicked', { n: picked.length });
-});
-const linesFilterOptions = computed<SelectOption<CountFilter>[]>(() => [
-  { value: '', label: t('customers.allLineCounts') },
-  ...COUNT_FILTERS.map((f) => ({ value: f, label: t(f === '5+' ? 'customers.lineCountMore' : 'customers.lineCountOption', { label: f.replace('+', ''), n: customers.value.filter((c) => matchCount(c.lines.length, f)).length }) })),
-]);
-const exitsFilterOptions = computed<SelectOption<CountFilter>[]>(() => [
-  { value: '', label: t('customers.allExitCounts') },
-  ...COUNT_FILTERS.map((f) => ({ value: f, label: t(f === '5+' ? 'customers.exitCountMore' : 'customers.exitCountOption', { label: f.replace('+', ''), n: customers.value.filter((c) => matchCount(exitCount(c), f)).length }) })),
-]);
-/** 落地 IP 的选项:客户线路落地过的每个 IP,带上是哪块面板 / 哪个 SOCKS 和有几位客户;客户多的在前 */
-const ipFilterOptions = computed<SelectOption<string>[]>(() => {
-  const count = new Map<string, number>();
-  for (const ips of exitsOf.value.values()) for (const ip of ips) count.set(ip, (count.get(ip) ?? 0) + 1);
-  // 选了但现在没有客户落地在上面的(面板换了 IP 之类)也留着,能取消
-  for (const ip of query.value.ips) if (!count.has(ip)) count.set(ip, 0);
-  const owners = exitIpOwners(panels.value, socksList.value);
-  return [...count]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], undefined, { numeric: true }))
-    .map(([ip, n]) => {
-      const who = owners.get(ip)?.join('、');
-      return { value: ip, label: who ? t('customers.exitIpOption', { ip, who, n }) : t('customers.exitIpOptionBare', { ip, n }) };
-    });
-});
-const ipFilterLabel = computed(() => {
-  const picked = query.value.ips;
-  if (!picked.length) return t('customers.allExitIps');
-  return picked.length === 1 ? picked[0] : t('customers.exitIpsPicked', { n: picked.length });
-});
-const splitFilterOptions = computed<SelectOption<SplitFilter>[]>(() => [
-  { value: '', label: t('customers.allSplits') },
-  ...SPLIT_FILTERS.map((f) => ({ value: f, label: t(`customers.split.${f}`, { n: customers.value.filter((c) => matchSplit(c, f)).length }) })),
-]);
-const panelFilterOptions = computed<SelectOption<number>[]>(() =>
-  panels.value.map((p) => ({ value: p.id, label: t('customers.panelOption', { name: p.name, n: customers.value.filter((c) => usesPanel(c, new Set([p.id]))).length }) })),
-);
-const panelFilterLabel = computed(() => {
-  const picked = query.value.panels;
-  if (!picked.length) return t('customers.allPanels');
-  if (picked.length === 1) return panels.value.find((p) => p.id === picked[0])?.name ?? t('customers.allPanels');
-  return t('customers.panelsPicked', { n: picked.length });
-});
-const stateOptions = computed<SelectOption<CustomerQuery['state']>[]>(() => [
-  { value: '', label: t('customers.allStates') },
-  ...CUSTOMER_STATES.map((s) => ({ value: s, label: t('customers.stateOption', { label: s === 'soon' ? t('customers.stateSoon') : s === 'lines_off' ? t('customers.stateLinesOff') : stateLabel(s), n: customers.value.filter((c) => matchState(c, s)).length }) })),
-]);
 const sortOptions = computed<SelectOption<CustomerSort>[]>(() => CUSTOMER_SORTS.map((s) => ({ value: s, label: t(`customers.sort.${s}`) })));
 const sortDir = computed(() => t(`customers.sortDir.${query.value.sort}${query.value.reverse ? '_r' : ''}` as 'customers.sortDir.name'));
 
@@ -665,7 +607,7 @@ interface BatchResult {
  * exits:单独改过出口的客户 → 'direct' / 'socks:<id>' / 'copy:<线路 id>'(照抄他这条现有线路的出口和出口规则);
  * names:每位客户新线路的节点名,空 = 用面板生成的
  */
-const batch = ref<{ ids: Set<number>; q: string; running: boolean; stop: boolean; done: boolean; results: Record<number, BatchResult>; exits: Record<number, string>; names: Record<number, string> } | null>(null);
+const batch = ref<{ ids: Set<number>; f: CustomerQuery; running: boolean; stop: boolean; done: boolean; results: Record<number, BatchResult>; exits: Record<number, string>; names: Record<number, string> } | null>(null);
 function openBatch() {
   lineFor.value = null;
   opened.value = null;
@@ -674,14 +616,12 @@ function openBatch() {
   const only = clientInboundsOf(pid);
   lf.value = { panel_id: pid, inbound: only.length === 1 ? only[0].id : 0 };
   void fetchInbounds(pid);
-  batch.value = { ids: new Set(), q: '', running: false, stop: false, done: false, results: {}, exits: {}, names: {} };
+  batch.value = { ids: new Set(), f: { q: '', panels: [], state: '', tags: [], lines: '', exits: '', ips: [], split: '', sort: 'name', reverse: false }, running: false, stop: false, done: false, results: {}, exits: {}, names: {} };
 }
 /** 这位客户在这块面板上已经有几条线路 */
 const onPanelCount = (c: Customer, panelId: number) => c.lines.filter((l) => l.panel_id === panelId).length;
-const batchList = computed(() => {
-  const q = batch.value?.q.trim().toLowerCase() ?? '';
-  return customers.value.filter((c) => !q || c.name.toLowerCase().includes(q) || c.remark.toLowerCase().includes(q));
-});
+/** 批量开线路里列出的客户:按弹窗里的搜索和筛选(和客户页顶上的一样),按名字排 */
+const batchList = computed(() => (batch.value ? queryCustomers(customers.value, batch.value.f, Date.now(), { panels: panels.value, socks: socksList.value }) : []));
 function batchToggle(id: number) {
   const ids = batch.value?.ids;
   if (!ids) return;
@@ -1165,30 +1105,7 @@ function exitText(l: Line): string {
         </span>
       </span>
     </div>
-    <div class="filters-row" role="group" :aria-label="t('customers.filterGroup')">
-      <MultiSelect v-model="query.panels" :options="panelFilterOptions" :label="panelFilterLabel" :all-label="t('customers.allPanels')" :aria-label="t('customers.filterPanels')" :class="{ set: query.panels.length }" />
-      <MultiSelect v-if="allTags.length" v-model="query.tags" :options="tagFilterOptions" :label="tagFilterLabel" :all-label="t('customers.allTags')" :aria-label="t('customers.filterTags')" searchable :class="{ set: query.tags.length }" />
-      <Select v-model="query.state" :options="stateOptions" :aria-label="t('customers.filterState')" :class="{ set: query.state }" />
-      <Select v-model="query.lines" :options="linesFilterOptions" :aria-label="t('customers.filterLineCount')" :class="{ set: query.lines }" />
-      <Select v-model="query.exits" :options="exitsFilterOptions" :aria-label="t('customers.filterExitCount')" :class="{ set: query.exits }" />
-      <MultiSelect
-        v-if="ipFilterOptions.length"
-        v-model="query.ips"
-        :options="ipFilterOptions"
-        :label="ipFilterLabel"
-        :all-label="t('customers.allExitIps')"
-        :aria-label="t('customers.filterExitIp')"
-        :title="t('customers.filterExitIpHint')"
-        searchable
-        :search-placeholder="t('customers.searchExitIp')"
-        :class="{ set: query.ips.length }"
-      />
-      <Select v-model="query.split" :options="splitFilterOptions" :aria-label="t('customers.filterSplit')" :title="t('customers.filterSplitHint')" :class="{ set: query.split }" />
-      <span v-if="filtering" class="filter-sum">
-        <span class="muted small">{{ t('customers.shown', { n: shown.length, total: customers.length }) }}</span>
-        <button type="button" class="link small" @click="clearFilters">{{ t('customers.clearFilters') }}</button>
-      </span>
-    </div>
+    <CustomerFilters v-model="query" :customers="customers" :panels="panels" :socks="socksList" :shown="shown.length" />
   </div>
 
   <!-- 机位:一间大厅,一人一台电脑(等距 3D 小场景),每条线路一根网线;点开看完整卡片 -->
@@ -1495,10 +1412,11 @@ function exitText(l: Line): string {
       <div class="field-block">
         <span class="label">{{ t('customers.batchCustomers', { n: batch.ids.size }) }}</span>
         <div class="row batch-tools">
-          <input v-model="batch.q" type="search" :placeholder="t('customers.batchSearch')" :aria-label="t('customers.batchSearch')" />
+          <input v-model="batch.f.q" type="search" :placeholder="t('customers.batchSearch')" :aria-label="t('customers.batchSearch')" />
           <button type="button" class="link" @click="batchAll">{{ t('customers.batchAll') }}</button>
           <button type="button" class="link" @click="batch.ids.clear()">{{ t('customers.batchNone') }}</button>
         </div>
+        <CustomerFilters v-model="batch.f" class="batch-filters" :customers="customers" :panels="panels" :socks="socksList" :shown="batchList.length" />
         <ul class="batch-list">
           <li class="b-row b-head muted small" aria-hidden="true">
             <span>{{ t('customers.batchColCustomer') }}</span><span>{{ t('customers.batchColExit') }}</span><span>{{ t('customers.batchColNodeName') }}</span><span>{{ t('customers.batchColResult') }}</span>
@@ -1715,12 +1633,6 @@ function exitText(l: Line): string {
   align-items: center;
   gap: 8px;
 }
-.filters-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
-}
 .search {
   display: flex;
   align-items: center;
@@ -1746,30 +1658,6 @@ function exitText(l: Line): string {
   background: none;
   outline: none;
 }
-/* 过滤器平时是灰字,选了条件的变成浅青底;字太长就省略,鼠标停上去看全 */
-.filters-row :deep(button.select) {
-  max-width: 220px;
-  padding: 5px 8px;
-  border-color: transparent;
-  background: transparent;
-  color: var(--ink-soft);
-}
-.filters-row :deep(button.select:hover:not(:disabled)) {
-  border-color: var(--rule);
-  background: var(--sheet);
-}
-.filters-row :deep(button.select.set) {
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-  border-color: transparent;
-}
-.filter-sum {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding-left: 8px;
-  white-space: nowrap;
-}
 .sort {
   margin-left: auto;
   display: inline-flex;
@@ -1786,31 +1674,14 @@ function exitText(l: Line): string {
   border-color: var(--rule);
   background: var(--sheet);
 }
+.sort :deep(button.select) {
+  color: var(--ink);
+}
 @media (max-width: 640px) {
   .search {
     flex-basis: 100%;
     max-width: none;
   }
-}
-/* 不够一行放下时:筛选按列对齐(平板三四列、手机两列),不再一个挨一个乱折行 */
-@media (max-width: 900px) {
-  .filters-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 4px;
-  }
-  .filters-row :deep(button.select) {
-    max-width: none;
-    width: 100%;
-    border-color: var(--rule);
-  }
-  .filter-sum {
-    grid-column: 1 / -1;
-    padding-left: 2px;
-  }
-}
-.sort :deep(button.select) {
-  color: var(--ink);
 }
 .dir {
   display: inline-flex;
